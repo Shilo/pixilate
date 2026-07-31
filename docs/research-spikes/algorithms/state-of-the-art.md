@@ -190,7 +190,7 @@ The first three are useful, but none is lossless. The UI should label the chosen
 
 ## 3. Conventional resampling kernels
 
-For a scale-aware separable filter, each destination sample integrates the reconstruction kernel over the source footprint. A naive point sample, bilinear call, or browser draw without a shrink prefilter aliases high frequencies. The [ImageMagick filter documentation](https://usage.imagemagick.org/filter/) and [resize guide](https://usage.imagemagick.org/resize/) give a useful practical taxonomy; `image` exposes representative `Nearest`, `Triangle`, `CatmullRom`, `Gaussian`, and `Lanczos3` choices ([Rust `image` FilterType](https://docs.rs/image/latest/image/imageops/enum.FilterType.html)).
+For a scale-aware separable filter, each destination sample integrates the reconstruction kernel over the source footprint. A naive point sample, bilinear call, or browser draw without a shrink prefilter aliases high frequencies. The [ImageMagick filter documentation](https://usage.imagemagick.org/filter/) and [resize guide](https://usage.imagemagick.org/resize/) give a useful practical taxonomy; the audited `image` source exposes representative `Nearest`, `Triangle`, `CatmullRom`, `Gaussian`, and `Lanczos3` choices ([pinned `image` source audit](../landscape/open-source-ecosystem.md#12-image-rsimage-broad-codec-ecosystem-insufficient-resize-semantics-by-itself)).
 
 | Method | Core behavior | Strengths | Typical pixel-art failure | Useful role |
 |---|---|---|---|---|
@@ -503,7 +503,7 @@ The engine contract should require:
 5. **Deterministic reductions.** Avoid unordered thread/atomic reductions. Use fixed trees or serial sums. Integer histograms and fixed-point accumulators are preferable at decision boundaries.
 6. **Finite numeric domain.** Reject/avoid NaN and infinity; do not compile decision-critical code with fast-math or relaxed SIMD.
 7. **Fixed stopping.** Specify iteration counts or exact convergence thresholds plus maximums; specify empty-cluster and graph-cut ties.
-8. **Domain-separated identity.** Define byte schemas for `source-bytes-v1`, `canonical-rgba-v1` (tag, dimensions, row-major RGBA8 only), `palette-v1`, `semantic-result-v1`, `recipe-input-v1`, `recipe-result-v1`, and `encoded-file-v1`. Palette identity is separate from RGBA identity; recipe-input identity omits derived result/file hashes. Never embed an encoded-file hash inside the file it hashes. Promise byte-identical PNG only after pinning filter selection, compression library/version/level, chunk set/order, timestamps, and metadata.
+8. **Domain-separated identity.** Define byte schemas for `pixilate/source-bytes/v1`, `pixilate/canonical-rgba/v1` (tag, dimensions, row-major RGBA8 only), `pixilate/palette/v1`, `pixilate/semantic-result/v1`, `pixilate/recipe-input/v1`, `pixilate/recipe-result/v1`, and `pixilate/encoded-file/v1`. Palette identity is separate from RGBA identity; recipe-input identity omits derived result/file hashes. Never embed an encoded-file hash inside the file it hashes. Promise byte-identical PNG only after pinning filter selection, compression library/version/level, chunk set/order, timestamps, and metadata.
 9. **Versioned evolution.** Better algorithms create a new profile/engine version. Old versions remain selectable or reproducible from metadata where practical.
 10. **Conformance matrix.** Golden hashes on Chrome, Firefox, Safari, and Edge across x86-64 and ARM64; compare scalar and any SIMD build; include alpha/color-profile fixtures.
 

@@ -610,7 +610,7 @@ This section is engineering policy, not legal advice.
 
 ### 17.3 Color, alpha, cleanup, and background
 
-- **AC-PAL-001:** Maximum 16 visible colors never yields 17 qualifying RGB values after reducer fallback, dither, cleanup, matte repair, and the mandatory final validator.
+- **AC-PAL-001:** For every supported maximum `N` (with 16 as a mandatory regression case), the final output never yields more than `N` qualifying RGB values after reducer fallback, dither, cleanup, matte repair, and the mandatory final validator.
 - **AC-PAL-002:** Exact imported palette yields zero qualifying RGB violations after the final validator; duplicate/locked-color handling and any named corrective remap match the recipe.
 - **AC-ALPHA-001:** Hidden RGB under alpha zero cannot change Trim, grid confidence, palette, or visible output; halo fixtures pass over black, white, gray, and checkerboard.
 - **AC-DITH-001:** None, ordered, and any enabled diffusion algorithm reproduce golden hashes and serialize phase/scan/kernel settings.
@@ -737,7 +737,7 @@ Reasonable defaults below let planning proceed; each can change only through a d
 
 ### 22.1 Evidence keys
 
-- **[OWNER]** Project-owner statement in the initiating request: exact target dimensions; Trim uses opaque/visible pixels versus full canvas; broad raster/mixel support; deterministic non-AI processing; separate resizing, quantization, and background features; customizable algorithms; MIT/open source; heavy competitor research.
+- **[OWNER]** Internal product authority from the initiating request, not a public evidence citation: exact target dimensions; Trim uses opaque/visible pixels versus full canvas; broad raster/mixel support; deterministic non-AI processing; separate resizing, quantization, and background features; customizable algorithms; MIT/open source; heavy competitor research. Public claims require independent support from the other evidence keys.
 - **[SYN]** `docs/research-spikes/SYNTHESIS.md` — reconciled cross-spike feasibility, locked decisions, benchmark-gated decisions, product gap, risks, and falsification conditions.
 - **[BENCH]** `docs/research-spikes/evaluation/benchmark-methodology.md` — corpus governance, truth levels, metric semantics, statistical design, determinism/performance protocols, and claim-to-gate policy.
 - **[ALG]** `docs/research-spikes/algorithms/state-of-the-art.md` — especially “Why a universal best algorithm is impossible,” “End-to-end deterministic processing model,” §§1–2, §§5–10, “Cross-browser determinism contract,” “Recommended profiles,” and “Benchmark and validation plan.”

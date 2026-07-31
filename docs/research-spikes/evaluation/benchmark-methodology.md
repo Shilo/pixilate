@@ -76,7 +76,7 @@ This is an engineering policy, not legal advice. Any uncertain asset or algorith
 The redistributable benchmark should use, in order of preference:
 
 1. **Procedural fixtures authored by this project.** Generator source is MIT; emitted fixture images, annotations, and manifests should be dedicated under CC0-1.0.
-2. **Commissioned original assets.** The contract must state that the artist owns the work, has not incorporated third-party assets, and assigns or licenses the source, targets, annotations, and derivatives for redistribution under CC0-1.0. Pay separately for benchmark rights; keep signed provenance outside the public repository if it contains personal data.
+2. **Commissioned original assets.** The contract must state that the artist owns the work, has not incorporated third-party assets, and dedicates the source, targets, annotations, and derivatives under CC0-1.0, or uses separately specified public terms when a CC0 dedication is not suitable. Pay separately for benchmark rights; keep signed provenance outside the public repository if it contains personal data.
 3. **Assets explicitly dedicated by the rightsholder under CC0-1.0.** Capture the asset page, exact file hash, author/rightsholder, license text/URL, and retrieval date.
 4. **Works reliably marked worldwide public domain.** Require a provenance review rather than assuming age, “free,” government origin, or a Public Domain Mark is conclusive in every jurisdiction. Creative Commons distinguishes a rightsholder’s CC0 dedication from the informational Public Domain Mark and warns that public-domain status can vary by jurisdiction ([CC public-domain guidance](https://creativecommons.org/public-domain/)).
 

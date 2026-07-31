@@ -14,7 +14,7 @@ There is no open-source project in this survey that already provides Pixilate's 
 4. preserve alpha correctly, in an explicit color space, without hidden-RGB halos;
 5. suppress isolated pixels and unstable topology without erasing intentional one-pixel features;
 6. generate or apply an exact-size palette with deterministic tie-breaking; and
-7. reproduce byte-identical output from a declared engine/version/settings tuple.
+7. reproduce canonical output pixels from a declared engine/version/settings tuple; byte-identical encoded files are a separate conditional claim requiring a pinned encoder policy.
 
 The most relevant reusable foundations in this survey are narrower:
 
@@ -52,6 +52,7 @@ The survey did **not** attempt to enumerate every one-file tutorial, shader toy,
 
 - **Source-derived fact** means the statement follows directly from the pinned source, manifest, tests, or license text linked nearby.
 - **Engineering inference** means a consequence inferred from that code, such as likely cross-browser variation or insufficient topology preservation. Inferences are labeled.
+- In the shared project taxonomy, **Source-derived fact** maps to **CODE-DERIVED** and **Engineering inference** maps to **INFERRED**. Unprefixed license/status cells in the inventory are explicitly surface signals, not evidence that a distributed artifact is closed for reuse.
 - No candidate was assumed deterministic merely because it has no obvious call to `random()`. Floating-point evaluation, parallel reduction order, decoder versions, browser canvas implementations, SIMD dispatch, unstable sorting, and unspecified tie-breaking can all change bits.
 
 ### Verification dimensions

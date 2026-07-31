@@ -6,6 +6,8 @@
 **Target:** local-first, deterministic, non-generative web application; Pixilate-owned code intended for MIT licensing, with every distributed third-party component retaining its approved terms and subject to dependency, asset, codec, and patent review
 **Synthesis reconciliation:** 2026-07-31 — reconciled against [SYNTHESIS.md](../research-spikes/SYNTHESIS.md) and the [public-documentation review](../reviews/FINAL-REVIEW.md)
 
+The proposed pre-R0 Slice A contract is documented in [canonical-rgba-geometry-spike.md](../research-spikes/algorithms/canonical-rgba-geometry-spike.md). It is a review artifact only; it does not authorize the harness or select a production engine.
+
 ## 1. Outcome and planning stance
 
 Pixilate should be developed as an evidence-gated image-processing product, not as a UI wrapped around a favored pixelation algorithm. The first executable work must establish a licensed corpus, canonical pixel contract, deterministic benchmark harness, and simple baselines. Product UI and automatic profile defaults follow only after those foundations can measure conformance, quality, failure boundaries, runtime, memory, and cross-runtime identity.
@@ -139,7 +141,7 @@ Rules:
 - filenames, locale, clock timestamps, elapsed time, and UI state never affect canonical hashes;
 - algorithms define traversal, stable total order, ties, accumulation, rounding, initialization, stopping, empty states, and PRNG if any;
 - no fast-math, relaxed SIMD, unordered parallel reductions, or ambient random source in strict decision paths;
-- hash domains are byte-level and domain-separated: `source-bytes-v1`, `canonical-rgba-v1`, `palette-v1`, `semantic-result-v1`, `recipe-input-v1`, `recipe-result-v1`, and `encoded-file-v1`; `canonical-rgba-v1` contains only its tag/schema, dimensions, and row-major RGBA8; palette metadata is separate;
+- hash domains are byte-level and domain-separated: `pixilate/source-bytes/v1`, `pixilate/canonical-rgba/v1`, `pixilate/palette/v1`, `pixilate/semantic-result/v1`, `pixilate/recipe-input/v1`, `pixilate/recipe-result/v1`, and `pixilate/encoded-file/v1`; `pixilate/canonical-rgba/v1` contains only its tag/schema, dimensions, and row-major RGBA8; palette metadata is separate;
 - recipe-input identity omits derived result/file hashes; no encoded artifact embeds the hash of its own complete bytes;
 - strict algorithm work limits (pixels, bytes, candidates, iterations, queue entries, graph edges, allocations) are recipe/engine rules; user cancellation and a host watchdog are noncanonical operational outcomes and never select pixels or become cached deterministic results;
 - replay uses the exact engine/profile or fails. “Use current engine” creates a branched recipe and a new identity;
@@ -203,7 +205,8 @@ Each phase ends in a decision gate. A later phase may prototype behind an experi
 **Goal:** create the mechanism that evaluates all later algorithms before any product UI.  
 **Prerequisites:** Phase 1 schemas and fixtures.  
 **Deliverables:** dependency-clean Slice A; future headless runner; domain-separated canonical input/recipe/output hash formats; immutable result schema; artifact store by hash; metric runner; golden governance; performance instrumentation; competitor capture schema; report generator; `OD-001` decision record only after Slice A supplies neutral vectors.  
-**Requirements:** `DET-001`, `DET-002`, `DET-003`, `DET-004`, `DET-005`, `DET-006`, `DET-007`, `DET-008`, `OUT-004`, `OUT-005`, `AC-DET-001`, `AC-DET-002`, `AC-SEC-001`.  
+**Requirements:** `DET-001`, `DET-002`, `DET-003`, `DET-004`, `DET-005`, `DET-006`, `DET-007`, `DET-008`, `OUT-004`, `OUT-005`, `NFR-SEC-007`, `AC-DET-001`, `AC-DET-002`, `AC-SEC-001`, `AC-SEC-002`.
+
 **Tasks:** execute Slice A from §15; implement cross-process repetition, tie-heavy loops, environment manifests, typed failures, cold/warm measurements, and no-auto-update golden workflow. Run `EX-001` only if the owner's Gate A authorization separately names that follow-on; Slice A itself never selects the production engine.  
 **Gate / exit:** a trivial reference transform runs reproducibly across the initial matrix; malformed results/schema fail closed; reports preserve errors and unsupported cases.  
 **Risk / fallback:** full browser matrix may not be available in ordinary CI; require a small blocking core matrix plus scheduled/release hardware runners.
@@ -302,7 +305,8 @@ Each phase ends in a decision gate. A later phase may prototype behind an experi
 **Goal:** make outputs durable and reproducible.  
 **Prerequisites:** stable recipe schema, engine registry, web integration.  
 **Deliverables:** canonical PNG; recipe JSON; import/validation/replay; unavailable-engine branch flow; domain-separated canonical/semantic/encoded hashes; collision-safe download. Named local recipes (`FR-018`) remain T2.  
-**Requirements:** `OUT-001`, `OUT-002`, `OUT-003`, `OUT-004`, `OUT-005`, `OUT-006`, `FR-012`, `FR-013`, `DET-008`, `AC-DET-003`. Deferred T2 requirement: `FR-018`.  
+**Requirements:** `OUT-001`, `OUT-002`, `OUT-004`, `OUT-005`, `OUT-006`, `FR-012`, `FR-013`, `DET-008`, `AC-DET-003`. `OUT-003` remains post-MVP as defined by the product requirements. Deferred T2 requirement: `FR-018`.
+
 **Tasks:** run `EX-013`; prohibit hash self-reference; corrupt/untrusted recipe fuzzing; atomic export; local-state deletion; schema compatibility and migration tests.  
 **Gate / exit:** supported recipes replay to stored canonical hash; unavailable versions fail without substitution; failed/cancelled output cannot be downloaded as success.  
 **Risk / fallback:** sidecar remains authoritative; defer embedded PNG metadata and byte-identical file claims.
@@ -313,7 +317,8 @@ Each phase ends in a decision gate. A later phase may prototype behind an experi
 **Goal:** turn measured functionality into a defensible public MVP.  
 **Prerequisites:** integrated MVP candidate.  
 **Deliverables:** final resource limits/SLO report; fuzz/adversarial suite; CSP/offline policy; dependency/vulnerability scans; accessibility audit; browser/device support matrix; recovery/error tests.  
-**Requirements:** `NFR-PERF-001`, `NFR-PERF-002`, `NFR-PERF-003`, `NFR-PERF-004`, `NFR-PERF-005`, `NFR-SEC-001`, `NFR-SEC-002`, `NFR-SEC-003`, `NFR-SEC-004`, `NFR-SEC-005`, `NFR-SEC-006`, `NFR-A11Y-001`, `NFR-A11Y-002`, `NFR-A11Y-003`, `NFR-A11Y-004`, `NFR-A11Y-005`, `NFR-A11Y-006`, `AC-SEC-001`, `AC-CAN-001`, `AC-A11Y-001`.  
+**Requirements:** `NFR-PERF-001`, `NFR-PERF-002`, `NFR-PERF-003`, `NFR-PERF-004`, `NFR-PERF-005`, `NFR-SEC-001`, `NFR-SEC-002`, `NFR-SEC-003`, `NFR-SEC-004`, `NFR-SEC-005`, `NFR-SEC-006`, `NFR-SEC-007`, `NFR-A11Y-001`, `NFR-A11Y-002`, `NFR-A11Y-003`, `NFR-A11Y-004`, `NFR-A11Y-005`, `NFR-A11Y-006`, `AC-SEC-001`, `AC-SEC-002`, `AC-CAN-001`, `AC-A11Y-001`.
+
 **Tasks:** run `EX-012`; define per-parser metadata/profile/chunk/frame/recipe/palette limits, checked stride and aggregate live-byte accounting; distinguish deterministic `algorithm-budget-exceeded` from noncanonical `host-watchdog-timeout`; test decode bombs, overflow, hostile metadata, 4/10/16 MP boundaries, memory, bundle, cancellation, and accessibility.  
 **Gate / exit:** hard security/conformance gates pass; public limits reflect the weakest supported device; any dependency >1 MiB compressed has evidence and an approved alternative analysis.  
 **Risk / fallback:** narrow formats/limits/browser support; never silently exceed validated memory or substitute unsafe decode.
@@ -439,13 +444,13 @@ Research keys: [PRD](product-requirements.md), [SYN](../research-spikes/SYNTHESI
 | profile routing and Mixel status | `AUTO-002`–`AUTO-008`; `FR-006`; `FR-007` | `EX-004` and `EX-005` close `OD-004`; `EX-006` closes `OD-006`; `EX-009` closes `OD-005` | Phases 4, 6, 7; `AC-PRO-001`, `AC-PRO-002`, `AC-PRO-003`, `AC-PRO-004`, `AC-PRO-005` |
 | palette, dither, cleanup | `PAL-001`–`PAL-007`; `DITH-001`–`DITH-005`; `CLEAN-001`–`CLEAN-006` | `EX-007` closes `OD-007`; `EX-008` closes `OD-008`; `EX-011` closes `OD-009` | Phase 5; T2-only Phase 8; `AC-PAL-001`, `AC-PAL-002`, `AC-DITH-001`, T2 `AC-CLEAN-001` |
 | deterministic background primitives | `BG-001`–`BG-008`; `FR-014`; `FR-015` | `EX-010` closes `OD-010` | T2-only Phase 8; `AC-BG-001`, `AC-BG-002` |
-| limits and release closure | `NFR-PERF-001`–`NFR-PERF-005`; `NFR-LIC-001`–`NFR-LIC-007` | `EX-012` closes `OD-011`; `EX-014` is release evidence | Phases 12–14; `AC-CAN-001`, `AC-SEC-001`, `AC-LIC-001` |
+| limits and release closure | `NFR-PERF-001`–`NFR-PERF-005`; `NFR-SEC-007`; `NFR-LIC-001`–`NFR-LIC-007` | `EX-012` closes `OD-011`; `EX-014` is release evidence | Phases 12–14; `AC-CAN-001`, `AC-PRO-004`, `AC-SEC-002`, `AC-LIC-001` |
 
 | Phase | Scope class | Explicit requirement / acceptance coverage | Primary local evidence |
 |---:|---|---|---|
 | 0 | T0 governance | `G-002`, `G-008`, `G-010`; `NG-001`–`NG-009`; `NFR-LIC-001`–`NFR-LIC-007` | PRD §§5, 19–23; SYN locked/gated decisions; BENCH §§16–19 |
 | 1 | T0 governance | `G-008`, `G-010`; `NFR-LIC-001`–`NFR-LIC-007`; `NFR-SEC-001`, `NFR-SEC-002` | BENCH §§3–8, 15–19; OSS license assessment |
-| 2 | T0 harness / Gate A | `DET-001`–`DET-008`; `OUT-004`, `OUT-005`; `AC-DET-001`, `AC-DET-002`, `AC-SEC-001` | Slice A; BENCH §§10, 13–16; ALG §12 |
+| 2 | T0 harness / Gate A | `DET-001`–`DET-008`; `OUT-004`, `OUT-005`; `NFR-SEC-007`; `AC-DET-001`, `AC-DET-002`, `AC-SEC-001`, `AC-SEC-002` | Slice A; BENCH §§10, 13–16; ALG §12 |
 | 3 | T0 conformance | `G-001`, `G-004`; `FMT-001`–`FMT-007`; `ALPHA-001`–`ALPHA-005`; `GEO-001`–`GEO-005`; `TRIM-001`–`TRIM-006`; `FR-001`, `FR-003`, `FR-004`, `FR-005`, `FR-011`; `AC-GEO-001`, `AC-GEO-002`; `AC-TRIM-001`–`AC-TRIM-004`; `AC-ALPHA-001` | PRD §§8–9, 12, 17; ALG §§1–2; BENCH §§5, 8, 10 |
 | 4 | T0 baseline | `FR-006`; `PRO-NOOP`; `PRO-EXACT`; `AC-PRO-001`, `AC-PRO-002`, `AC-PRO-005` | ALG §§3–5, 14; BENCH §§9–10, 16; SFS; UNF |
 | 5 | T0 palette | `G-005`, `G-007`; `PAL-001`–`PAL-007`; `DITH-001`–`DITH-005`; `FR-009`, `FR-010`, later `FR-016`; `AC-PAL-001`, `AC-PAL-002`, `AC-DITH-001` | ALG §§7–8; BENCH §§8–10; OSS; UNF; PXL |
@@ -454,8 +459,8 @@ Research keys: [PRD](product-requirements.md), [SYN](../research-spikes/SYNTHESI
 | 8 | T2 nonshipping | `BG-001`–`BG-008`; `CLEAN-001`–`CLEAN-006`; `FR-014`, `FR-015`, `FR-017`; `AC-BG-001`, `AC-BG-002`, `AC-CLEAN-001`; `PRO-LINE` | ALG §§9–10; BENCH §§8.3, 10.5; COM; OSS; PXL; UNF |
 | 9 | T1 product | `G-009`; `FR-021`, `FR-022`; `NFR-PRIV-001`–`NFR-PRIV-005`; `NFR-PERF-002`, `NFR-PERF-003`; `AC-PRIV-001`, `AC-OFF-001`, `AC-CAN-001` | PRD §§14, 16–17; ALG §§11–12; SFS; UNF |
 | 10 | T1 UX | `G-006`; `AUTO-007`; `FR-002`, `FR-004`, `FR-007`, `FR-008`; `NFR-A11Y-001`–`NFR-A11Y-006`; `AC-A11Y-001` | PRD §§7, 11, 15–17; COM diagnostics |
-| 11 | T1 persistence | `OUT-001`–`OUT-006`; `FR-012`, `FR-013`; `DET-008`; `AC-DET-003` | PRD §§8, 14, 17; ALG §12; BENCH §§10.7, 15 |
-| 12 | T1 hardening | `NFR-PERF-001`–`NFR-PERF-005`; `NFR-SEC-001`–`NFR-SEC-006`; `NFR-A11Y-001`–`NFR-A11Y-006`; `AC-SEC-001`, `AC-CAN-001`, `AC-A11Y-001` | PRD §§16–17; BENCH §§5.7, 10.8, 16; OSS risks |
+| 11 | T1 persistence | `OUT-001`, `OUT-002`, `OUT-004`–`OUT-006`; `FR-012`, `FR-013`; `DET-008`; `AC-DET-003` | PRD §§8, 14, 17; ALG §12; BENCH §§10.7, 15 |
+| 12 | T1 hardening | `NFR-PERF-001`–`NFR-PERF-005`; `NFR-SEC-001`–`NFR-SEC-007`; `NFR-A11Y-001`–`NFR-A11Y-006`; `AC-SEC-001`, `AC-SEC-002`, `AC-CAN-001`, `AC-A11Y-001` | PRD §§16–17; BENCH §§5.7, 10.8, 16; OSS risks |
 | 13 | T1 qualification | the exact T1 acceptance list in Phase 13; no “all shipped ACs” shorthand | BENCH §§11–16; SYN; product/landscape spikes |
 | 14 | T1 release cut | `NFR-LIC-001`–`NFR-LIC-007`; `NFR-PRIV-001`–`NFR-PRIV-005`; `NFR-SEC-005`; `AC-LIC-001` | PRD §§16.5, 17; ALG §11; OSS; COM |
 
@@ -467,7 +472,7 @@ Research keys: [PRD](product-requirements.md), [SYN](../research-spikes/SYNTHESI
 
 Before asking the owner for Gate A authorization, documentation must specify and receive review acceptance for:
 
-1. the byte-level `canonical-rgba-v1` buffer and domain-separated hash/projection schemas;
+1. the byte-level `pixilate/canonical-rgba/v1` buffer and domain-separated hash/projection schemas;
 2. Trim and exact geometry formulas, including all-transparent input, checked bounds, Contain's extreme-aspect zero-minor-axis policy, crop/pad rectangles, and typed errors;
 3. deterministic algorithm work budgets distinct from cancellation and host watchdog outcomes;
 4. owned procedural fixture-generator license/provenance and a bootstrap manifest;
@@ -478,7 +483,7 @@ Before asking the owner for Gate A authorization, documentation must specify and
 After explicit Gate A authorization, build one headless, UI-free, dependency-clean research slice:
 
 1. accept only owned procedural in-memory canonical RGBA8 arrays; no PNG/JPEG/WebP/BMP decode, EXIF, ICC, browser Canvas, file picker, or encoder;
-2. implement `canonical-rgba-v1`, minimal input-recipe/result projections, domain-separated hashes, typed checked bounds/errors, and an actual stage trace;
+2. implement `pixilate/canonical-rgba/v1`, minimal input-recipe/result projections, domain-separated hashes, typed checked bounds/errors, and an actual stage trace;
 3. implement Trim off/on (`alpha > 0`), Stretch/Contain/Cover under the preaccepted extreme-aspect policy, nearest, nonnegative rational-area reduction, and PRO-NOOP behavior;
 4. implement **exact constant-block factorization** that returns every ordered valid `(sx,sy,phase)` candidate plus ambiguity; it must not infer invisible original boundaries or claim original-grid recovery without instruction/unique identifiability;
 5. run exhaustive reduced-domain geometry checks plus property/fuzz boundary tests for exact `W×H`, transparent-margin equivalence, no-op identity, alpha-zero invariance, deterministic ties, allocation arithmetic, and typed budget errors;
