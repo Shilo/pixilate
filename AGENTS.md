@@ -1,4 +1,10 @@
-## Project Structure
+# Pixelate
+
+## Goal
+
+Pixilate is a planned local-first web application for converting raster, AI-generated, or manually created artwork into accurate pixel art without generative AI. It targets common conversion failures including mixels, misaligned or inconsistent grids, excessive and incoherent colors, noisy downscaling, orphan pixels, and lost thin features. Its central goal is a capability not found as a complete workflow in the tools reviewed so far: deterministic conversion to an exact user-selected pixel width and height while recovering or preserving meaningful structure. It will combine explicit canvas or opaque-bounds trimming, configurable grid recovery and resampling, palette quantization, and deterministic background removal as separate composable tools, with approachable defaults, advanced controls, replayable settings, and an open-source MIT-licensed core.
+
+## Structure
 
 Pixilate is currently in research and planning. Keep public work in `docs/` until an implementation phase is explicitly approved.
 
