@@ -271,7 +271,8 @@ Each phase ends in a decision gate. A later phase may prototype behind an experi
 **Scope class:** T2 exploratory/nonshipping during the T1 release cycle; not a T1 prerequisite.  
 **Goal:** evaluate predictable mask primitives, formal cleanup, and PRO-LINE separately from the T1 core.  
 **Prerequisites:** canonical alpha, B corpus, mask metrics.  
-**Deliverables:** `OD-009` and `OD-010` decision records; exact/tolerance key, global/border-connected semantics, 4/8 flood, component rules, mask diagnostics, matte-decontamination experiment; cleanup decision; PRO-LINE research report; graph-cut adoption decision later.  
+**Deliverables:** `OD-009` and `OD-010` decision records; exact/tolerance key, global/border-connected semantics, 4/8 flood, component rules, mask diagnostics, matte-decontamination experiment; cleanup decision; PRO-LINE research report; graph-cut adoption decision later. The proposed [border-connected background and guarded cleanup spike](../research-spikes/algorithms/border-connected-background-cleanup-spike.md) supplies the non-production ablation scope and failure taxonomy; it does not authorize execution.
+
 **Requirements:** `BG-001`, `BG-002`, `BG-003`, `BG-004`, `BG-005`, `BG-006`, `BG-007`, `BG-008`, `CLEAN-001`, `CLEAN-002`, `CLEAN-003`, `CLEAN-004`, `CLEAN-005`, `CLEAN-006`, `FR-014`, `FR-015`, `FR-017`, `AC-BG-001`, `AC-BG-002`, `AC-CLEAN-001`, `PRO-LINE`.  
 **Tasks:** run `EX-010` and `EX-011`; evaluate PRO-LINE with variants from `EX-003` and `EX-006`; validate holes, border-touching subjects, shared colors, partial alpha, threshold equality, cleanup diffs/topology, and downstream Trim invalidation/recompute.  
 **Gate / exit:** repeatable masks and exact primitive semantics; cleanup remains off unless its gate passes; PRO-LINE stays T2 experimental unless separately promoted; none is included in the T1 release artifact.  

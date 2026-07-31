@@ -34,6 +34,7 @@ The spikes use a shared vocabulary:
 | 2026-07-31 — [Open-source ecosystem](landscape/open-source-ecosystem.md) | Is there a reusable open-source stack or complete converter? | No complete core exists; selected permissive resize/quantization primitives are promising, while Pixilate must own its product contracts and grid/topology logic. |
 | 2026-07-31 — [Deterministic algorithm state of the art](algorithms/state-of-the-art.md) | What pipeline can cover grids, mixels, and continuous raster without AI? | Use one canonical local engine with exact geometry and separate source-condition profiles; the proposed mixel ensemble remains an experiment. |
 | 2026-07-31 — [Canonical RGBA geometry, alpha, and hash conformance (proposed)](algorithms/canonical-rgba-geometry-spike.md) | What is the smallest neutral contract that later research can trust? | Proposed R0 Slice A specification; execution, vectors, and production choices remain unauthorized. |
+| 2026-07-31 — [Border-connected background and guarded cleanup (proposed)](algorithms/border-connected-background-cleanup-spike.md) | Can explicit border/tolerance/connectivity primitives improve masks without pretending to understand subject semantics? | Bounded `EX-010`/`EX-011` refinement; no measured result, default, or semantic-automatic claim. |
 | 2026-07-31 — [Benchmark methodology](evaluation/benchmark-methodology.md) | How can “best” and deterministic claims be tested without a false universal score? | Separate hard conformance, recoverable ground truth, and ambiguous artistic usefulness; gate every claim by input stratum. |
 
 The companion [product requirements and design contract](../planning/product-requirements.md) translates the evidence into normative product behavior and phased scope.
@@ -51,7 +52,8 @@ Hands-on observations are diagnostic probes, not the requested comparative bench
 1. [SYNTHESIS.md](SYNTHESIS.md) for the product-level answer, conflicts, architecture hypothesis, risks, and gated decisions.
 2. [product-requirements.md](../planning/product-requirements.md) for the current normative contract and scope tiers.
 3. [Canonical RGBA geometry, alpha, and hash conformance](algorithms/canonical-rgba-geometry-spike.md) before any R0 harness authorization.
-4. The three priority product audits: [PixelLab](products/pixellab.md), [SpriteFusion](products/spritefusion-pixel-snapper.md), then [Unfaker](products/unfake-js.md).
-5. [Commercial/web landscape](landscape/commercial-and-web-tools.md) and [open-source ecosystem](landscape/open-source-ecosystem.md) for breadth, alternatives, provenance, and dependency posture.
-6. [Algorithm state of the art](algorithms/state-of-the-art.md) for the technical hypothesis.
-7. [Benchmark methodology](evaluation/benchmark-methodology.md) before selecting defaults or making quality claims.
+4. [Border-connected background and guarded cleanup](algorithms/border-connected-background-cleanup-spike.md) for the bounded `EX-010`/`EX-011` follow-on.
+5. The three priority product audits: [PixelLab](products/pixellab.md), [SpriteFusion](products/spritefusion-pixel-snapper.md), then [Unfaker](products/unfake-js.md).
+6. [Commercial/web landscape](landscape/commercial-and-web-tools.md) and [open-source ecosystem](landscape/open-source-ecosystem.md) for breadth, alternatives, provenance, and dependency posture.
+7. [Algorithm state of the art](algorithms/state-of-the-art.md) for the technical hypothesis.
+8. [Benchmark methodology](evaluation/benchmark-methodology.md) before selecting defaults or making quality claims.
