@@ -37,7 +37,7 @@ If there is no hard fail, score the **recommended** candidate 1–5 on each crit
 ## 1. Setup
 
 - [ ] [Human] Install and start the prototype: `cd prototype && npm install && npm run dev`, then open the printed local URL.
-- [ ] [Human] Create the folders `.local/live/` (inputs), `.local/live-out/` (outputs) and `.local/live-tests.md` (results log, template at the end).
+- [ ] [Human] Create the folder `.local/live/` for input images. `node scripts/live-batch.mjs` (run from `prototype/`) creates `.local/live-out/` with outputs, one contact sheet per image and a pre-filled `results-log.md`.
 - [ ] [Human] Confirm the baseline works: `cd prototype && npm test` passes with 0 failures.
 
 ## 2. Collect live AI images
@@ -68,6 +68,8 @@ Categories, with prompts written as a typical user would:
 - [ ] A clearly non-pixel painting (negative control). It should be reported as no grid and converted approximately.
 
 ## 3. Run every image
+
+Fast path: put the images in `.local/live/` and run `cd prototype && node scripts/live-batch.mjs`. It converts each image at its suggested size and at 64, 48, 32 and 16 px, in two option sets (engine defaults, and "sprite" = background auto + Trim). It scores every candidate with the hard checks, verifies the recommended output repeats byte-for-byte, and writes contact sheets plus `results-log.md` with the automatic flags filled in. You then score the rubric columns from the sheets. Use the browser steps below for anything the batch does not cover (non-square sizes, colour caps, key-colour background, manual period). Score any single output with `node scripts/score.mjs <file.png> --target WxH [--colors N]`.
 
 Do these steps for each image.
 
@@ -137,12 +139,9 @@ PixelLab outputs true pixel art at a chosen size, so it can serve as known-good 
 
 Each item is linked to the open questions in the [design](prototype-algorithm-design.md#open-questions-and-next-experiments) and the [session findings](session-findings-2026-10-19.md#recommended-next-steps). For every behaviour change, add a Deviations row with evidence.
 
-- [ ] [Agent] Add `scripts/score.mjs <output.png> [source.png]`.
-  - It prints the hard checks and the intrinsic metrics already in `test/metrics.js` (Q3, Q4, Q7, Q13, plus size and alpha), so the human scores are backed by numbers.
-  - Optionally show the same numbers in the UI report.
-- [ ] [Agent] Add `scripts/live-batch.mjs`.
-  - It converts every image in `.local/live/` at its suggested size and the standard target list, writes the outputs and a contact sheet to `.local/live-out/`, and logs the hashes.
-  - This makes §3 one command, with the human doing only the scoring.
+- [x] [Agent] `scripts/score.mjs <output.png> [--target WxH] [--colors N] [--json]` (2026-10-20). It prints the hard checks (size, binary alpha, mixels via Q13, palette cap) and the intrinsic metrics from `test/metrics.js` (colours, near-duplicates, orphans by class, L-corner doubles, islands, pinholes). Thresholds are the provisional defaults. The noise-orphan flag fires on most real native outputs, so calibrate it against the live rubric scores. Not done: source-referenced faithfulness and showing the numbers in the UI.
+- [x] [Agent] `scripts/live-batch.mjs` (2026-10-20). It covers §3 in one command, including the determinism check (3 local samples × 2 modes × 5 sizes in about 26 s).
+- [ ] [Agent] **Calibrate the automatic flags** once the first live batch has rubric scores: set the noise-orphan and L-corner ceilings from outputs the human rated 4 or higher.
 - [ ] [Agent] **Smooth-upscale detection (highest priority, 2026-10-20 browser check).** Bilinear upscales of true pixel art are not recognised as gridded: 7 of 8 local PixelLab round trips were classed `none`, and the eighth only `weak` on a wrong lattice, giving 0–89 % exact. Nearest-neighbour upscales were 100 % exact in 7 of 8.
   - Add the second-difference channel: a bilinear upscale has kinks at cell centres, not edges.
   - First add a committed procedural plain-bilinear ×8 fixture that fails today. The synthetic `nonint-bilinear` preset has sharper edges and does not reproduce the miss.

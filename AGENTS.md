@@ -36,6 +36,10 @@ Build: cd prototype && npm run build
 
 Benchmark: cd prototype && npm run bench -- --seeds 1
 
+Score one output: cd prototype && node scripts/score.mjs out.png --target 32x32
+
+Live AI-image batch (.local/live/ to .local/live-out/): cd prototype && node scripts/live-batch.mjs
+
 Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseline.mjs
 
 ## Engine

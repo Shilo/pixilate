@@ -10,6 +10,8 @@ npm run dev     # local dev server
 npm test        # Vitest unit tests
 npm run bench   # synthetic-degradation benchmark
 npm run build   # production build into dist/
+node scripts/score.mjs out.png --target 32x32   # hard checks + intrinsic metrics for one output
+node scripts/live-batch.mjs   # convert every image in ../.local/live/ into ../.local/live-out/
 ```
 
 ## Using the harness
