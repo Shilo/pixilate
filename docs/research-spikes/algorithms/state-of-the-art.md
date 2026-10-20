@@ -770,3 +770,28 @@ These extend §12 for the owner-selected engine.
 - **Licences seen in this review** (engineering triage, recheck before reuse). Aseprite's source is under an EULA, so its pixel-perfect stroke rule may be described but not copied; PixelOE is Apache-2.0; libimagequant is GPL-3.0-or-later or commercial (see §11).
 
 Learned models (Han et al. 2018, Wu et al. 2022, SD-πXL 2024) are excluded by the no-generative-AI scope; their split into cell-structure, aliasing and colour stages is a useful model for the deterministic stages only.
+
+## 2026-10-20 refresh
+
+**Snapshot:** 2026-10-20, web search only. The sources are in the [open-source refresh](../landscape/open-source-ecosystem.md#2026-10-20-refresh) and the [commercial refresh](../landscape/commercial-and-web-tools.md#2026-10-20-refresh).
+
+### Literature: nothing material
+
+Searches of arXiv, SIGGRAPH 2026, Eurographics 2026 and general paper indexes found no 2025–2026 paper on pixel-art grid recovery, pseudo-pixel repair or pixel-art downscaling beyond those already cited (Seo et al. 2026 is in the 2026-10-19 addendum).
+
+- **General downscalers.** [arXiv:2510.22551](https://arxiv.org/abs/2510.22551) (edge-guided interpolation) and [arXiv:2510.24334](https://arxiv.org/abs/2510.24334) (learned co-occurrence) are general photo downscalers, and the second is learned. Neither adds to §3 or §14 C (INFERRED from the abstracts).
+- **Prior art, not a method gain.** Mhatre et al., ["Deterministic Palette Quantization Using Resolution-Adaptive Spatial Partitioning"](https://www.tdcommons.org/dpubs_series/10979) (Technical Disclosure Commons, 2026-07-15, CC BY 4.0) discloses block partitioning, a modal colour per block, the dominant background colour added to a fixed palette, and k-d-tree nearest mapping for AI-image artefacts. That is already §4 weighted mode plus a palette snap (VERIFIED abstract). Its value is as dated public prior art for that combination (engineering triage, not legal advice).
+
+### Algorithm ideas from new public code, ranked by expected value
+
+Each idea is a candidate experiment, not a selected default. Labels follow the cited pins.
+
+1. **Chance-corrected edge support as a grid-confidence feature** (Real-PixelArt; CODE-DERIVED). Count the edge mass within `tol = max(0.65, 0.14p)` of the cuts and subtract the share that uniform edges would land there by chance (`min(0.85, 2.5066·tol/p)`; 2.5066 ≈ √(2π), a Gaussian-window width). Then rescale to [0, 1]. It is the cheap, closed-form cousin of the 2026-10-19 a-contrario NFA idea. It targets the prototype's detection misses ([session findings](../../planning/session-findings-2026-10-19.md#recommended-next-steps) step 2). Add it next to D8's step ratio and measure the `bicubic-x8` and non-integer 1-bit misses (INFERRED). Its companion, rejecting weak candidates whose edges form few continuous axis-aligned segments, addresses the periodic-texture false positives that NFA alone admits.
+2. **Non-separable 2-D junction mesh for drift** (pixel-pusher; CODE-DERIVED, no licence, ideas only). The prototype's elastic cuts (design §Approximate grid detector, step 8) are per-axis, so one x-cut serves the whole image height. Sub-cell offsets that differ by region ([artifact characterization](../evaluation/ai-artifact-characterization.md), `gemini-mage`; drift 0.2–2 cells) cannot be followed. A junction mesh with corner-anchored moves, neighbour-difference regularization and a "flat stays on the seed" rule can follow them. That bears on the weakest stratum (M) (INFERRED). Cost: about 9–16 local cell-variance evaluations per junction per step over 3 iterations, which fits on the cell grid. Determinism needs a fixed junction visiting order (Jacobi-style; see the 2026-10-19 order-independence note).
+3. **Count-constrained DP for `lockGrid`** (Real-PixelArt `targetAxis`; CODE-DERIVED, MIT). The prototype falls back to regular cuts when its elastic DP misses the fixed count. A DP over N − 1 interior cuts with a displacement anchor cost (0.12) and a gap cost (0.35) cannot miss the count. It is a direct swap candidate for the `grid-locked` rows, which `OWN-006` makes common. Report it as "user-constrained lattice", as the source does.
+4. **Exhaustive summed-area-table search as a cross-check** (pixel-pusher). Score every integer (w, h, phase) in O(cells) by normalized within-cell variance, with a `1/(w·h)` coarseness term and a mild anisotropy prior. It is a fourth instance of the "largest cell within tolerance of best" rule (2026-10-19 open-source addendum), and an independent second opinion for octave-guard disputes (INFERRED). The `ln` in its prior must become a table or a rational form under the no-transcendental rule.
+5. **Report-only palette structure checks** (pixelfit PaletteLens; VERIFIED README). Non-monotonic ramp lightness, greyscale collisions and unused entries are cheap additions to the report and to the [quality metrics](../evaluation/pixel-art-quality-metrics.md) ramp section. They are not corrections.
+
+### Effect on the prototype design
+
+No finding contradicts a Deviations row. Ideas 1–3 are new experiments for `AUTO-005`/`AUTO-006`, `EX-005`/`EX-009` and the `grid-locked` path; none has run. Later the same day the prototype gained a second-difference fallback for smooth upscales (design D38–D41), which recovers the clean bicubic preset but not the noisy `bicubic-x8` preset, so idea 1 still targets the remaining misses.

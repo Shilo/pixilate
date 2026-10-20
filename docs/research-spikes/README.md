@@ -65,4 +65,4 @@ Hands-on observations are diagnostic probes, not the requested comparative bench
 7. [Algorithm state of the art](algorithms/state-of-the-art.md) for the technical hypothesis.
 8. [Benchmark methodology](evaluation/benchmark-methodology.md) before selecting defaults or making quality claims.
 9. For the exploratory prototype: the [prototype algorithm design](../planning/prototype-algorithm-design.md), then the [prototype test results](../reviews/prototype-v1-test-results.md).
-10. To resume prototype work: the [2026-10-19 session findings](../planning/session-findings-2026-10-19.md) for the current state, decisions and ranked next steps.
+10. To resume prototype work: the [2026-10-20 session findings](../planning/session-findings-2026-10-20.md) for the current state, decisions and ranked next steps, with the [2026-10-19 session findings](../planning/session-findings-2026-10-19.md) for the owner decisions and earlier background.

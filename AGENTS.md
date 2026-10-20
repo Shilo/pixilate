@@ -82,7 +82,7 @@ Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseli
 
 ## Docs
 
-[docs/planning/session-findings-2026-10-19.md](docs/planning/session-findings-2026-10-19.md): current state and ranked next steps; resume here.
+[docs/planning/session-findings-2026-10-20.md](docs/planning/session-findings-2026-10-20.md): current state and ranked next steps; resume here.
 
 [docs/planning/prototype-algorithm-design.md](docs/planning/prototype-algorithm-design.md): prototype design and Deviations log; add a row for every behaviour change.
 

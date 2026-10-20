@@ -675,3 +675,47 @@ The July claim that "search stopped after saturation" therefore missed relevant 
 - **pixeldetector and Pixel It dates:** later "last push" dates are GitHub `pushed_at`. The ledger records the commit date of the pinned revision. There is no conflict.
 - **Unfaker licence wording:** see the [Unfaker addendum](../products/unfake-js.md#licence-unchanged). The distribution's licence path is not publicly stated; nothing here asserts a GPL obligation.
 - **Defect claims:** claims of implementation defects in named projects, made in the superseded draft from paraphrased reads without pinned revisions, were not re-verified and are not carried forward. The July pixeldetector `uint8` inference (§1) is unchanged.
+
+## 2026-10-20 refresh
+
+**Snapshot:** 2026-10-20. **Method:** web search, GitHub search API (`created:>2026-06-30`), API metadata and raw files at the pinned revisions below, read through a web-fetch tool (a model-mediated reading; constants were requested verbatim and must be re-read at the pin before any port). Nothing was cloned, installed, built or run. No hosted-build asset was inspected.
+
+### HEAD re-checks: no algorithm change since 2026-10-19
+
+VERIFIED (commit metadata, 2026-10-20): Pixel Snapper `e6d81463` (README only), unfake.js `66368689` (v1.4.0), Retro Diffusion pixel-art-fixer `ef376e57` (v1.1, 2026-07-15) and pixel-bench `779cfc25`, PixelRefiner `c32659f3` (v1.1.1), fast-pixelizer `5c041fce`, proper-pixel-art `4de0dda5`, breakfastz-pixel-truth `a1a3961c` and PixelOE `7ce444b3` are still HEAD. perfectPixel (last push 2026-02-01) still has no licence file (`license: null`). The pinned findings above stand.
+
+### New projects
+
+| Candidate | Pinned revision | Created | Licence | Disposition |
+|---|---|---|---|---|
+| [Bocchi-The-Glock/Real-PixelArt](https://github.com/Bocchi-The-Glock/Real-PixelArt/tree/17ce487597dbc6c04c630226a0f499108a0e20ac) | `17ce4875` (2026-10-08) | 2026-09-16 | MIT (`LICENSE` file at the pin); the README badge says "Not specified" | Study and benchmark target; see below |
+| [wjhrdy/pixel-pusher](https://github.com/wjhrdy/pixel-pusher/tree/d8b49b3563d6381fb1d9f55589e33623c3896d55) | `d8b49b35` (2026-08-15, v0.0.7) | 2026-08-09 | No licence file (full tree listed); `THIRD_PARTY_NOTICES.md` credits proper-pixel-art (MIT) | Ideas only; see below |
+| [Ign1s-Reiga/pixelfit](https://github.com/Ign1s-Reiga/pixelfit/tree/fd1fb55ae95d1dbf3e91b28ecf9595b1d98487f5) | `fd1fb55a` (2026-08-26) | 2026-08-24 | MIT | Report-idea source (PaletteLens) |
+| [flores666/asepix](https://github.com/flores666/asepix) | not pinned | 2026-09-13 | None | Inventory: C#; fractional grid, inset 0.25 majority vote, per-tile sheet resize that drops whole art pixels (README) |
+| [envy-ai/ComfyUI-Krea2-Pixel-Art-Refiner](https://github.com/envy-ai/ComfyUI-Krea2-Pixel-Art-Refiner) | not pinned | 2026-09-16 | None | Inventory: per-cell 8-bit RGB mode with OKLab tie-break to the centre pixel; mesh detector adapted from proper-pixel-art (README) |
+| [See-Sol-Lab/Picxel](https://github.com/See-Sol-Lab/Picxel) | not pinned | 2026-09-12 | GPL-3.0-only | Out of scope: generative redraw, then local voting |
+| codecodecode333/PixelGridRecovery; PeaarLi/ComfyUI-PixelPipeline; comfyrob/comfyui-pixel-snapper | not pinned | 2026-07 to 2026-09 | None or NOASSERTION | Inventory only (search-API metadata) |
+| [imazen/zenquant](https://docs.rs/zenquant) 0.1.3 | crate, 2026-09-22 | — | AGPL-3.0-only or commercial | Not bundle-compatible; OKLab 256-colour quantizer with butteraugli-style weights |
+
+**Real-PixelArt (CODE-DERIVED at `17ce4875`, [`web/core/grid.js`](https://github.com/Bocchi-The-Glock/Real-PixelArt/blob/17ce487597dbc6c04c630226a0f499108a0e20ac/web/core/grid.js); README and [`EVALUATION.md`](https://github.com/Bocchi-The-Glock/Real-PixelArt/blob/17ce487597dbc6c04c630226a0f499108a0e20ac/EVALUATION.md)).** A JavaScript web core with a Python twin, kept pixel-identical by shared regression cases (vendor-stated). The README credits perfectPixel (no licence file) as inspiration for spacing, refinement and sampling, so code provenance needs a file-level check before any adaptation.
+
+- *Proposals, not decisions:* edge-gap kernel peaks, edge-profile FFT peaks and image-spectrum troughs, each expanded ×1, ×½ and ×2, are all fitted and scored. Ties go to the larger spacing.
+- *Score per axis* = 0.48 · units + 0.42 · explained + 0.10 · periodic. *explained* is the weighted share of edge mass within `tol = max(0.65, 0.14·p)` of a cut, **corrected for chance**: `chance = min(0.85, 2.5066·tol/p)` and `support = clip((obs − chance)/(1 − chance), 0, 1)`. Accept at score ≥ 0.30 with unit-gap support ≥ 0.10 on both axes.
+- *Segment validation* for weak candidates (support < 0.45): over patches, the share of edges forming continuous horizontal or vertical segments. A candidate is rejected when at least 75 % of the active patches are weak and the segment and axis fractions are low (< 0.25 and < 0.75). Inconclusive cases keep the candidate.
+- *Fixed size* (`targetAxis`, commit "Add fixed-size adaptive grid output"): the cell count is fixed and the endpoints cover the full image. Each interior cut moves within ±0.45 p of a phase-searched regular cut (17 shifts). A DP minimizes `−evidence + 0.12·(Δ/p)²` per node plus `0.35·((gap − p)/p)²` per gap. The count therefore holds by construction. The README calls this "a user-constrained grid, not proof of the original grid".
+- *Native preservation:* sharp, detailed art is returned 1:1 (`native_preserved`), and an exact GCD of gradient positions is a protected result.
+- *Determinism:* EVALUATION.md reports pixel-identical repeat runs and a Chrome-to-Python match on its cases, and notes that JPEG decode differs across Pillow versions (vendor-reported). The rights status of its test inputs is not established here, so they are not corpus candidates.
+
+**pixel-pusher (CODE-DERIVED at `d8b49b35`, [`src/grid.rs`](https://github.com/wjhrdy/pixel-pusher/blob/d8b49b3563d6381fb1d9f55589e33623c3896d55/src/grid.rs), [`src/lattice.rs`](https://github.com/wjhrdy/pixel-pusher/blob/d8b49b3563d6381fb1d9f55589e33623c3896d55/src/lattice.rs); no licence, so ideas only).**
+
+- *Search:* exhaustive over integer cell width × height × every integer phase, with summed-area tables of RGB and RGB², so a candidate costs O(cells). The top 32 get fractional phase and size refinement.
+- *Auto score* = `normalized_residual / edge_alignment² + 1/(w·h) + 0.03·|ln(w/h)|`. The terms are the within-cell variance over global variance, the edge-energy enrichment within a band around predicted lines (clamped 0.1–20), a coarser-cell preference, and a mild square-cell prior. There is no explicit harmonic rule; a test checks that a 9-px grid beats its divisors.
+- *Deformable lattice:* a **2-D junction mesh**, in which every junction moves independently and cells are bilinear quads with shared edges. It is not separable per-axis cuts. Line-first initialization comes from coherent boundary runs. Then a joint corner snap within ±radius scores local cell variance, plus regularization (self-displacement × 0.2 plus 4-neighbour displacement differences), minus a corner reward (geometric mean of vertical and horizontal evidence). A move must not weaken corner strength. Non-corner junctions follow anchors in the same row or column, weighted by 1/lattice distance with confidence capped at 2. Flat or low-contrast regions keep the seed. Test values: radius 2, step 0.25, regularization 0.002, edge weight 0.08, minimum edge 0.04, 3 iterations.
+
+**pixelfit PaletteLens (VERIFIED README at `fd1fb55a`).** Report-only palette checks: non-monotonic lightness in a ramp, uneven lightness steps (σ), near-duplicate entries, greyscale collision (different chroma, same lightness), hue shift as direction and magnitude, and unused entries. It never modifies the image. The first, fourth and sixth checks are not in the [quality-metrics ramp report](../evaluation/pixel-art-quality-metrics.md).
+
+### Conflicts resolved
+
+- **pixelfit licence:** the 2026-10-19 "mixed or no licence, draft-reported" row is superseded for pixelfit. The GitHub API and README state MIT (VERIFIED 2026-10-20).
+
+**Pixilate implication (INFERRED).** None of these projects changes the reuse matrix. Real-PixelArt is the only new MIT, client-side, fixed-W×H grid fitter, so it joins PixelRefiner as a benchmark target. Algorithm ideas are ranked in [state of the art, 2026-10-20 refresh](../algorithms/state-of-the-art.md#2026-10-20-refresh).

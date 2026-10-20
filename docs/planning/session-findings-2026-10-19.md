@@ -1,5 +1,7 @@
 # Session Findings — 2026-10-19
 
+> **Resume point moved (2026-10-20).** For the current state and ranked next steps, read the [2026-10-20 session findings](session-findings-2026-10-20.md). This document stays as the record of the 2026-10-18/19 sessions; its "Current state" and "Recommended next steps" describe 2026-10-19.
+
 ## Purpose and scope
 
 This document records the state reached in the 2026-10-18/19 sessions that built and then reconciled the owner-requested JavaScript prototype (`OWN-001`, `OWN-002`), so work can resume without re-reading the whole history. It is a dated summary and resume point, not a replacement for the detailed spikes, requirements, design or results. Where it states a number, the canonical source governs. Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence).
