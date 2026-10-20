@@ -319,7 +319,11 @@
           {:else}—{/if}
         </dd>
         <dt>Grid used</dt>
-        <dd>{#if report.grid}native {fmt(report.grid.native)}, period {fmt(report.grid.period)}, phase {fmt(report.grid.phase)}, elastic {fmt(report.grid.elastic)}{:else}—{/if}</dd>
+        <dd>{#if report.grid}native {fmt(report.grid.native)}, period {fmt(report.grid.period)}, phase {fmt(report.grid.phase)}, elastic {fmt(report.grid.elastic)}
+          <!-- evidence added during conversion (kernel fit, octave lock), beyond the shared analysis lines -->
+          {@const extra = (report.grid.evidence ?? []).filter((e) => !(an?.grid?.evidence ?? []).includes(e))}
+          {#if extra.length}<ul>{#each extra as e}<li>{e}</li>{/each}</ul>{/if}
+        {:else}—{/if}</dd>
         <dt>Generator</dt>
         <dd>
           {#if an?.generator}
