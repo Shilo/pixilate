@@ -143,12 +143,19 @@ Each item is linked to the open questions in the [design](prototype-algorithm-de
 - [ ] [Agent] Add `scripts/live-batch.mjs`.
   - It converts every image in `.local/live/` at its suggested size and the standard target list, writes the outputs and a contact sheet to `.local/live-out/`, and logs the hashes.
   - This makes §3 one command, with the human doing only the scoring.
+- [ ] [Agent] **Smooth-upscale detection (highest priority, 2026-10-20 browser check).** Bilinear upscales of true pixel art are not recognised as gridded: 7 of 8 local PixelLab round trips were classed `none`, and the eighth only `weak` on a wrong lattice, giving 0–89 % exact. Nearest-neighbour upscales were 100 % exact in 7 of 8.
+  - Add the second-difference channel: a bilinear upscale has kinks at cell centres, not edges.
+  - First add a committed procedural plain-bilinear ×8 fixture that fails today. The synthetic `nonint-bilinear` preset has sharper edges and does not reproduce the miss.
 - [ ] [Agent] **Mixel stratum:** the engine loses to a plain nearest baseline (0.78 against 0.84).
   - Investigate the trimmed-mean colour estimate (D18), the inset size and palette merging.
   - Accept a change only if it beats nearest on M without regressing strata G, I or B.
-- [ ] [Agent] **Detection misses:** `bicubic-x8` and the non-integer 1-bit case fall to the raster route.
-  - Try a calibrated grid / mixel / no-grid confidence (second-difference channel, a-contrario test, run-length cross-check).
+- [ ] [Agent] **Other detection misses:** `bicubic-x8`, the non-integer 1-bit case, and a fractional nearest-neighbour upscale of a local building sprite all fall to the raster route.
+  - Try a calibrated grid / mixel / no-grid confidence (a-contrario test, run-length cross-check).
   - Make `route: 'auto'` agree with the candidate recommendation for weak grids.
+- [ ] [Agent] **Recommendation on large reductions.** On real samples, Smooth beat the recommended Clean for scenes at strong reductions (`unk-dungeon` 64×48 flattened the floor texture; `gpt-forest` 96×54 broke the title text), while Clean was best for `gemini-mage` at 32×32. Decide the recommendation from evidence (ratio, texture, subject) instead of grid class alone.
+- [ ] [Agent] **Clean over-darkens thin light features.** The outline rebuild turned `gemini-mage`'s silver staff solid black. Restrict the rebuild to the real outer silhouette and keep interior thin features in their own colour.
+- [ ] [Agent] **Eyes lost at 32 px and below.** `unk-coat` Clean at 32×32 and both coats at 24×24 and 16×16 lost the eyes. Protect small high-contrast facial features in the reduction, as G8 measures.
+- [ ] [Agent] **Sprite workflow is hidden.** With the defaults (background and Trim off), a sprite on a plain background stays small inside the canvas and degrades at small targets. With background `auto` and Trim on, 64/48/32 px results were clearly better. Surface this in the UI as one visible option, without changing engine defaults (`AUTO-007`). Also fix the "grid grid" wording in the detected-size hint.
 - [ ] [Agent] **Large reductions (3× or more, e.g. to 16 px):** evaluate PixelOE-style outline expansion and DPID-style weighting on the reduction path.
   - Pass criterion: live 16 px pass rate improves without regressing 32 px and above.
 - [ ] [Agent] **Ambiguous exact grids:** implement the owner's decision on `OD-004`: refuse, require an instructed lattice, or offer the candidates.

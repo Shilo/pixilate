@@ -127,6 +127,43 @@ Target-size results (unblinded author-side visual review, measured before the D2
 | ≥ about 3× | any character sample → 16; `gemini-mage` → 32 | Silhouette and main colour masses kept; most identifying detail lost |
 | Scenes and tiles | `unk-dungeon` → 128×96 / 64×48 | Structure kept; floor texture flattens at 64×48 |
 
+### Browser check and PixelLab round trips (2026-10-20)
+
+OBSERVED, local-only, not rights-cleared. One Chromium build plus Node, at commit e62d112, with an unblinded author review.
+
+**UI flow (testing to-do §3–§5).** These all behaved as specified, with no console errors:
+
+- Required W×H gives `invalid-input` when empty or over 1024.
+- "Use detected size" fills W×H only when clicked.
+- Grid, Clean and Smooth candidates render, with Clean preselected as recommended.
+- Background `auto` with Trim gives a filled sprite and a reported trim box.
+- Converting again gives an identical canonical hash.
+- Browser and Node PNGs were byte-identical on 3 of 3 checked cases.
+- A JPEG re-save of `gpt-oni` still gave the same 126×116 grid. JPEG blocking was detected, not mistaken for the grid, and with metadata stripped the generator reads "unknown".
+- `gemini-mage`'s declared visible watermark gave the generic corner mask.
+- A fully transparent input with Trim gave `empty-visible-region`.
+
+**Round trips of local PixelLab sprites** (124–128 px), converted back to native size with `fit: 'stretch'`:
+
+| Upscale | Exact pixels |
+|---|---|
+| Nearest-neighbour ×8 | 100 % on 4 of 4 |
+| Nearest-neighbour ×8.37 | 100 % on 3 of 4; the building sprite was classed `none` (89 %) |
+| Bilinear ×8 and ×8.37 | 0–89 %; grid not detected in 7 of 8 cases (one `weak` on a wrong lattice) |
+
+**Visual review of real samples.**
+
+- Native-size output was clean on all five gridded samples.
+- With background `auto` and Trim, 64 and 48 px sprites were good and 32 px readable.
+- Weak points:
+  - Faces at 24 px and below.
+  - Eyes lost by Clean on `unk-coat` at 32 px.
+  - Clean's outline rebuild turned a thin silver staff black.
+  - Scenes at strong reductions, where Smooth beat the recommended Clean.
+  - With default options (no background removal or Trim), sprites stay small in the canvas and degrade at small targets.
+
+These items are now in [testing to-do §8](../planning/testing-todo.md#8-algorithm-work).
+
 ## Fixes found by testing
 
 Each row was found by a test, a review, or visual inspection, and each fix has a regression test. Details are in the design Deviations.
