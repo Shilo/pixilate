@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE } from '../src/lib/core/pipeline.js'
-import { degrade, PRESETS } from './synth.js'
+import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare } from '../src/lib/core/pipeline.js'
+import { degrade, PRESETS, noGrid } from './synth.js'
 import { proceduralSprites, readPng, repoPath } from './fixtures.js'
 
 /** Integer NN upscale of an RGBA image. */
@@ -479,6 +479,45 @@ describe('convert: Trim after the background stage (degraded sprites with margin
   })
 })
 
+describe('convert: smooth-upscale fallback (second-difference lattice)', () => {
+  const TILE = proceduralSprites(1)[1].img
+  const fell = (r) => r.grid.evidence.some((e) => e.startsWith('smooth-upscale fallback'))
+  /** Share of truth pixels whose output has the same opacity and, if opaque, every channel within 12. */
+  const within12 = (out, gt) => {
+    let ok = 0
+    for (let i = 0; i < gt.data.length; i += 4) {
+      const o = out.data[i + 3] >= 128, g = gt.data[i + 3] >= 128
+      if (o === g && (!g || [0, 1, 2].every((c) => Math.abs(out.data[i + c] - gt.data[i + c]) <= 12))) ok++
+    }
+    return ok / (gt.data.length / 4)
+  }
+
+  it('rampShare: 0 on NN upscales, >= 0.15 on smooth upscales', () => {
+    expect(rampShare(nn(TILE, 8))).toBe(0)
+    for (const p of ['bilinear-x8', 'bilinear-x8.37', 'bicubic-x8-clean']) expect(rampShare(degrade(TILE, p, 1).img), p).toBeGreaterThanOrEqual(0.15)
+  })
+
+  it('bilinear x8 / x8.37 (1:1 heuristic / weak on first differences) re-detect on second differences and round-trip', () => {
+    for (const p of ['bilinear-x8', 'bilinear-x8.37']) {
+      const { img, truth } = degrade(TILE, p, 1)
+      const r = convert(img, { targetW: truth.cellsX, targetH: truth.cellsY, fit: 'stretch' })
+      expect(r.report.grid.evidence[0], p).toMatch(/^smooth-upscale fallback: second-difference lattice 20x20 \(ramp share /)
+      expect([r.report.grid.class, r.report.path], p).toEqual(['grid', 'grid-locked'])
+      expect(within12(r.image, truth.sprite), p).toBeGreaterThanOrEqual(0.95)
+    }
+  })
+
+  it('a smooth no-grid texture keeps its verdict (second differences find no pure grid); NN upscales skip the fallback', () => {
+    const tex = noGrid('texture', 1)
+    expect(rampShare(tex)).toBeGreaterThanOrEqual(0.15)
+    const a = analyze(tex)
+    expect(a.grid.class).toBe('none')
+    expect(fell(a)).toBe(false)
+    const b = analyze(nn(TILE, 8))
+    expect([b.grid.class, fell(b)]).toEqual(['exact', false])
+  })
+})
+
 describe('convertCandidates', () => {
   const ids = (r) => r.candidates.map((c) => c.id)
 
@@ -532,5 +571,35 @@ describe('convert: real sample (skipped when absent)', () => {
     expect(report.route).toBe('grid')
     expect(binaryAlpha(image)).toBe(true)
     expect(ms).toBeLessThan(2000)
+  })
+})
+
+describe('octave lock to the target (N ≈ T/2)', () => {
+  // A sprite drawn with 2-px structure (NN x2) is often detected at half the requested cell count.
+  const sprites = proceduralSprites(1)
+  const ICON2 = nn(sprites[2].img, 2), BLOB2 = nn(sprites[0].img, 2), TILE = sprites[1].img
+  const exactShare = (out, ref) => { // share of truth-opaque pixels whose RGB matches exactly
+    let n = 0, ok = 0
+    for (let p = 0; p < ref.width * ref.height; p++) {
+      if (ref.data[p * 4 + 3] < 128) continue
+      n++
+      if (out.data[p * 4 + 3] >= 128 && [0, 1, 2].every((c) => out.data[p * 4 + c] === ref.data[p * 4 + c])) ok++
+    }
+    return ok / n
+  }
+  for (const [name, sprite] of [['proc-icon x2', ICON2], ['proc-blob x2', BLOB2]]) {
+    it(`${name} under nonint-nn locks to the full target and recovers the sprite`, () => {
+      const { img, truth } = degrade(sprite, PRESETS['nonint-nn'], 1)
+      const { image, report } = convert(img, { targetW: truth.cellsX, targetH: truth.cellsY, fit: 'stretch' })
+      expect(report.path).toBe('grid-locked')
+      expect(report.grid.evidence.some((e) => e.startsWith('octave lock:'))).toBe(true)
+      expect(exactShare(image, truth.sprite)).toBeGreaterThanOrEqual(0.99)
+    })
+  }
+  it('a true N grid asked for 2N stays an integer upscale (guard)', () => {
+    const { img, truth } = degrade(TILE, PRESETS['nonint-nn'], 1)
+    const { report } = convert(img, { targetW: 2 * truth.cellsX, targetH: 2 * truth.cellsY, fit: 'stretch' })
+    expect(report.path).toBe('grid-upscale-k')
+    expect(report.grid.evidence.some((e) => e.startsWith('octave lock:'))).toBe(false)
   })
 })

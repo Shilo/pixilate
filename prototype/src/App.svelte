@@ -180,12 +180,17 @@
       {#each PRESETS as p}<button type="button" onclick={() => preset(p)}>{p}</button> {/each}
     </span>
     <p>
+      <!-- Shortcut for the common sprite case; only sets the two explicit Custom options (engine defaults stay off, AUTO-007). -->
+      <label><input type="checkbox" checked={bg === 'auto' && trim} onchange={(e) => { const on = e.currentTarget.checked; bg = on ? 'auto' : 'off'; trim = on }} />
+        sprite on a plain background (remove background + trim to the sprite)</label>
+    </p>
+    <p>
       {#if !file}Load an image to see a detected size.
       {:else if !info}Analysing…
       {:else if info.suggestedSize}
         <button type="button" onclick={() => ([W, H] = info.suggestedSize)}>Use detected size {info.suggestedSize[0]}×{info.suggestedSize[1]}</button>
-        (grid {info.grid.class}, confidence {fmt(info.grid.confidence)}; evidence only)
-      {:else}No size suggested (grid {info.grid.class}).
+        (grid class: {info.grid.class}, confidence {fmt(info.grid.confidence)}; evidence only)
+      {:else}No size suggested (grid class: {info.grid.class}).
       {/if}
     </p>
   </fieldset>

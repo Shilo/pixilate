@@ -223,6 +223,47 @@ describe('detectGrid synthetic', () => {
   })
 })
 
+// ---- second-difference profile: smooth (bilinear/bicubic) upscales have no steps, only slope kinks ----
+
+describe("detectGrid profile 'd2' (smooth upscales)", () => {
+  const tile = proceduralSprites(1)[1].img
+  // largest distance of an inner cut to the nearest true seam, in cells
+  const seamErr = (ax, cuts, cell) => Math.max(...Array.from(ax.cuts.slice(1, -1), (c) => Math.min(...Array.from(cuts, (u) => Math.abs(u - c))) / cell))
+
+  it("bilinear x8.37: 'd1' misses the lattice, 'd2' finds it with regular cuts on the true seams (p/2 shift)", () => {
+    const { img, truth } = degrade(tile, 'bilinear-x8.37', 1)
+    const g1 = detectGrid(img)
+    expect(g1.profile).toBe('d1')
+    expect(g1.class === 'grid' && g1.x.count === truth.cellsX && g1.y.count === truth.cellsY).toBe(false)
+    const g = detectGrid(img, { profile: 'd2' })
+    expect([g.class, g.x.count, g.y.count, g.profile, g.x.elastic, g.y.elastic]).toEqual(['grid', truth.cellsX, truth.cellsY, 'd2', false, false])
+    expect(seamErr(g.x, truth.cutsX, truth.cellW)).toBeLessThan(0.05)
+    expect(seamErr(g.y, truth.cutsY, truth.cellH)).toBeLessThan(0.05)
+    const L = lockGrid(img, truth.cellsX, truth.cellsY, { profile: 'd2' }) // re-solved on the same profile
+    expect(L.profile).toBe('d2')
+    expect(seamErr(L.x, truth.cutsX, truth.cellW)).toBeLessThan(0.05)
+    expect(seamErr(L.y, truth.cutsY, truth.cellH)).toBeLessThan(0.05)
+  })
+
+  it("bilinear x8 and bicubic x8: 'd2' recovers the integer lattice", () => {
+    for (const p of ['bilinear-x8', 'bicubic-x8-clean']) {
+      const { img, truth } = degrade(tile, p, 1), g = detectGrid(img, { profile: 'd2' })
+      expect([p, g.class, g.x.count, g.y.count]).toEqual([p, 'grid', truth.cellsX, truth.cellsY])
+      expect(seamErr(g.x, truth.cutsX, truth.cellW)).toBeLessThan(0.05)
+    }
+  })
+
+  it("masked pixels never reach a 'd2' term (each reads pixels -2..+1 along its axis)", () => {
+    const { img } = degrade(tile, 'bilinear-x8', 1), W = img.width, H = img.height
+    const mask = new Uint8Array(W * H)
+    for (let y = 40; y < 90; y++) for (let x = 50; x < 110; x++) mask[y * W + x] = 1
+    const alt = { width: W, height: H, data: Uint8ClampedArray.from(img.data) }
+    for (let p = 0; p < W * H; p++) if (mask[p]) for (let c = 0; c < 3; c++) alt.data[p * 4 + c] = (p * 37 + c * 101) & 255
+    const key = (g) => JSON.stringify([g.class, g.x.count, g.y.count, Array.from(g.x.cuts), Array.from(g.y.cuts), g.x.coherence, g.y.coherence])
+    expect(key(detectGrid(alt, { mask, profile: 'd2' }))).toBe(key(detectGrid(img, { mask, profile: 'd2' })))
+  })
+})
+
 // ---- exact constant-block factorization (canonical-rgba-geometry-spike.md): every candidate + ambiguity ----
 
 /** NN upscale of a sprite by sx x sy, then crop ox / oy px off the left / top (phase shift). */

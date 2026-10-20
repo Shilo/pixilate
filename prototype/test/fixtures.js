@@ -221,19 +221,34 @@ export const CANVAS_OPTS = { trim: false, fit: 'stretch', route: 'auto', cleanup
 export const TRIM_OPTS = { ...CANVAS_OPTS, trim: true, fit: 'contain' }
 export const NO_GRID_OPTS = { ...CANVAS_OPTS, background: false }
 
-/** Synthetic cases: every preset per sprite (`fewPresets` ids: 3 presets, runtime), clean k=4/16, cleanup variants for traps, subject trim. */
-export function matrixCases(sprites, { fewPresets = [], seedBase = 1 } = {}) {
+// Seed-free smooth-upscale presets (stratum I): appended after the seeded cases so existing case seeds stay put.
+export const SMOOTH_PRESETS = ['bilinear-x8', 'bilinear-x8.37', 'bicubic-x8-clean']
+// Committed smooth upscales: procedural cases that failed before the second-difference fallback, except
+// proc-blob/bicubic-x8-clean (a non-regression guard: it passed before too); proc-ui/bilinear-x8 and
+// proc-blob/bilinear-x8.37 failed before d2 could replace a first-difference 'grid' lattice.
+export const SMOOTH_FIXTURES = [['proc-blob', 'bilinear-x8'], ['proc-blob', 'bicubic-x8-clean'], ['proc-tile', 'bilinear-x8'], ['proc-tile', 'bilinear-x8.37'], ['proc-1bit', 'bilinear-x8.37'],
+  ['proc-ui', 'bilinear-x8'], ['proc-blob', 'bilinear-x8.37']]
+
+/**
+ * Synthetic cases: every preset per sprite (`fewPresets` ids: 3 presets, runtime), clean k=4/16, cleanup variants for traps,
+ * subject trim, then the smooth presets (`smooth`: [spriteId, preset] pairs to keep; default every non-`fewPresets` sprite).
+ */
+export function matrixCases(sprites, { fewPresets = [], seedBase = 1, smooth = null } = {}) {
   const cases = []
   let seed = seedBase
   for (const s of sprites) {
     const add = (preset, params, opts, group = preset, tag = group) =>
       cases.push({ id: `${s.id}/${tag}`, group, preset, stratum: PRESET_STRATUM[preset] ?? 'M', family: s.family, spriteId: s.id, sprite: s.img, params, opts, seed: seed++ })
-    const presets = fewPresets.includes(s.id) ? ['clean-nn-integer', 'nonint-nn', 'gpt-image-like'] : Object.keys(PRESETS)
+    const presets = fewPresets.includes(s.id) ? ['clean-nn-integer', 'nonint-nn', 'gpt-image-like'] : Object.keys(PRESETS).filter((p) => !SMOOTH_PRESETS.includes(p))
     for (const p of presets) add(p, PRESETS[p], CANVAS_OPTS)
     for (const k of [4, 16]) add('clean-nn-integer', { ...PRESETS['clean-nn-integer'], cellSize: k }, CANVAS_OPTS, 'clean-nn-integer', `clean-k${k}`)
     if ([...TRAPS, ...SHOWCASE_TRAPS].includes(s.id)) for (const p of ['clean-nn-integer', 'nonint-nn']) add(p, PRESETS[p], { ...CANVAS_OPTS, cleanup: true }, `${p}+cleanup`)
     if (s.img.data.some((v, i) => i % 4 === 3 && v === 0)) // sprite centred on a big background, target = sprite bbox
       add('gpt-image-like', { ...PRESETS['gpt-image-like'], marginFrac: 0.3 }, TRIM_OPTS, 'trim-subject')
+  }
+  for (const s of sprites) for (const p of SMOOTH_PRESETS) {
+    if (smooth ? !smooth.some(([id, q]) => id === s.id && q === p) : fewPresets.includes(s.id)) continue
+    cases.push({ id: `${s.id}/${p}`, group: p, preset: p, stratum: PRESET_STRATUM[p], family: s.family, spriteId: s.id, sprite: s.img, params: PRESETS[p], opts: CANVAS_OPTS, seed: seedBase })
   }
   return cases
 }
@@ -270,5 +285,5 @@ export const REAL_SAMPLES = [
 export const BASELINE_PATH = fileURLToPath(new URL('./baseline.json', import.meta.url))
 export const SHOWCASE_BASELINE_PATH = repoPath('.local/baselines/showcase.json')
 export const SHOWCASE_PICKS = ['pip', 'potion', 'mz-front', 'mc-tile16', ...SHOWCASE_TRAPS]
-export const committedCases = () => [...matrixCases(proceduralSprites(1)), ...noGridCases()]
+export const committedCases = () => [...matrixCases(proceduralSprites(1), { smooth: SMOOTH_FIXTURES }), ...noGridCases()]
 export const showcaseCases = () => matrixCases(showcaseSprites().filter((s) => SHOWCASE_PICKS.includes(s.id)), { fewPresets: SHOWCASE_TRAPS })

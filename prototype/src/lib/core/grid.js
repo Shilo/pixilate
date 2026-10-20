@@ -51,8 +51,11 @@ function fft(re, im) {
  * (flat backgrounds and grain contribute nothing), clamped at the p95 of unmasked terms above the
  * median, summed per boundary. Boundary i sits between pixel i-1 and i (P[0] = P[len] = 0).
  * Also: 3 band profiles per axis (for windowed agreement) and period-8 JPEG blockiness.
+ * profile 'd2': boundary-centred second differences |d(i+1) - d(i-1)| (d = the first difference)
+ * replace them: a smooth (bilinear/bicubic) upscale has no steps, its lattice is in the slope kinks
+ * at the sample centres (no blockiness then).
  */
-function edgeProfiles(img, mask) {
+function edgeProfiles(img, mask, profile = 'd1') {
   const W = img.width, H = img.height, d = img.data, n = W * H
   const pm = new Uint8Array(n * 4)
   for (let o = 0; o < n * 4; o += 4) {
@@ -66,19 +69,25 @@ function edgeProfiles(img, mask) {
   // Blockiness: mean small difference by position mod 7/8/9 (period 8 = JPEG, 7/9 = controls).
   const bs = [new Float64Array(7), new Float64Array(8), new Float64Array(9)], bc = bs.map((a) => new Float64Array(a.length))
   const block = (pos, v) => { for (let m = 0; m < 3; m++) { const r = pos % (7 + m); bs[m][r] += v; bc[m][r]++ } }
+  const d2 = profile === 'd2' // its terms read pixels -2..+1 along the axis; the mask test covers all four
+  const sd = (o, s) => { // second difference at the boundary before pixel offset o (s = pixel stride in bytes), clamped
+    let v = 0
+    for (let c = 0; c < 4; c++) v += Math.abs(pm[o + s + c] - pm[o + c] - pm[o - s + c] + pm[o - 2 * s + c])
+    return v < 1020 + FLOOR ? v : 1020 + FLOOR
+  }
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const p = y * W + x, o = p * 4
-      if (x > 0 && !(mask && (mask[p] || mask[p - 1]))) {
-        const v = Math.abs(pm[o] - pm[o - 4]) + Math.abs(pm[o + 1] - pm[o - 3]) + Math.abs(pm[o + 2] - pm[o - 2]) + Math.abs(pm[o + 3] - pm[o - 1])
-        if (v < 12 && (y & 3) === 0) block(x, v)
+      if ((d2 ? x >= 2 && x < W - 1 : x > 0) && !(mask && (mask[p] || mask[p - 1] || (d2 && (mask[p - 2] || mask[p + 1]))))) {
+        const v = d2 ? sd(o, 4) : Math.abs(pm[o] - pm[o - 4]) + Math.abs(pm[o + 1] - pm[o - 3]) + Math.abs(pm[o + 2] - pm[o - 2]) + Math.abs(pm[o + 3] - pm[o - 1])
+        if (!d2 && v < 12 && (y & 3) === 0) block(x, v)
         terms++
         if (v > FLOOR) { tx[p] = v - FLOOR; hist[v - FLOOR]++ } else hist[0]++
       }
-      if (y > 0 && !(mask && (mask[p] || mask[p - W]))) {
+      if ((d2 ? y >= 2 && y < H - 1 : y > 0) && !(mask && (mask[p] || mask[p - W] || (d2 && (mask[p - 2 * W] || mask[p + W]))))) {
         const q = o - 4 * W
-        const v = Math.abs(pm[o] - pm[q]) + Math.abs(pm[o + 1] - pm[q + 1]) + Math.abs(pm[o + 2] - pm[q + 2]) + Math.abs(pm[o + 3] - pm[q + 3])
-        if (v < 12 && (x & 3) === 0) block(y, v)
+        const v = d2 ? sd(o, 4 * W) : Math.abs(pm[o] - pm[q]) + Math.abs(pm[o + 1] - pm[q + 1]) + Math.abs(pm[o + 2] - pm[q + 2]) + Math.abs(pm[o + 3] - pm[q + 3])
+        if (!d2 && v < 12 && (x & 3) === 0) block(y, v)
         terms++
         if (v > FLOOR) { ty[p] = v - FLOOR; hist[v - FLOOR]++ } else hist[0]++
       }
@@ -122,7 +131,7 @@ function edgeProfiles(img, mask) {
     const rest = cnt - bc[m][bi]
     return rest > 0 && tot - s[bi] > 0 ? best / ((tot - s[bi]) / rest) : 1
   })
-  return { W, H, pm, Px, Py, bx, by, blockiness }
+  return { W, H, pm, Px, Py, bx, by, blockiness, d2 }
 }
 
 // ---------------------------------------------------------------- spectra and scores
@@ -364,9 +373,11 @@ function sampleLines(pr, axis) {
   const pre = new Float64Array(nl * (len + 1) * 4), t = new Float64Array(3)
   for (let l = 0; l < nl; l++) {
     const o = Math.floor(((l + 0.5) * other) / nl), base = l * (len + 1) * 4
-    for (let i = 0; i < len; i++) {
+    for (let i = 0, prev = -1; i < len; i++) {
       const q = (axis ? i * W + o : o * W + i) * 4, b = base + i * 4
-      srgbToOklab(pm[q], pm[q + 1], pm[q + 2], t, 0)
+      // runs of one colour (flat cells) reuse the previous conversion
+      if (prev < 0 || pm[q] !== pm[prev] || pm[q + 1] !== pm[prev + 1] || pm[q + 2] !== pm[prev + 2]) srgbToOklab(pm[q], pm[q + 1], pm[q + 2], t, 0)
+      prev = q
       pre[b + 4] = pre[b] + t[0]; pre[b + 5] = pre[b + 1] + t[1]; pre[b + 6] = pre[b + 2] + t[2]
       pre[b + 7] = pre[b + 3] + t[0] * t[0] + t[1] * t[1] + t[2] * t[2]
     }
@@ -515,11 +526,15 @@ const f5 = (v) => v.toExponential(2)
 const r3 = (v) => Math.round(v * 1000) / 1000
 const near16k = (p) => { for (let k = 1; k <= 8; k++) if (Math.abs(p - 16 / k) <= 0.005 * (16 / k)) return true; return false }
 
-/** Phase, then regular cuts or elastic DP cuts (p >= 4, adopted at >= 1.5x capture and, if given, the fixed count). */
+/**
+ * Phase, then regular cuts or elastic DP cuts (p >= 4, adopted at >= 1.5x capture and, if given, the fixed count).
+ * Second-difference profile: peaks sit at cell centres, so the phase moves by p/2; regular cuts only.
+ */
 function cutsFor(A, p, fixedCount) {
-  const phase = phaseOf(A.e, A.len, p)
+  let phase = phaseOf(A.e, A.len, p)
+  if (A.d2) { phase = (phase + p / 2) % p; if (p - phase < 0.125) phase = 0 }
   let cuts = regularCuts(A.len, p, phase), elastic = false, gain = 1
-  if (p >= 4) {
+  if (p >= 4 && !A.d2) {
     const el = elasticCuts(A.e, A.len, p)
     gain = capture(A.e, el) / Math.max(1e-9, capture(A.e, cuts))
     if (gain >= 1.5 && (fixedCount == null || el.length - 1 === fixedCount)) { cuts = el; elastic = true }
@@ -544,9 +559,9 @@ function linePeak(sp, f) {
   return m
 }
 
-function setupAxis(P, len, bands) {
+function setupAxis(P, len, bands, d2) {
   const qmax = Math.min(len / 4, 128), sp = spectrum(P, 0, len + 1)
-  return { P, len, bands, qmax, sp, med: bandMedian(sp, qmax), x: centered(P), e: edgeSignal(P) }
+  return { P, len, bands, qmax, sp, med: bandMedian(sp, qmax), x: centered(P), e: edgeSignal(P), d2 }
 }
 
 function regularAxis(len, p) {
@@ -661,8 +676,10 @@ function emptyGrid(img, ev, why, alternatives = { x: [], y: [] }) {
 }
 
 /**
- * detectGrid(img, { targetW?, targetH?, mask?, preset? }) -> Grid.
+ * detectGrid(img, { targetW?, targetH?, mask?, preset?, profile? }) -> Grid.
  * mask: Uint8Array (1 = excluded pixel, e.g. watermark/checkerboard). preset.jpegStrict = JPEG container.
+ * profile: 'd1' (default, first differences) or 'd2' (second differences, smooth upscales; see edgeProfiles);
+ * spectral grids carry it as grid.profile so lockGrid can re-solve on the same profile.
  * Grid adds: candidates (every valid exact factorization, coarsest first; see factorize), ambiguous,
  * suggestedSize ([w, h] evidence only, never a target; null when no size is supported) and
  * alternatives ({ x, y }: qualified spectral periods [{ period, count, score }], empty on the exact path).
@@ -693,14 +710,14 @@ export function detectGrid(img, opts = {}) {
   // <= 256 colours + binary alpha, no pure grid: the trivial candidate, reported as a heuristic.
   return exactOf(top, 0.9, [`1:1 candidate (heuristic, not proof): ${native}`], [W, H])
 }
-function spectralGrid(img, { targetW, targetH, mask, preset } = {}) {
+function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1' } = {}) {
   const ev = [], alternatives = { x: [], y: [] }
   if (img.width < 16 || img.height < 16) return emptyGrid(img, ev, 'none: image smaller than 16 px')
-  const pr = edgeProfiles(img, mask)
+  const pr = edgeProfiles(img, mask, profile)
   const [b7, b8, b9] = pr.blockiness
   const jpeg = !!preset?.jpegStrict || b8 >= 1.2 * Math.max(b7, b9)
   ev.push(`JPEG evidence: ${jpeg ? 'yes' : 'no'} (container ${preset?.jpegStrict ? 'jpeg' : 'n/a'}, blockiness 8: ${f2(b8)} vs 7/9: ${f2(b7)}/${f2(b9)})`)
-  const axes = [setupAxis(pr.Px, pr.W, pr.bx), setupAxis(pr.Py, pr.H, pr.by)]
+  const axes = [setupAxis(pr.Px, pr.W, pr.bx, pr.d2), setupAxis(pr.Py, pr.H, pr.by, pr.d2)]
   const targets = [targetW, targetH], names = ['x', 'y'], periods = []
   for (let a = 0; a < 2; a++) {
     const A = axes[a], T = targets[a]
@@ -740,19 +757,19 @@ function spectralGrid(img, { targetW, targetH, mask, preset } = {}) {
     ev.push(`${d}: not confident, borrows period ${f2(src.period)}`)
   }
   const { cls, confidence } = classify(pr, X, Y, jpeg, ev, forced)
-  return { x: X, y: Y, class: cls, confidence, evidence: ev, alternatives }
+  return { x: X, y: Y, class: cls, confidence, evidence: ev, alternatives, profile }
 }
 
 /**
- * lockGrid(img, countX, countY, { mask?, preset? }) -> Grid with period len/count; phase and
- * elastic cuts re-solved.
+ * lockGrid(img, countX, countY, { mask?, preset?, profile? }) -> Grid with period len/count; phase and
+ * elastic cuts re-solved (on the given edge profile, see detectGrid).
  */
-export function lockGrid(img, countX, countY, { mask, preset } = {}) {
+export function lockGrid(img, countX, countY, { mask, preset, profile = 'd1' } = {}) {
   const ev = [`locked to ${countX}x${countY} cells`]
-  const pr = edgeProfiles(img, mask)
+  const pr = edgeProfiles(img, mask, profile)
   const [b7, b8, b9] = pr.blockiness
   const jpeg = !!preset?.jpegStrict || b8 >= 1.2 * Math.max(b7, b9)
-  const axes = [setupAxis(pr.Px, pr.W, pr.bx), setupAxis(pr.Py, pr.H, pr.by)]
+  const axes = [setupAxis(pr.Px, pr.W, pr.bx, pr.d2), setupAxis(pr.Py, pr.H, pr.by, pr.d2)]
   const [X, Y] = [countX, countY].map((n, a) => {
     const A = axes[a], p = A.len / n, ax = buildAxis(A, p, n)
     if (ax.count !== n) { // elastic count mismatch (rejected) or a numeric edge case: fall back to n regular cells
@@ -763,5 +780,5 @@ export function lockGrid(img, countX, countY, { mask, preset } = {}) {
     return { ...ax, agreement: agreement(A.bands, A.len, p) }
   })
   const { cls, confidence } = classify(pr, X, Y, jpeg, ev, null)
-  return { x: X, y: Y, class: cls, confidence, evidence: ev }
+  return { x: X, y: Y, class: cls, confidence, evidence: ev, profile }
 }

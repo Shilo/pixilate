@@ -3,6 +3,7 @@
 //   G-EXACT     clean integer NN: 100% exact, palette = GT, scale exact, suggested size = lattice
 //   G-TRAP      cleanup traps keep G8 small-feature recall >= 0.95 (cleanup off); the Clean profile
 //               loses no G8 recall/adds no breaks vs cleanup off on the same seed and input
+//   G-SMOOTH    smooth (bilinear/bicubic) upscales of pixel art: class grid on the true lattice, emSnap >= 0.99
 //   G-RATCHET   per-group medians (and no-grid false-grid rate) vs test/baseline.json
 // Local-only suites (skipped when the gitignored files are absent): showcase ratchet vs
 // .local/baselines/showcase.json, and real-sample acceptance. Baselines are rewritten only by
@@ -10,7 +11,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { committedCases, showcaseCases, readPng, repoPath, REAL_SAMPLES, TRAPS, BASELINE_PATH, SHOWCASE_BASELINE_PATH } from './fixtures.js'
+import { committedCases, showcaseCases, readPng, repoPath, REAL_SAMPLES, TRAPS, BASELINE_PATH, SHOWCASE_BASELINE_PATH, SMOOTH_PRESETS, SMOOTH_FIXTURES } from './fixtures.js'
 import { runCase, runMatrix, summarize, ratchet } from './metrics.js'
 
 const PIPELINE = new URL('../src/lib/core/pipeline.js', import.meta.url)
@@ -67,6 +68,14 @@ describe.skipIf(!HAS)('committed gates (procedural fixtures)', () => {
     })
     expect(bad).toEqual([])
   }, 120_000)
+
+  it('G-SMOOTH: smooth upscales recover the true lattice (class grid, suggested size = truth cells) with emSnap >= 0.99', () => {
+    const smooth = recs.filter((r) => SMOOTH_PRESETS.includes(r.preset))
+    expect(smooth.length).toBe(SMOOTH_FIXTURES.length)
+    const bad = smooth.filter((r) => !(r.class === 'grid' && String(r.suggestedSize) === String(r.cells) && r.emSnap >= 0.99))
+      .map((r) => `${r.id}: class=${r.class} suggested=${r.suggestedSize} want=${r.cells} emSnap=${r.emSnap} path=${r.path}`)
+    expect(bad).toEqual([])
+  })
 
   it('G-RATCHET: per-group medians and false-grid rate do not regress vs test/baseline.json', () => {
     const ng = recs.filter((r) => r.group.startsWith('no-grid/'))

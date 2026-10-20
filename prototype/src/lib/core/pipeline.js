@@ -8,13 +8,14 @@ import { buildPalette } from './palette.js'
 import { analyzeBackground, cleanup, removeBackground } from './cleanup.js'
 import { areaCells, resampleToTarget, reduceToTarget, upscaleInteger } from './resample.js'
 import { detectGenerator } from './detect.js'
+import { deconvolveCells, fitKernel } from './fitcells.js'
 import { createImage, oklabToSrgb, srgbToOklab } from './color.js'
 import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.2.0', constants: 23 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.5.0', constants: 25 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -105,10 +106,56 @@ function analysis(img0, o, bytes) {
     if (grid.class === 'none') grid.class = 'weak' // the user vouches for the grid
   } else {
     // with Trim the target sizes the trimmed basis, so it is no prior for the full canvas
-    grid = detectGrid(img, { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset })
+    const dopts = { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset }
+    grid = detectGrid(img, dopts)
+    // Smooth-upscale fallback: no pure grid, but many pixels sit on straight ramps (a bilinear/bicubic
+    // upscale of pixel art) -> re-detect on second differences; adopt only a coherent pure grid. A
+    // first-difference lattice (weak or grid) is replaced only by a more coherent one, or by one with
+    // >= 4x the cells at >= 0.9x its coherence (a smooth upscale's d1 profile often locks onto a multiple).
+    // Ramp share (OBSERVED, procedural + local-only samples): natives 0-0.03, gridded AI 0.03-0.06,
+    // smooth upscales 0.25-0.89.
+    if (grid.class === 'none' || grid.class === 'weak' || grid.class === 'grid' || (grid.class === 'exact' && grid.confidence < 1)) {
+      const ramp = rampShare(img)
+      if (ramp >= 0.15) {
+        const g2 = detectGrid(img, { ...dopts, profile: 'd2' }), c2 = minCoherence(g2), lattice = grid.class === 'weak' || grid.class === 'grid'
+        const c1 = lattice ? minCoherence(grid) : 0
+        const finer = lattice && g2.x.count * g2.y.count >= 4 * grid.x.count * grid.y.count && c2 >= 0.9 * c1
+        if (g2.class === 'grid' && c2 >= 0.3 && (!lattice || c2 >= c1 + 0.05 || finer)) {
+          g2.evidence.unshift(`smooth-upscale fallback: second-difference lattice ${g2.x.count}x${g2.y.count} (ramp share ${r3(ramp)} >= 0.15, min coherence ${r3(c2)} >= 0.3) replaces ${grid.class}${lattice ? ` ${grid.x.count}x${grid.y.count} (min coherence ${r3(c1)}${finer && c2 < c1 + 0.05 ? ', >= 4x the cells at >= 0.9x its coherence' : ''})` : ''}`)
+          grid = g2
+        }
+      }
+    }
   }
   lap('grid')
   return { img, gen, wm, bg, mask, grid, timingsMs }
+}
+
+const r3 = (v) => Math.round(v * 1000) / 1000
+const minCoherence = (g) => Math.min(g.x.coherence, g.y.coherence)
+
+/**
+ * Share of opaque pixels whose left and right neighbours differ that lie strictly inside a straight
+ * ramp between them (every channel: between L and R, |L + R - 2v| <= 2, and not equal to an
+ * end when L != R). High for smooth (bilinear/bicubic) upscales, ~0 for flat-cell art.
+ */
+export function rampShare(img) {
+  const { width: W, height: H, data: d } = img
+  let n = 0, r = 0
+  for (let y = 0; y < H; y++) for (let x = 1; x < W - 1; x++) {
+    const o = (y * W + x) * 4
+    if (d[o + 3] < 255 || d[o - 1] < 255 || d[o + 7] < 255) continue
+    let diff = false, ramp = true
+    for (let c = 0; c < 3; c++) {
+      const L = d[o - 4 + c], v = d[o + c], R = d[o + 4 + c]
+      if (L !== R) diff = true
+      if (!(Math.min(L, R) <= v && v <= Math.max(L, R)) || Math.abs(L + R - 2 * v) > 2 || (L !== R && (v === L || v === R))) ramp = false
+    }
+    if (!diff) continue
+    n++
+    if (ramp) r++
+  }
+  return n ? r / n : 0
 }
 
 /** Decode passthrough (decodeImage's format, decode, strict, orientation); not part of the recipe. */
@@ -211,6 +258,20 @@ function gridReport(grid, g, off) {
   }
 }
 
+/** Append the smooth-upscale kernel fit (fitcells.js) to a grid report's evidence. */
+function withNotes(rep, notes) {
+  if (notes.length) rep.evidence = [...rep.evidence, ...notes]
+  return rep
+}
+
+function kernelEvidence(rep, k) {
+  if (!k) return rep
+  const r2 = (v) => Math.round(v * 100) / 100
+  rep.evidence = [...rep.evidence, k.rms == null ? 'cell deconvolution: off (fewer than 8 fit cells)'
+    : `cell deconvolution: kernel a ${k.a ?? '-'} b ${k.b ?? '-'} (residual RMS ${r2(k.rms)}${k.a == null ? ' > 12: off' : ''})`]
+  return rep
+}
+
 /** Mandatory final validator: binary alpha, every visible RGB a palette entry, the color cap held. */
 function validate(image, out, allowed) {
   const keys = new Set(), d = image.data, rgb = out.rgb
@@ -241,6 +302,7 @@ function rowOf(N, T) {
 function run(A, o) {
   const { img, gen, wm, mask } = A, W = img.width, H = img.height, Tx = o.targetW, Ty = o.targetH, d = img.data
   const warnings = [...(o.warnings ?? [])], timingsMs = { ...A.timingsMs } // decode warnings first
+  const gridNotes = [] // extra grid evidence lines from path selection
   let t0 = performance.now()
   const lap = (k) => { const t = performance.now(); timingsMs[k] = (timingsMs[k] || 0) + t - t0; t0 = t }
   const grid = A.grid // detectGrid already prefers the exact factorization matching the target (instructed lattice)
@@ -271,7 +333,13 @@ function run(A, o) {
     return c
   }
   const sample = (src, g, m) => {
-    const c = dropBg(sampleCells(src, g, { mask: m }))
+    let c = sampleCells(src, g, { mask: m })
+    if (grid.profile === 'd2') { // smooth upscale: deconvolve the cell colours with the image's own kernel
+      // the first sample is always the native one (img, grid); later re-samples reuse its kernel
+      A.kernel ??= fitKernel(src, g, c)
+      c = deconvolveCells(src, g, c, A.kernel)
+    }
+    c = dropBg(c)
     lap('sample')
     return c
   }
@@ -322,14 +390,19 @@ function run(A, o) {
       let kind = rx.kind === ry.kind ? rx.kind : 'nonint', locked = null
       // exact cells are the art itself: a fractional period (lock, or upscale relock) would drop or double rows
       if (exact && (kind === 'lock' || (kind === 'up' && (fw / rx.k !== N || fh / ry.k !== M)))) kind = 'nonint'
-      else if (!exact && kind !== 'lock' && Math.abs(N - fw) <= LOCK_WINDOW * fw && Math.abs(M - fh) <= LOCK_WINDOW * fh) {
+      // Also try T when the free count is about half of it (octave error: 2-px art read at 2x cell size).
+      else if (!exact && kind !== 'lock' && ((Math.abs(N - fw) <= LOCK_WINDOW * fw && Math.abs(M - fh) <= LOCK_WINDOW * fh) ||
+        (Math.abs(2 * N - fw) <= LOCK_WINDOW * fw && Math.abs(2 * M - fh) <= LOCK_WINDOW * fh))) {
         // Judge the lock on edge capture of its elastic cuts vs the free count's elastic lattice on the
         // same image: a drifting source makes a regular T lattice look bad even when T is right.
-        const L = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset })
-        const F = lockGrid(src, N, M, { mask: gmask, preset: gen.preset })
+        const L = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset, profile: grid.profile })
+        const F = lockGrid(src, N, M, { mask: gmask, preset: gen.preset, profile: grid.profile })
         lap('grid')
         const ratio = Math.min(L.x.coherence / Math.max(1e-12, F.x.coherence), L.y.coherence / Math.max(1e-12, F.y.coherence))
-        if (ratio >= 0.97) { kind = 'lock'; locked = L }
+        if (ratio >= 0.97) {
+          if (Math.abs(N - fw) > LOCK_WINDOW * fw || Math.abs(M - fh) > LOCK_WINDOW * fh) gridNotes.push(`octave lock: ${N}x${M} -> ${fw}x${fh} (ratio ${Math.round(ratio * 100) / 100})`)
+          kind = 'lock'; locked = L
+        }
       }
       const shrink = (nat) => { // native -> target (Step 8), then the Clean profile's cleanup on the result
         const r = reduceToTarget(nat, fw, fh, { clean: o.cleanup })
@@ -343,7 +416,7 @@ function run(A, o) {
       }
       if (kind === 'lock') {
         path = 'grid-locked'
-        if (!locked) { locked = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset }); lap('grid') }
+        if (!locked) { locked = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset, profile: grid.profile }); lap('grid') }
         g = locked
         out = clean(sample(src, g, m))
       } else if (kind === 'reduce') {
@@ -354,7 +427,7 @@ function run(A, o) {
         path = 'grid-upscale-k'
         warnings.push('target exceeds native resolution')
         if (g.x.count !== fw / rx.k || g.y.count !== fh / ry.k) {
-          g = lockGrid(src, fw / rx.k, fh / ry.k, { mask: gmask, preset: gen.preset })
+          g = lockGrid(src, fw / rx.k, fh / ry.k, { mask: gmask, preset: gen.preset, profile: grid.profile })
           lap('grid')
           cells = sample(src, g, m)
         }
@@ -415,7 +488,7 @@ function run(A, o) {
   const report = {
     input: inputReport(W, H, o),
     generator: generatorReport(gen),
-    grid: gridReport(grid, g, off),
+    grid: withNotes(kernelEvidence(gridReport(grid, g, off), route === 'grid' && A.kernel), gridNotes),
     route, path, trim,
     fit: { mode: o.fit, anchor: 'center', basis, basisUnit: route === 'grid' ? 'cells' : 'px', crop: geo.crop, resized: [fw, fh], offset: [ox, oy] },
     background: bgReport,

@@ -78,15 +78,21 @@ export const PRESETS = {
     cellSize: 8, internalScale: 'cell', supersample: 1, resampleKernel: 'bicubic', edgeBlurSigma: 0.35, driftAmp: 0,
     mixelRegions: 0, cellGradient: 24, textureAmp: 8, textureScale: 3, noiseSigma: 1.5, bgMode: 'gradient',
   },
+  // Plain smooth upscales of the GT (no noise, transparent margin): bicubic-x8's 1-px-per-cell
+  // mechanism with CLEAN parameters. Seed-free (no drawn parameter is used), stratum I.
+  'bilinear-x8': { ...CLEAN, internalScale: 'cell', resampleKernel: 'bilinear' },
+  'bilinear-x8.37': { ...CLEAN, cellSize: 8.37, internalScale: 'cell', resampleKernel: 'bilinear' },
+  'bicubic-x8-clean': { ...CLEAN, internalScale: 'cell', resampleKernel: 'bicubic' },
 }
 
 // Primary benchmark stratum per preset (methodology §4): G exact, I interpolated, M mixel, B background.
 export const PRESET_STRATUM = {
   'clean-nn-integer': 'G', 'nonint-nn': 'I', 'nonint-bilinear': 'I', 'jpeg-heavy': 'I', 'bicubic-x8': 'I',
+  'bilinear-x8': 'I', 'bilinear-x8.37': 'I', 'bicubic-x8-clean': 'I',
   'gpt-image-like': 'M', 'gemini-like': 'M', 'drift-heavy': 'M', 'mixel-detail': 'M', 'fake-alpha': 'B',
 }
 // Bumped on any change that alters emitted fixture pixels or truth (recorded by bench.mjs).
-export const SYNTH_VERSION = 'pixilate-synth/2'
+export const SYNTH_VERSION = 'pixilate-synth/3'
 
 function resolve(params, seed, opaque) {
   const base = { ...DEFAULTS, ...params }

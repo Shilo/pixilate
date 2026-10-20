@@ -50,6 +50,8 @@ Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseli
 
 [prototype/src/lib/core/sample.js](prototype/src/lib/core/sample.js): grid cells to colours.
 
+[prototype/src/lib/core/fitcells.js](prototype/src/lib/core/fitcells.js): kernel fit and cell-colour deconvolution for smoothly upscaled (second-difference) lattices.
+
 [prototype/src/lib/core/palette.js](prototype/src/lib/core/palette.js): palette building on cells.
 
 [prototype/src/lib/core/resample.js](prototype/src/lib/core/resample.js): raster route and native-to-target reduction.

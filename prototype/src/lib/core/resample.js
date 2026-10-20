@@ -458,7 +458,8 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
           if (!known) rootSeen[pieces++] = root[p]
           src = Math.max(src, size[p])
         }
-        if (pieces < TEXTURE && groups <= 3) continue // calm accent (eye, glint)
+        // calm accent (eye, glint), or a compact feature filling most of its cell (an eye under busy shading)
+        if (pieces < TEXTURE && (groups <= 3 || cov[c * K + v] >= 0.5 * A[c])) continue
         if (cellArea < NEAR_NATIVE && src < ACCENT * cellArea) continue // near-native small detail
       }
       if (out[c] !== mode) changed.orphan++
@@ -474,6 +475,10 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
     for (let Y = 0; Y < th; Y++) for (let X = 0; X < tw; X++) {
       const c = Y * tw + X
       if (out[c] < 0 || !N4.some(([dx, dy]) => oat(X + dx, Y + dy) < 0)) continue
+      // a salient feature's ridge on a thin protrusion (transparency within 2 cells on both opposite
+      // sides: a staff, an antenna) keeps its colour; only the true outer boundary takes the outline
+      const gap = (dx, dy) => oat(X + dx, Y + dy) < 0 || oat(X + 2 * dx, Y + 2 * dy) < 0
+      if (picked[c] && out[c] !== gOut && ((gap(-1, 0) && gap(1, 0)) || (gap(0, -1) && gap(0, 1)))) continue
       cnt.fill(0)
       // footprint grown by one output cell: neighboring outline cells agree on the color
       const ry = Math.ceil(h / th), rx = Math.ceil(w / tw)

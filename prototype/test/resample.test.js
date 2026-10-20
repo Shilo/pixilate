@@ -243,6 +243,47 @@ describe('reduceToTarget: cleanup gating and budget', () => {
     expect(Array.from(out.index, (v) => (v < 0 ? '.' : v)).join('')).toBe(rows.join(''))
   })
 
+  /** S x S indexed image painted by f(x, y) -> palette index or -1 (transparent). */
+  const paint = (S, f, pal) => {
+    const index = new Int16Array(S * S)
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) index[y * S + x] = f(x, y)
+    return { w: S, h: S, index, palette: Float32Array.from(pal.flatMap((c) => lab(...c))) }
+  }
+
+  it('Clean keeps an outlined 2 px light protrusion (staff) light at 96 -> 24 and 96 -> 32', () => {
+    // 0 dark outline, 1 body, 2 light; staff = 2 px dark | 2 px light | 2 px dark beside a body with a 1 px outline
+    const inE = (x, y) => ((x - 40) / 30) ** 2 + ((y - 56) / 32) ** 2 <= 1
+    const ix = paint(96, (x, y) => {
+      if (y >= 20 && y < 80 && x >= 76 && x < 82) return x >= 78 && x < 80 ? 2 : 0
+      return !inE(x, y) ? -1 : !inE(x + 1, y) || !inE(x - 1, y) || !inE(x, y + 1) || !inE(x, y - 1) ? 0 : 1
+    }, [[20, 18, 30], [70, 120, 200], [215, 220, 230]])
+    for (const T of [24, 32]) {
+      const plain = count(reduceToTarget(ix, T, T, { clean: false }), 2), clean = reduceToTarget(ix, T, T)
+      expect(plain, `plain @${T}`).toBeGreaterThanOrEqual(T / 2)
+      expect(clean.changed.outline, `outline rebuild ran @${T}`).toBeGreaterThan(0)
+      expect(count(clean, 2), `clean @${T}`).toBeGreaterThanOrEqual(plain - 1) // the bare tip cell may take the outline
+    }
+  })
+
+  /** 96 px face in busy 4-tone skin with two s x s white eyes (pupil to the right) shifted by (ox, oy) px. */
+  const face = (s, ox, oy) => paint(96, (x, y) => {
+    // 0 dark (outline, pupil), 1 hair, 2..5 skin tones, 6 eye white
+    for (const ex of [32 + ox, 56 + ox]) if (y >= 44 + oy && y < 44 + oy + s && x >= ex && x < ex + 2 * s) return x < ex + s ? 6 : 0
+    const e = ((x - 48) / 40) ** 2 + ((y - 50) / 42) ** 2
+    return e > 1 ? -1 : e > 0.88 ? 0 : y < 30 ? 1 : 2 + ((Math.floor(x / 6) + Math.floor(y / 5)) % 4)
+  }, [[10, 10, 20], [40, 25, 20], [236, 180, 140], [214, 150, 110], [190, 125, 90], [245, 200, 165], [250, 250, 250]])
+
+  // cell-aligned 4x4 eye at 24 (own coverage 1); eyes straddling cells (best-cell coverage 0.375 at 24, 0.44 at 32)
+  // are an OPEN limitation: the orphan pass keeps a busy-spot orphan only at coverage >= 0.5 (a lower
+  // threshold adds > 10 % speckle on gpt-image-like and mixel-detail), so they are expected to fail
+  for (const [s, ox, oy, T, open] of [[4, 0, 0, 24, false], [4, 2, 1, 24, true], [3, 2, 2, 32, true]]) {
+    (open ? it.fails : it)(`Clean keeps a ${s}x${s} white eye beside its pupil inside busy 4-tone skin (shift ${ox},${oy}) at 96 -> ${T}${open ? ' [open]' : ''}`, () => {
+      const ix = face(s, ox, oy)
+      expect(count(reduceToTarget(ix, T, T, { clean: false }), 6)).toBeGreaterThanOrEqual(2)
+      expect(count(reduceToTarget(ix, T, T), 6)).toBeGreaterThanOrEqual(2)
+    })
+  }
+
   it('refuses coverage tables above the budget before allocating them', () => {
     const K = 33, ix = { w: 2, h: 2, index: new Int16Array(4), palette: new Float32Array(K * 3) }
     expect(1024 * 1024 * K).toBeGreaterThan(COVERAGE_BUDGET)
