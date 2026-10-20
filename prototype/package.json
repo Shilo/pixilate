@@ -1,0 +1,23 @@
+{
+  "name": "pixilate-prototype",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "bench": "node scripts/bench.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "svelte": "^5.57.2",
+    "vite": "^8.3.4",
+    "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "fast-png": "^8.0.0",
+    "jpeg-js": "^0.4.4"
+  }
+}

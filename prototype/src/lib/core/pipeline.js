@@ -1,0 +1,508 @@
+// Conversion pipeline (contract Steps 1-10): input validation and alpha-0 canonicalization, shared
+// analysis (generator report, background estimate, grid), route (grid | raster), explicit background
+// stage, Trim, Stretch/Contain/Cover, palette, optional Clean profile, placement, final validator, report.
+// Pure and synchronous; the worker calls convert() or convertCandidates().
+import { detectGrid, lockGrid } from './grid.js'
+import { sampleCells } from './sample.js'
+import { buildPalette } from './palette.js'
+import { analyzeBackground, cleanup, removeBackground } from './cleanup.js'
+import { areaCells, resampleToTarget, reduceToTarget, upscaleInteger } from './resample.js'
+import { detectGenerator } from './detect.js'
+import { createImage, oklabToSrgb, srgbToOklab } from './color.js'
+import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
+
+export { PixilateError, canonicalHash } from './canonical.js'
+
+// Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.2.0', constants: 23 }
+export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
+export const MAX_TARGET = 1024
+const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
+
+/** Indexed -> RGBA image: exact palette bytes (`rgb`, else OKLab rounded), alpha 255, index -1 transparent. */
+export function indexedToImage({ w, h, index, palette, rgb }) {
+  const img = createImage(w, h)
+  if (!rgb) {
+    rgb = new Uint8Array(palette.length)
+    for (let i = 0; i < palette.length; i += 3) oklabToSrgb(palette[i], palette[i + 1], palette[i + 2], rgb, i)
+  }
+  for (let p = 0; p < w * h; p++) {
+    const k = index[p]
+    if (k < 0) continue
+    img.data[p * 4] = rgb[k * 3]; img.data[p * 4 + 1] = rgb[k * 3 + 1]; img.data[p * 4 + 2] = rgb[k * 3 + 2]; img.data[p * 4 + 3] = 255
+  }
+  return img
+}
+
+/** Validate and default the options; every violation is PixilateError('invalid-input'). */
+function normalize(opts, requireTarget = true) {
+  const o = { targetW: null, targetH: null, trim: false, fit: 'contain', route: 'auto', cleanup: false, background: false, halo: false, colors: 'auto', palette: null, manualPeriod: null, ...opts }
+  const bad = (m) => { throw new PixilateError('invalid-input', m) }
+  const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi
+  for (const k of ['targetW', 'targetH']) if ((requireTarget || o[k] != null) && !int(o[k], 1, MAX_TARGET)) bad(`${k} must be an integer in 1..${MAX_TARGET} (got ${o[k]})`)
+  for (const k of ['trim', 'cleanup', 'halo']) if (typeof o[k] !== 'boolean') bad(`${k} must be a boolean`)
+  if (!['stretch', 'contain', 'cover'].includes(o.fit)) bad(`fit must be 'stretch', 'contain' or 'cover' (got ${o.fit})`)
+  if (!['auto', 'grid', 'raster'].includes(o.route)) bad(`route must be 'auto', 'grid' or 'raster' (got ${o.route})`)
+  const B = o.background
+  if (B === 'auto') o.background = { mode: 'auto', connectivity: 4 }
+  else if (B && typeof B === 'object') {
+    const { key, tolerance = 0.03, connectivity = 4 } = B
+    if (!Array.isArray(key) || key.length !== 3 || !key.every((v) => int(v, 0, 255))) bad('background.key must be [r, g, b] bytes')
+    if (typeof tolerance !== 'number' || !(tolerance >= 0 && tolerance <= 1)) bad('background.tolerance must be a number in 0..1')
+    if (connectivity !== 4 && connectivity !== 8) bad('background.connectivity must be 4 or 8')
+    o.background = { mode: 'key', key: [...key], tolerance, connectivity }
+  } else if (B !== false) bad(`background must be false, 'auto' or { key, tolerance, connectivity }`)
+  if (o.colors !== 'auto' && !int(o.colors, 1, 256)) bad(`colors must be 'auto' or an integer in 1..256 (got ${o.colors})`)
+  if (o.palette != null) {
+    const flat = Array.isArray(o.palette) && Array.isArray(o.palette[0]) ? o.palette.flat() : Array.from(o.palette)
+    if (!flat.length || flat.length % 3 || flat.length > 768 || !flat.every((v) => int(v, 0, 255))) bad('palette must be 1..256 [r, g, b] byte entries')
+    o.palette = Uint8Array.from(flat)
+  }
+  if (o.warnings != null && !(Array.isArray(o.warnings) && o.warnings.every((w) => typeof w === 'string'))) bad('warnings must be an array of strings')
+  if (o.manualPeriod != null && !(o.manualPeriod.length === 2 && o.manualPeriod.every((v) => Number.isFinite(v) && v > 0))) bad('manualPeriod must be [px, py] positive numbers')
+  return o
+}
+
+function checkImage(img) {
+  const ok = img && Number.isInteger(img.width) && Number.isInteger(img.height) && img.width > 0 && img.height > 0 && img.data?.length === img.width * img.height * 4
+  if (!ok) throw new PixilateError('invalid-input', 'image must be { width, height, data: RGBA8 of width x height x 4 }')
+}
+
+/** Normalized, input-affecting options (no timings, filenames or passthrough fields). */
+function recipeOf(o) {
+  return {
+    engine: ENGINE, profile: o.cleanup ? CLEAN_PROFILE : null, alphaPolicy: ALPHA_POLICY,
+    options: {
+      targetW: o.targetW, targetH: o.targetH, trim: o.trim ? { tau: 0, comparison: '>' } : false, fit: o.fit, anchor: 'center',
+      route: o.route, cleanup: o.cleanup, background: o.background, halo: o.halo, colors: o.colors,
+      palette: o.palette ? Array.from(o.palette) : null, manualPeriod: o.manualPeriod,
+    },
+  }
+}
+
+/** Shared analysis (once per image + options): canonical pixels, generator, background estimate, grid. */
+function analysis(img0, o, bytes) {
+  checkImage(img0)
+  const timingsMs = {}
+  let t0 = performance.now()
+  const lap = (k) => { const t = performance.now(); timingsMs[k] = (timingsMs[k] || 0) + t - t0; t0 = t }
+  const img = canonicalize(img0), W = img.width, H = img.height
+  const gen = detectGenerator(bytes ?? null, img)
+  const wm = gen.watermarkMask ?? null
+  lap('detect')
+  const bg = analyzeBackground(img)
+  let mask = wm
+  if (bg.checkerboard && bg.mask) {
+    mask = Uint8Array.from(bg.mask)
+    if (wm) for (let i = 0; i < mask.length; i++) mask[i] |= wm[i]
+  }
+  lap('background')
+  let grid
+  if (o.manualPeriod) {
+    const [px, py] = o.manualPeriod
+    grid = lockGrid(img, Math.max(1, Math.round(W / px)), Math.max(1, Math.round(H / py)), { mask, preset: gen.preset })
+    grid.evidence.unshift(`manual period ${px} x ${py}`)
+    if (grid.class === 'none') grid.class = 'weak' // the user vouches for the grid
+  } else {
+    // with Trim the target sizes the trimmed basis, so it is no prior for the full canvas
+    grid = detectGrid(img, { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset })
+  }
+  lap('grid')
+  return { img, gen, wm, bg, mask, grid, timingsMs }
+}
+
+/** Decode passthrough (decodeImage's format, decode, strict, orientation); not part of the recipe. */
+const inputReport = (width, height, o) => ({ width, height, format: o.format ?? null, decode: o.decode ?? 'js', strict: o.strict ?? null, orientation: o.orientation ?? null })
+
+const suggestedSizeOf = (grid) => grid.suggestedSize ?? (grid.class !== 'none' ? [grid.x.count, grid.y.count] : null)
+const generatorReport = (gen) => ({ family: gen.family, model: gen.model ?? null, confidence: gen.confidence, evidence: gen.evidence })
+
+/**
+ * analyze(img, opts?, bytes?) -> { grid, generator, suggestedSize }: the shared analysis alone, e.g.
+ * to offer the detected native size before the user fixes W x H (targets optional here).
+ */
+export function analyze(img, opts = {}, bytes = null) {
+  const A = analysis(img, normalize(opts, false), bytes)
+  const { cuts, ...grid } = gridReport(A.grid, A.grid, [0, 0])
+  return { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }
+}
+
+/** Per-pixel cell index (cell holding the pixel centre) along one axis. */
+function cellIndex(axis, len) {
+  const out = new Int32Array(len)
+  for (let x = 0, i = 0; x < len; x++) {
+    while (i < axis.count - 1 && axis.cuts[i + 1] <= x + 0.5) i++
+    out[x] = i
+  }
+  return out
+}
+
+/**
+ * Fit a bw x bh basis into Tx x Ty (anchor center; round-half-to-even; each contained axis clamped to
+ * 1..T). Cover crops the basis to the target aspect (odd remainder right/bottom) and maps the crop
+ * onto the whole box. Returns { fw, fh, crop: [x0, y0, x1, y1] in basis units | null, warning }.
+ */
+function fitBox(bw, bh, Tx, Ty, mode) {
+  const clamp = (v, hi) => Math.max(1, Math.min(hi, v))
+  const contain = Tx * bh <= Ty * bw ? [Tx, clamp(roundHalfEven(bh * Tx, bw), Ty)] : [clamp(roundHalfEven(bw * Ty, bh), Tx), Ty]
+  if (mode === 'contain') return { fw: contain[0], fh: contain[1], crop: null, warning: null }
+  if (mode === 'stretch') return { fw: Tx, fh: Ty, crop: null, warning: contain[0] !== Tx || contain[1] !== Ty ? `aspect distortion: stretched ${bw}x${bh} to ${Tx}x${Ty}` : null }
+  const [cw, ch] = Tx * bh >= Ty * bw ? [bw, clamp(roundHalfEven(bw * Ty, Tx), bh)] : [clamp(roundHalfEven(bh * Tx, Ty), bw), bh]
+  if (cw === bw && ch === bh) return { fw: Tx, fh: Ty, crop: null, warning: null }
+  const x0 = (bw - cw) >> 1, y0 = (bh - ch) >> 1
+  return { fw: Tx, fh: Ty, crop: [x0, y0, x0 + cw, y0 + ch], warning: `cover crop: kept ${cw}x${ch} of ${bw}x${bh}` }
+}
+
+/** Crop image, grid, cells and masks to a cell box (pixel crop rounded outward to the box's cuts). */
+function cropTo(img, grid, cells, wm, gmask, box) {
+  const W = img.width
+  const px0 = Math.floor(grid.x.cuts[box.x0]), px1 = Math.ceil(grid.x.cuts[box.x1])
+  const py0 = Math.floor(grid.y.cuts[box.y0]), py1 = Math.ceil(grid.y.cuts[box.y1])
+  const cw = px1 - px0, ch = py1 - py0, src = cropImage(img, px0, py0, px1, py1)
+  const cropMask = (m) => {
+    if (!m) return null
+    const o = new Uint8Array(cw * ch)
+    for (let y = 0; y < ch; y++) o.set(m.subarray((y + py0) * W + px0, (y + py0) * W + px1), y * cw)
+    return o
+  }
+  const sub = (a, i0, i1, off, len) => {
+    const cuts = Float64Array.from(a.cuts.subarray(i0, i1 + 1), (c) => c - off)
+    cuts[0] = 0; cuts[cuts.length - 1] = len
+    return { ...a, cuts, count: i1 - i0 }
+  }
+  const bw = box.x1 - box.x0, bh = box.y1 - box.y0, n = bw * bh
+  const c = { w: bw, h: bh, lab: new Float32Array(n * 3), alpha: new Uint8Array(n), dominance: new Float32Array(n) }
+  for (const k of ['masked', 'pure']) if (cells[k]) c[k] = new Uint8Array(n)
+  if (cells.rgb) c.rgb = new Int32Array(n)
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+    const s = (y + box.y0) * cells.w + x + box.x0, d = y * bw + x
+    c.lab.set(cells.lab.subarray(s * 3, s * 3 + 3), d * 3)
+    c.alpha[d] = cells.alpha[s]; c.dominance[d] = cells.dominance[s]
+    for (const k of ['masked', 'pure', 'rgb']) if (c[k]) c[k][d] = cells[k][s]
+  }
+  return {
+    src, cells: c, wm: cropMask(wm), gmask: cropMask(gmask), off: [px0, py0],
+    g: { ...grid, x: sub(grid.x, box.x0, box.x1, px0, cw), y: sub(grid.y, box.y0, box.y1, py0, ch) },
+  }
+}
+
+function cropImage(img, x0, y0, x1, y1) {
+  const W = img.width, cw = x1 - x0, out = createImage(cw, y1 - y0)
+  for (let y = y0; y < y1; y++) out.data.set(img.data.subarray((y * W + x0) * 4, (y * W + x1) * 4), (y - y0) * cw * 4)
+  return out
+}
+
+/** Place an Indexed into a transparent Tw x Th canvas at (ox, oy). */
+function place(ix, Tw, Th, ox, oy) {
+  const index = new Int16Array(Tw * Th).fill(-1)
+  for (let y = 0; y < ix.h; y++) index.set(ix.index.subarray(y * ix.w, (y + 1) * ix.w), (y + oy) * Tw + ox)
+  return { w: Tw, h: Th, index, palette: ix.palette, rgb: ix.rgb }
+}
+
+/** Grid report: class/confidence/candidates of the detected grid; native/period/cuts of the grid used. */
+function gridReport(grid, g, off) {
+  const r2 = (v) => Math.round(v * 100) / 100
+  return {
+    class: grid.class, confidence: grid.confidence, native: [g.x.count, g.y.count], nativeFull: [grid.x.count, grid.y.count],
+    period: [r2(g.x.period), r2(g.y.period)], phase: [r2(g.x.phase), r2(g.y.phase)], elastic: [g.x.elastic, g.y.elastic],
+    cuts: { x: Array.from(g.x.cuts, (c) => r2(c + off[0])), y: Array.from(g.y.cuts, (c) => r2(c + off[1])) }, // original source px
+    evidence: g.evidence === grid.evidence ? grid.evidence : [...grid.evidence, ...g.evidence],
+    candidates: grid.candidates ?? null, ambiguous: grid.ambiguous ?? null, alternatives: grid.alternatives ?? null, suggestedSize: suggestedSizeOf(grid),
+  }
+}
+
+/** Mandatory final validator: binary alpha, every visible RGB a palette entry, the color cap held. */
+function validate(image, out, allowed) {
+  const keys = new Set(), d = image.data, rgb = out.rgb
+  for (let k = 0; k < rgb.length; k += 3) keys.add((rgb[k] << 16) | (rgb[k + 1] << 8) | rgb[k + 2])
+  const used = new Set()
+  for (let p = 0; p < d.length; p += 4) {
+    if (d[p + 3] === 0) continue
+    const key = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2]
+    if (d[p + 3] !== 255 || !keys.has(key)) throw new PixilateError('internal-invariant', `output pixel ${p / 4} violates the palette/alpha contract`)
+    used.add(key)
+  }
+  if (allowed != null && used.size > allowed) throw new PixilateError('internal-invariant', `${used.size} visible colors exceed the requested ${allowed}`)
+  return used.size
+}
+
+const LOCK_WINDOW = 0.05 // try a lock to T when |N - T| <= this x T
+
+/** Per-axis Step 4 row for native count N and target T. */
+function rowOf(N, T) {
+  if (Math.abs(N - T) <= Math.max(1, 0.02 * T)) return { kind: 'lock', k: 1 }
+  const r = N / T, k = Math.round(r), ki = Math.round(T / N)
+  if (k >= 2 && Math.abs(r - k) <= 0.02 * k) return { kind: 'reduce', k }
+  if (ki >= 2 && Math.abs(T / N - ki) <= 0.02 * ki && T % ki === 0) return { kind: 'up', k: ki }
+  return { kind: 'nonint', k: 0 }
+}
+
+/** One route on a shared analysis. */
+function run(A, o) {
+  const { img, gen, wm, mask } = A, W = img.width, H = img.height, Tx = o.targetW, Ty = o.targetH, d = img.data
+  const warnings = [...(o.warnings ?? [])], timingsMs = { ...A.timingsMs } // decode warnings first
+  let t0 = performance.now()
+  const lap = (k) => { const t = performance.now(); timingsMs[k] = (timingsMs[k] || 0) + t - t0; t0 = t }
+  const grid = A.grid // detectGrid already prefers the exact factorization matching the target (instructed lattice)
+  const exact = grid.class === 'exact', hasGrid = grid.class !== 'none'
+  let route = o.route === 'auto' ? (hasGrid ? 'grid' : 'raster') : o.route
+  if (!hasGrid) warnings.push('no reliable source grid detected')
+  if (route === 'grid' && !hasGrid) { warnings.push('grid route refused: used raster'); route = 'raster' }
+  if (route === 'grid' && grid.class === 'weak') warnings.push('weak grid evidence')
+  if (route === 'grid' && grid.ambiguous) warnings.push('ambiguous exact grid: several valid factorizations')
+
+  // explicit background stage (on cells); halo repair is its own flag
+  const B = o.background
+  let bgColors = !B ? null : A.bg.bg
+  if (B?.mode === 'key') { bgColors = new Float32Array(3); srgbToOklab(...B.key, bgColors, 0) }
+  const estimate = bgColors ? Array.from({ length: bgColors.length / 3 }, (_, i) => { const t = new Uint8Array(3); oklabToSrgb(bgColors[i * 3], bgColors[i * 3 + 1], bgColors[i * 3 + 2], t, 0); return [...t] }) : null
+  const bgReport = {
+    mode: B ? B.mode : false, estimate, applied: false, reason: !B ? 'off' : bgColors ? null : 'no background estimate', removed: 0, specks: 0,
+    connectivity: B ? B.connectivity : null, metric: B ? 'toe-OKLab dE' : null,
+    tolerance: !B ? null : B.mode === 'key' ? B.tolerance : bgColors?.length === 6 ? 0.035 : 0.03, comparison: !B ? null : B.mode === 'key' ? '<=' : '<',
+    halo: { enabled: o.halo, changed: 0 },
+  }
+  let bgMode = B && bgColors ? (B.mode === 'key' ? 'key' : 'auto') : null
+  const dropBg = (cells) => {
+    if (!bgMode) return cells
+    const c = removeBackground(cells, bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity, halo: o.halo })
+    Object.assign(bgReport, { applied: c.background.applied, reason: c.background.reason, removed: c.background.removed, specks: c.background.specks })
+    bgReport.halo.changed = c.background.haloChanged
+    return c
+  }
+  const sample = (src, g, m) => {
+    const c = dropBg(sampleCells(src, g, { mask: m }))
+    lap('sample')
+    return c
+  }
+  const changed = {}
+  const add = (ch, prefix = '') => { for (const k in ch) { const key = prefix ? prefix + k[0].toUpperCase() + k.slice(1) : k; changed[key] = (changed[key] || 0) + ch[k] } }
+  const clean = (cells) => {
+    let ix = buildPalette(cells, { colors: o.colors, palette: o.palette, exact })
+    for (const w of ix.warnings) if (!warnings.includes(w)) warnings.push(w)
+    lap('palette')
+    if (o.cleanup && !exact) { ix = cleanup(ix, cells); add(ix.changed); lap('cleanup') }
+    return ix
+  }
+  const trim = { enabled: o.trim, tau: 0, comparison: '>', box: null }
+  const visibleBox = (visible) => { // smallest half-open box of alpha > 0 source pixels
+    let x0 = W, y0 = H, x1 = -1, y1 = -1
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 0 && visible(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
+    if (x1 < 0) throw new PixilateError('empty-visible-region', 'Trim found no pixel with alpha > 0')
+    trim.box = [x0, y0, x1 + 1, y1 + 1]
+    return trim.box
+  }
+
+  let path, out, g = grid, off = [0, 0], geo, basis, fw, fh
+  if (route === 'grid') {
+    const native = sample(img, grid, wm), N0 = grid.x.count, M0 = grid.y.count
+    let box = [0, 0, N0, M0] // cell box
+    if (o.trim) { // pixels in background-removed cells are not visible
+      const col = cellIndex(grid.x, W), row = cellIndex(grid.y, H), gone = native.removed
+      const [x0, y0, x1, y1] = visibleBox(gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true)
+      box = [col[x0], row[y0], col[x1 - 1] + 1, row[y1 - 1] + 1]
+    }
+    basis = [box[2] - box[0], box[3] - box[1]]
+    geo = fitBox(basis[0], basis[1], Tx, Ty, o.fit)
+    if (geo.crop) box = [box[0] + geo.crop[0], box[1] + geo.crop[1], box[0] + geo.crop[2], box[1] + geo.crop[3]]
+    let src = img, cells = native, m = wm, gmask = mask
+    if (box[0] || box[1] || box[2] < N0 || box[3] < M0) {
+      ({ src, g, cells, wm: m, gmask, off } = cropTo(img, grid, native, wm, mask, { x0: box[0], y0: box[1], x1: box[2], y1: box[3] }))
+      // the full canvas decided the background; a crop's border is mostly sprite, so re-samples
+      // of it (lock/relock) must not re-run the floating-subject guard
+      if (bgMode === 'auto' && bgReport.applied) bgMode = true
+    }
+    fw = geo.fw; fh = geo.fh
+    const N = g.x.count, M = g.y.count
+    if (exact && N === fw && M === fh) {
+      path = 'exact'
+      out = clean(cells)
+    } else {
+      const rx = rowOf(N, fw), ry = rowOf(M, fh)
+      let kind = rx.kind === ry.kind ? rx.kind : 'nonint', locked = null
+      // exact cells are the art itself: a fractional period (lock, or upscale relock) would drop or double rows
+      if (exact && (kind === 'lock' || (kind === 'up' && (fw / rx.k !== N || fh / ry.k !== M)))) kind = 'nonint'
+      else if (!exact && kind !== 'lock' && Math.abs(N - fw) <= LOCK_WINDOW * fw && Math.abs(M - fh) <= LOCK_WINDOW * fh) {
+        // Judge the lock on edge capture of its elastic cuts vs the free count's elastic lattice on the
+        // same image: a drifting source makes a regular T lattice look bad even when T is right.
+        const L = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset })
+        const F = lockGrid(src, N, M, { mask: gmask, preset: gen.preset })
+        lap('grid')
+        const ratio = Math.min(L.x.coherence / Math.max(1e-12, F.x.coherence), L.y.coherence / Math.max(1e-12, F.y.coherence))
+        if (ratio >= 0.97) { kind = 'lock'; locked = L }
+      }
+      const shrink = (nat) => { // native -> target (Step 8), then the Clean profile's cleanup on the result
+        const r = reduceToTarget(nat, fw, fh, { clean: o.cleanup })
+        add(r.changed, 'reduce')
+        lap('reduce')
+        if (!o.cleanup) return r
+        const c = cleanup(r, r)
+        add(c.changed)
+        lap('cleanup')
+        return c
+      }
+      if (kind === 'lock') {
+        path = 'grid-locked'
+        if (!locked) { locked = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset }); lap('grid') }
+        g = locked
+        out = clean(sample(src, g, m))
+      } else if (kind === 'reduce') {
+        path = 'grid-reduce-k'
+        warnings.push('detail reduced')
+        out = shrink(clean(cells))
+      } else if (kind === 'up') {
+        path = 'grid-upscale-k'
+        warnings.push('target exceeds native resolution')
+        if (g.x.count !== fw / rx.k || g.y.count !== fh / ry.k) {
+          g = lockGrid(src, fw / rx.k, fh / ry.k, { mask: gmask, preset: gen.preset })
+          lap('grid')
+          cells = sample(src, g, m)
+        }
+        out = upscaleInteger(clean(cells), rx.k, ry.k)
+        lap('reduce')
+      } else if (o.trim && o.fit === 'contain' && fw >= N && fh >= M) {
+        // a trimmed sprite with T > N: never stretch by a non-integer factor (mixels); integer-upscale and pad
+        const k = Math.max(1, Math.floor(Math.min(fw / N, fh / M)))
+        path = 'grid-upscale-k'
+        warnings.push(`target exceeds native resolution: integer upscale x${k}, padded to ${Tx}x${Ty}`)
+        out = upscaleInteger(clean(cells), k, k)
+        fw = N * k; fh = M * k
+        lap('reduce')
+      } else {
+        path = 'grid-then-resample'
+        if (fw < N || fh < M) warnings.push('detail reduced')
+        warnings.push('non-integer ratio, approximate')
+        if (fw > N || fh > M) warnings.push('target exceeds native resolution')
+        out = shrink(clean(cells))
+      }
+    }
+  } else {
+    path = 'illustration'
+    warnings.push('approximate')
+    let box = [0, 0, W, H] // pixel box
+    if (o.trim) {
+      let visible = () => true
+      if (bgMode) { // background before Trim: removal on the 4 x target working lattice of the full canvas
+        const sw = Math.min(W, 4 * Tx), sh = Math.min(H, 4 * Ty)
+        const c = removeBackground(areaCells(img, sw, sh), bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity })
+        if (c.background.applied) {
+          const gone = c.removed
+          visible = (x, y) => !gone[Math.floor(((2 * y + 1) * sh) / (2 * H)) * sw + Math.floor(((2 * x + 1) * sw) / (2 * W))]
+        }
+      }
+      box = visibleBox(visible)
+      // the full canvas decided the background; the crop's border is mostly subject
+      if (bgMode === 'auto' && (box[0] || box[1] || box[2] < W || box[3] < H)) bgMode = true
+    }
+    basis = [box[2] - box[0], box[3] - box[1]]
+    geo = fitBox(basis[0], basis[1], Tx, Ty, o.fit)
+    if (geo.crop) box = [box[0] + geo.crop[0], box[1] + geo.crop[1], box[0] + geo.crop[2], box[1] + geo.crop[3]]
+    const src = box[0] || box[1] || box[2] < W || box[3] < H ? cropImage(img, ...box) : img
+    fw = geo.fw; fh = geo.fh
+    const cells = dropBg(resampleToTarget(src, fw, fh))
+    lap('sample')
+    out = clean(cells)
+  }
+  if (geo.warning) warnings.push(geo.warning)
+
+  // 9: place into the target canvas; 10: render, validate, report.
+  const ox = (Tx - fw) >> 1, oy = (Ty - fh) >> 1
+  if (fw !== Tx || fh !== Ty) out = place(out, Tx, Ty, ox, oy)
+  const image = indexedToImage(out)
+  const allowed = o.palette ? o.palette.length / 3 : o.colors === 'auto' ? null : o.colors
+  const colors = validate(image, out, allowed)
+  lap('render')
+  const report = {
+    input: inputReport(W, H, o),
+    generator: generatorReport(gen),
+    grid: gridReport(grid, g, off),
+    route, path, trim,
+    fit: { mode: o.fit, anchor: 'center', basis, basisUnit: route === 'grid' ? 'cells' : 'px', crop: geo.crop, resized: [fw, fh], offset: [ox, oy] },
+    background: bgReport,
+    cleanup: { profile: o.cleanup ? CLEAN_PROFILE : null, changed },
+    alphaPolicy: ALPHA_POLICY,
+    output: { width: Tx, height: Ty, colors, colorsAllowed: allowed, transparent: out.index.some((k) => k < 0) },
+    recipe: recipeOf(o),
+    warnings, timingsMs,
+  }
+  return { image, indexed: out, report }
+}
+
+/** PRO-NOOP: target equals the source and no stage is requested. */
+const isNoop = (img, o, perCandidate = false) => o.targetW === img.width && o.targetH === img.height && !o.trim && !o.background &&
+  o.colors === 'auto' && !o.palette && !o.manualPeriod && (perCandidate || (!o.cleanup && o.route === 'auto'))
+
+function identity(img, o) {
+  const c = canonicalize(img), image = { width: c.width, height: c.height, data: new Uint8ClampedArray(c.data) }
+  let transparent = false
+  for (let p = 3; p < image.data.length && !transparent; p += 4) transparent = image.data[p] === 0
+  return {
+    image, indexed: null,
+    report: {
+      input: inputReport(img.width, img.height, o),
+      generator: null, grid: null, route: null, path: 'noop', trim: { enabled: false, tau: 0, comparison: '>', box: null },
+      fit: { mode: o.fit, anchor: 'center', basis: [img.width, img.height], basisUnit: 'px', crop: null, resized: [img.width, img.height], offset: [0, 0] },
+      background: { mode: false, estimate: null, applied: false, reason: 'off', removed: 0, specks: 0, connectivity: null, metric: null, tolerance: null, comparison: null, halo: { enabled: false, changed: 0 } },
+      cleanup: { profile: null, changed: {} }, alphaPolicy: null,
+      output: { width: img.width, height: img.height, colors: null, colorsAllowed: null, transparent },
+      recipe: recipeOf(o), warnings: [...(o.warnings ?? [])], timingsMs: {},
+    },
+  }
+}
+
+/**
+ * convert(img, opts, bytes?) -> { image, indexed, report }.
+ * opts: targetW, targetH (required integers 1..1024), trim = false, fit = 'contain' | 'stretch' |
+ *       'cover' (anchor center), route = 'auto' | 'grid' | 'raster', cleanup = false (true = the
+ *       Clean profile `ai-sprite-crisp/1`), background = false | 'auto' | { key: [r,g,b], tolerance
+ *       = 0.03, connectivity = 4 | 8 }, halo = false, colors = 'auto' | 1..256, palette? ([r,g,b]
+ *       entries), manualPeriod? [px, py], format?/decode?/strict?/orientation?/warnings? (decodeImage
+ *       passthrough: report.input, decode warnings lead report.warnings).
+ * Throws PixilateError: 'invalid-input', 'empty-visible-region', 'algorithm-budget-exceeded',
+ * 'internal-invariant'. `indexed` is null on the identity (noop) path.
+ */
+export function convert(img, opts = {}, bytes = null) {
+  checkImage(img)
+  const o = normalize(opts)
+  if (isNoop(img, o)) return identity(img, o)
+  return run(analysis(img, o, bytes), o)
+}
+
+const sameImage = (a, b) => a.width === b.width && a.height === b.height && a.data.every((v, i) => v === b.data[i])
+
+/**
+ * convertCandidates(img, opts, bytes?) -> { candidates: [{ id, image, indexed, report }], recommended,
+ * analysis: { grid, generator, suggestedSize }, failed: [{ id, code, message }] }.
+ * Shared analysis once; opts as convert (route and cleanup are set per candidate):
+ * original (identity, only when the noop rule holds), grid (grid route, cleanup off; grid found),
+ * clean (Clean profile on the grid route, else the raster route), smooth (raster route, cleanup off).
+ * Identical outputs are deduped (the earlier id survives). Recommendation: original when present;
+ * no grid or class 'weak' -> smooth; class 'exact' -> grid; otherwise clean.
+ */
+export function convertCandidates(img, opts = {}, bytes = null) {
+  checkImage(img)
+  const o = normalize(opts), A = analysis(img, o, bytes), cls = A.grid.class
+  const specs = []
+  if (isNoop(img, o, true)) specs.push(['original', null])
+  if (cls !== 'none') specs.push(['grid', { route: 'grid', cleanup: false }], ['clean', { route: 'grid', cleanup: true }])
+  else specs.push(['clean', { route: 'raster', cleanup: true }])
+  specs.push(['smooth', { route: 'raster', cleanup: false }])
+  const candidates = [], alias = {}, failed = []
+  let firstError = null
+  for (const [id, over] of specs) {
+    let r
+    try { r = over ? run(A, { ...o, ...over }) : identity(img, o) } catch (e) {
+      if (!(e instanceof PixilateError)) throw e
+      failed.push({ id, code: e.code, message: e.message }); firstError ??= e
+      continue
+    }
+    const dup = candidates.find((c) => sameImage(c.image, r.image))
+    if (dup) { alias[id] = dup.id; continue }
+    alias[id] = id
+    candidates.push({ id, ...r })
+  }
+  if (!candidates.length) throw firstError
+  const want = specs[0][0] === 'original' ? 'original' : cls === 'none' || cls === 'weak' ? 'smooth' : cls === 'exact' ? 'grid' : 'clean'
+  const { cuts, ...grid } = gridReport(A.grid, A.grid, [0, 0])
+  return { candidates, recommended: alias[want] ?? candidates[0].id, analysis: { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }, failed }
+}
