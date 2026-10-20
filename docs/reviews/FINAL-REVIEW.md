@@ -33,7 +33,7 @@ License and patent discussion is engineering triage, not legal advice. A future 
 - Mutable websites, APIs, pricing, product behavior, terms, privacy policies, repository heads, and dependency licenses must be rechecked before publication updates or implementation adoption.
 - Any competitor benchmark must use authorized inputs and comply with applicable terms. Credentials, account identifiers, signed URLs, request identifiers, confidential metadata, and proprietary inputs must never enter public results.
 - AI-generated or third-party benchmark images may be committed only after reviewing the specific output terms, depicted intellectual property, privacy/publicity rights, and redistribution grant. Prompts alone are not provenance.
-- No document selects a production engine, codec, quantizer, Mixel scorer, cleanup rule, or background segmenter.
+- No document selects a production engine, codec, quantizer, Mixel scorer, cleanup rule, or background segmenter. *(Superseded 2026-10-19 for the engine only: owner decision `OWN-001` selects a JavaScript engine; see the addendum below.)*
 
 ## Technical planning status
 
@@ -54,3 +54,16 @@ Before every public release of the documentation:
 7. confirm temporary handoff/session files are excluded from the commit.
 
 No executable work follows automatically from this review.
+
+## 2026-10-19 prototype addendum
+
+Owner decisions `OWN-001`–`OWN-006` are recorded in [PRD §25](../planning/product-requirements.md#25-owner-decision-log). `OWN-002` makes `prototype/` an owner-requested exploratory research prototype. It does not change the Gate A/B status in [Technical planning status](#technical-planning-status): it is not the Slice A harness, passes no gate, and closes no open decision or experiment.
+
+- **Checklist re-run:** re-run on 2026-10-19 over every tracked file and the 2026-10-19 changes; findings were fixed before publication.
+- **Private sample references:** tracked files refer to local samples only by opaque ID (`gpt-oni`, `gemini-mage`, `gpt-forest`, `unk-dungeon`, `unk-coat`, `ai-wizard`, `local-*`); no original filename, folder, prompt, or generation metadata is tracked.
+- **Showcase assets:** the PixelLab showcase crops used locally are external CC0-dedicated AI outputs. They are local-only, not admitted to a Pixilate corpus, and never required by committed tests.
+- **Comparison:** no PixelLab output comparison remains in the tracked documents; local PixelLab outputs were not captured under the benchmark competitor protocol (methodology §12).
+- **Committed tests:** committed gates run on project-owned procedural fixtures only, so a clean checkout passes without local files.
+- **History:** commits that contained since-removed material were rewritten before first publication.
+
+The [Outcome](#outcome) bullets apply to the 2026-10-19 additions as of this re-run.

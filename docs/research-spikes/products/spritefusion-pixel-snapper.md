@@ -6,6 +6,7 @@
 **Pinned source revision:** [`ae20461f60fb39e75d15f184bab1ebec1219511c`](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/tree/ae20461f60fb39e75d15f184bab1ebec1219511c)  
 **Crate version:** `1.0.0`  
 **License:** MIT  
+**Addendum:** 2026-10-19 HEAD re-check ([addendum](#addendum--2026-10-19-head-re-check)); where it differs from the July text, the addendum governs.  
 **Research status:** Complete for the public MIT Rust core, official product material, and bounded live-UI/output observations; unpublished web/desktop internals remain unknown.
 
 ## Evidence vocabulary
@@ -216,7 +217,7 @@ These cases are intentionally simple. They do not say Pixel Snapper never succee
 
 ### User reports that match the failure model
 
-- **VERIFIED:** A user reported a 256×256 input becoming 55×55 and a 2048 version becoming about 203×203. The maintainer explained that shrinking to one output pixel per inferred logical pixel is expected and that the sample lacked suitable grid structure. [Issue #1](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/issues/1).
+- **VERIFIED:** A user reported a 256×256 input becoming 49×58 and a 2048 version becoming “about 203px” *(dimensions corrected 2026-10-19)*. The maintainer explained that shrinking to one output pixel per inferred logical pixel is expected and that the sample lacked suitable grid structure. [Issue #1](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/issues/1).
 - **VERIFIED:** A noisy 1024×1024 sample produced palette mistakes at 32 colors; the maintainer increased the website maximum but said the tool performed best on standalone assets. [Issue #5](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/issues/5#issuecomment-3665938904).
 - **VERIFIED:** A 1024×1024 sheet reportedly became a small white 13×13 result. The maintainer recommended slicing and processing each asset separately. [Issue #7](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/issues/7#issuecomment-3904628697).
 - **VERIFIED:** A user fed a native 32×32 sprite with damaged background-removal edges and received an unrecognizable 6×8 result. The maintainer clarified that the tool is meant for high-resolution mixels, not low-resolution edge repair. [Issue #9](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/issues/9).
@@ -399,8 +400,8 @@ These strengths explain why it can feel much better than naive downscaling on se
 - **UNKNOWN:** Is the complete paid desktop UI source publicly available, and under what license? The Rust core is MIT; the separate Svelte UI was not located in this repository.
 - **UNKNOWN:** Are outputs bit-identical across native x86, ARM, and WASM for adversarial centroid/tie cases?
 - **UNKNOWN:** How does the current decoder path handle ICC profiles, PNG gamma chunks, and JPEG EXIF orientation in practice? The core does not explicitly manage them.
-- **UNKNOWN:** Does the web deployment enforce the displayed 10MB limit elsewhere? The inspected page module filters MIME type but contains no file-size check; the Rust core limits dimensions, not encoded bytes.
-- **UNKNOWN:** What analytics/session-recording configuration is active beyond the explicit metadata event? The inspected Pixel Snapper helper did not transmit image bytes, but this was not a full network/privacy audit of every third-party script.
+- **UNKNOWN:** Does the web deployment enforce the displayed 10MB limit? The Rust core limits dimensions, not encoded bytes; unpublished front-end behavior is outside this public audit.
+- **UNKNOWN:** What analytics or session-recording configuration is active, and what data it receives? This public audit did not inspect front-end assets or network traffic; the site's privacy policy is the authoritative public source.
 - **UNKNOWN:** What real corpus and metric drove the hard-coded thresholds (`0.2`, `4`, `0.35`, `0.5`, `64`, `1.8`)? No benchmark dataset, evaluation report, or golden-image suite is public.
 - **UNKNOWN:** How often does `--pixel-size` produce the intended logical dimensions on real assets? The source proves it is not a hard dimension constraint, but a native executable was unavailable for a broad override sweep.
 - **UNKNOWN:** Are RGB-mode PNGs intended, or should custom-palette outputs be indexed PNGs? Current code always writes RGBA.
@@ -410,3 +411,15 @@ These strengths explain why it can feel much better than naive downscaling on se
 Pixel Snapper is valuable prior art for **deterministically collapsing a near-pixel-art raster onto an inferred logical grid**. Its success comes from a pragmatic combination of analysis quantization, locally elastic boundaries, and categorical cell voting. Its most important lesson for Pixilate is also its central limitation: implicit-grid recovery is a specialized hypothesis about the source, not a replacement for exact target-size resizing.
 
 Pixilate should preserve the determinism, local processing, stage separation, and inspectability while replacing non-target-governed output dimensions with an exact target contract, richer confidence-scored geometry, explicit trim/canvas semantics, independent quantization, and topology-aware optional cleanup.
+
+## Addendum — 2026-10-19 HEAD re-check
+
+**Re-check date:** 2026-10-19. Public GitHub API metadata and raw files were read through a web-fetch tool. Constants were requested as verbatim quotes; re-read them at the pin before relying on them in code.
+
+- **VERIFIED (commit metadata):** `main` HEAD on the re-check date is [`e6d81463991c19afd0c53d6826c13251ad843041`](https://github.com/Hugo-Dz/spritefusion-pixel-snapper/commit/e6d81463991c19afd0c53d6826c13251ad843041) (2026-10-19). It changes only `README.md` relative to the pinned `ae20461f`. `src/lib.rs` is therefore unchanged, and every algorithm finding above still applies.
+- **CODE-DERIVED at `ae20461f`:**
+  - Stabilization uses `min_cuts_per_axis`, default 4. After the cross-axis check, an axis whose step exceeds 1.2× the target step is re-snapped; the 1.2 is a hard-coded ratio.
+  - The library rejects a pixel-size override unless it is finite, at least 1, and at most `min(width, height) / 2`. The CLI parser accepts any finite positive value. An out-of-range CLI value therefore passes parsing and is rejected by the library check.
+  - A cell with no sampled pixels keeps the output buffer's initial value, transparent black `[0, 0, 0, 0]`.
+- **VERIFIED (issue #1):** the reported output was 49×58, not the 55×55 written in July. The main text is corrected.
+- **VERIFIED (PR metadata):** PR #6 was closed unmerged on 2026-01-16. Its performance figures remain unreproduced PR claims.

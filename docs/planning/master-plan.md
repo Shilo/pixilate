@@ -4,7 +4,8 @@
 **Status:** planning only; this document does not authorize implementation  
 **Date:** 2026-07-31  
 **Target:** local-first, deterministic, non-generative web application; Pixilate-owned code intended for MIT licensing, with every distributed third-party component retaining its approved terms and subject to dependency, asset, codec, and patent review
-**Synthesis reconciliation:** 2026-07-31 — reconciled against [SYNTHESIS.md](../research-spikes/SYNTHESIS.md) and the [public-documentation review](../reviews/FINAL-REVIEW.md)
+**Synthesis reconciliation:** 2026-07-31 — reconciled against [SYNTHESIS.md](../research-spikes/SYNTHESIS.md) and the [public-documentation review](../reviews/FINAL-REVIEW.md)  
+**Owner decision update:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in [PRD §25](product-requirements.md#25-owner-decision-log); superseded text below is retained with dated notes
 
 The proposed pre-R0 Slice A contract is documented in [canonical-rgba-geometry-spike.md](../research-spikes/algorithms/canonical-rgba-geometry-spike.md). It is a review artifact only; it does not authorize the harness or select a production engine.
 
@@ -34,6 +35,8 @@ The following are locked unless the product requirements are explicitly amended:
 10. **Research evidence precedes product defaults.** The held-out corpus, metrics, human evidence, and failure gallery—not attractive examples—select candidate algorithms (`G-010`, `AC-PRO-004`).
 
 Planning assumptions that remain changeable through a recorded decision: Rust/Wasm is the leading engine hypothesis; PNG/JPEG/WebP/BMP are **candidate** strict static formats whose admitted set remains an `OD-002` result; full ICC handling, SIMD, quantizer, decoder set, Mixel scorer, public limits, and encoded PNG policy remain open.
+
+> **Superseded 2026-10-19 by `OWN-001`** ([PRD §25](product-requirements.md#25-owner-decision-log)): the engine is a JavaScript-only, fully client-side Vite + Svelte single-page application. The Rust/Wasm assumption above is retained as the record of the alternative; the other assumptions are unchanged.
 
 ## 3. Scope
 
@@ -72,6 +75,8 @@ MVP success does not require advanced background removal, automated cleanup, bat
 ## 4. Architecture hypothesis and alternatives
 
 ### 4.1 Leading hypothesis
+
+> **Superseded 2026-10-19 by `OWN-001`** ([PRD §25](product-requirements.md#25-owner-decision-log)): the owner selected the constrained JavaScript engine (the §4.2 constrained TypeScript row, implemented in JavaScript). The Rust/Wasm text below is kept as the record of the alternative. The §4.2 measurement treatment now verifies the selected engine (canonical hashes, runtime, bundle, auditability) instead of choosing between candidates.
 
 Use one pure Rust engine compiled to scalar WebAssembly for strict browser processing. Keep the browser canvas display-only. Run the Wasm engine in a dedicated worker behind a narrow typed bridge. Reuse the same pure engine from future native/CLI adapters only when cross-target conformance is proven.
 
@@ -158,7 +163,7 @@ Every row produces a decision record; a failed hypothesis is a valid result. Num
 
 | ID | Closes OD(s) | Scheduled phase | Open decision / hypothesis | Variants | Corpus | Primary metrics | Stop condition / gate | Owner role | Resulting artifact |
 |---|---|---:|---|---|---|---|---|---|---|
-| EX-001 | `OD-001` | 2 | Rust/Wasm is the best strict engine foundation | Rust scalar Wasm; constrained TS; scalar/SIMD probe | G/A/F/X + microbenchmarks | canonical hashes, runtime, memory, bundle, audit surface | choose only after Slice A vectors exist and a Pareto case is documented | engine lead | ADR: strict engine |
+| EX-001 | `OD-001` | 2 | Rust/Wasm is the best strict engine foundation | Rust scalar Wasm; constrained TS; scalar/SIMD probe | G/A/F/X + microbenchmarks | canonical hashes, runtime, memory, bundle, audit surface | choose only after Slice A vectors exist and a Pareto case is documented. **Closed 2026-10-19 by owner decision `OWN-001`; no Pareto evidence was produced and the experiment was not run.** | engine lead | ADR: strict engine |
 | EX-002 | `OD-002` | 3 | A pinned codec set yields canonical decode/color/alpha | Rust image-family; focused codecs; optional Little CMS; browser diagnostic | F/A/X | expected pixels, orientation, profile behavior, fuzz outcomes, cross-browser hashes | zero unexplained pixel differences; explicit accept/warn/reject table including HDR/narrow-range `cICP` | codec/security lead | codec/color support matrix |
 | EX-003 | `OD-003` | 4 | Rational premultiplied-linear area is the safe baseline | exact area/box; triangle; Mitchell; Catmull; Lanczos3; nearest | H/L/P/A/T/O/U | exact dimensions, halo, edge, color, topology, runtime | retain Pareto set; negative-lobe candidates require complete clamp/gamut vectors | imaging researcher | raster reducer report |
 | EX-004 | `OD-004` | 4 | Exact constant-block factorization reports valid candidates without inventing an original grid | all valid divisor factorizations; instructed source scale; contamination/refusal | G/I | valid factorizations, uniqueness/ambiguity, palette/alpha, period/phase | 100% validity only for instructed or formally uniquely identifiable fixtures; ambiguity preserved | engine/research | factorization ADR |
@@ -467,6 +472,8 @@ Research keys: [PRD](product-requirements.md), [SYN](../research-spikes/SYNTHESI
 
 `US-001` through `US-012` are rationale inputs. `FR-018`, `FR-020`, `AC-TRIM-004`, `AC-CLEAN-001`, `AC-BG-001`, and `AC-BG-002` are T2 delivery items even where Phase 8 researches them. `FR-019` is T3 and explicitly has no Phase 0–14 owner.
 
+**2026-10-19 addendum:** `FR-023` and `AC-PROV-001` (provenance report, `OWN-003`) map to Phases 3 and 11, as listed in the PRD crosswalk. Owner decisions are in [PRD §25](product-requirements.md#25-owner-decision-log).
+
 ## 15. Authorization Gate A (R0) and first executable research slice
 
 **Gate A / R0 — planning to research harness** is a narrow authorization. `Gate A` and `R0` are the same gate; the former is the plain-language name and the latter is the stable trace ID. It permits only owned procedural fixtures, reference metric/hash vectors, simple falsification baselines, and headless research-harness code needed to resolve open decisions. It does **not** authorize the web product, production codecs, a production engine selection, Wasm/browser integration, remote uploads, a quantizer dependency, Mixel defaults, background segmentation, or files outside the owner-approved research-harness scope.
@@ -492,6 +499,8 @@ After explicit Gate A authorization, build one headless, UI-free, dependency-cle
 
 Slice A selects no production codec or engine. It may be implemented as a neutral reference solely to establish vectors. `EX-001` compares candidate production engines **after** those vectors exist; `EX-002` and Slice B later compare candidate decode/color adapters against the same canonical inputs. Slice C is the later bridge/Wasm experiment. Passing Slice A authorizes none of those follow-ons automatically.
 
+**Owner-authorized exception (2026-10-19, `OWN-002`, [PRD §25](product-requirements.md#25-owner-decision-log)):** `prototype/` is an owner-requested exploratory JavaScript research prototype. It is not Slice A, does not satisfy the Gate A preconditions above, and passes no gate. Its codecs, interface, quantizer, Mixel-like reduction, cleanup, and background code are exploratory; they close no `OD-*` or `EX-*` item and select no production default.
+
 ## 16. Authorization Gate B (R1) and product implementation
 
 **Gate B / R1 — research harness to product implementation** is a separate explicit owner authorization. `Gate B` and `R1` are the same gate; Gate A/R0 never implies Gate B/R1.
@@ -504,4 +513,4 @@ Before requesting Gate B, the package must satisfy the applicable benchmark-meth
 - baseline reports sufficient to justify every T1 profile/default and the rule that no stable Mixel or destructive default precedes its evidence gate;
 - an explicit T1 shipped-scope manifest excluding Phase 8/T2 and `FR-019` unless separately promoted through a documented scope change.
 
-Only Gate B permits Phases 9–14 product implementation. Until the owner grants the relevant gate, work remains documentation-only under `docs/`.
+Only Gate B permits Phases 9–14 product implementation. Until the owner grants the relevant gate, work remains documentation-only under `docs/`. *(Exception 2026-10-19, `OWN-002`: the exploratory `prototype/` research prototype described in §15. It is not Gate B product implementation and passes no gate.)*

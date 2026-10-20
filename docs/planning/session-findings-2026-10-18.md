@@ -74,7 +74,7 @@ This combined gap is Pixilate's primary opportunity. The intended product is not
 
 ## Architecture and licensing findings
 
-The processing-core choice remains evidence-gated. TypeScript offers simpler browser integration; Rust/Wasm offers stronger control over numeric paths and shared native/web execution. The decision should follow measured determinism, performance, memory, bundle size, auditability, and dependency closure.
+The processing-core choice remains evidence-gated. TypeScript offers simpler browser integration; Rust/Wasm offers stronger control over numeric paths and shared native/web execution. The decision should follow measured determinism, performance, memory, bundle size, auditability, and dependency closure. *(Superseded 2026-10-19 by owner decision `OWN-001`, [PRD §25](product-requirements.md#25-owner-decision-log): JavaScript-only engine; the measurements remain verification obligations.)*
 
 An MIT license for Pixilate-owned code does not automatically make every dependency, codec, algorithm, model, test asset, or compiled artifact MIT-compatible. Each shipped artifact needs a locked dependency inventory, license and notice review, provenance record, and any necessary patent or codec analysis. Publicly readable code without a clear reuse grant must not be copied.
 

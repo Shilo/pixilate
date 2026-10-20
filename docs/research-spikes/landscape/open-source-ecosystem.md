@@ -1,6 +1,7 @@
 # Open-source ecosystem for deterministic raster-to-pixel conversion
 
 **Research snapshot:** 2026-07-31  
+**Addendum:** 2026-10-19 inventory additions and corrections ([addendum](#addendum--2026-10-19-inventory-additions)); where it differs from the July text, the addendum governs.  
 **Scope:** source-level engineering survey for Pixilate; no application implementation  
 **License note:** this is engineering research, not legal advice. SPDX identifiers and repository license files are useful screening inputs, not a substitute for counsel or a complete provenance audit.
 
@@ -402,7 +403,7 @@ No third-party code was copied into Pixilate, no third-party build was vendored,
 **Engineering inference**
 
 - FFT periodicity plus edge-aligned nonuniform cells is a materially better starting model for warped AI mixels than a single median run length. It is the closest surveyed open-source reference to Pixilate's intended-grid problem.
-- Its center sampling can erase thin details; per-channel median can synthesize a color absent from the cell; and two-cluster “majority” is neither an exact mode nor alpha-aware. Grid lines independently walking to local edge maxima can cross, bunch, or follow subject edges instead of the latent grid.
+- Its center sampling can erase thin details; per-channel median can synthesize a color absent from the cell; and two-cluster “majority” is neither an exact mode nor alpha-aware. Grid lines are chained outward from the image centre, and each line is snapped near the previous snapped line, so snapping errors can accumulate, bunch, or follow subject edges instead of the latent grid *(walk description corrected 2026-10-19 at the pinned revision)*.
 - NumPy FFT and floating-point peak logic should not be assumed byte-stable across browser ports or native backends. The fixed seed only stabilizes one sampling mode within a fixed implementation.
 - A metadata string is weaker reuse evidence than a repository license grant. Obtain a conventional MIT `LICENSE` file or author clarification before copying code; independently reimplementing the documented method remains available.
 
@@ -593,3 +594,84 @@ Acceptance must be per input class. A leading average score is not a universal d
 ## Residual follow-up candidates
 
 Discovery was intentionally stopped after saturation. If later benchmarks expose a gap, investigate the newer Rust `dithr`/`dithereens` crates, the emerging Pixelloid/Pixel Extractor project, e-ink quantizers, classic depixelization research implementations, and custom minimal OpenCV.js builds. None presently changes the core architectural conclusion above.
+
+## Addendum — 2026-10-19 inventory additions
+
+**Snapshot:** 2026-10-19.
+
+**Method:** public GitHub API metadata and raw files at the pinned revisions below, read through a web-fetch tool. The tool returns a model-mediated reading, so constants were requested as verbatim quotes. They are CODE-DERIVED for the pinned revision only and must be re-read before any port. Nothing was cloned, installed, or run. Rows marked *draft-reported* come from a superseded 2026-10-18 survey draft, were not re-checked, and stay surface signals (**UNKNOWN** until verified).
+
+### Coverage correction
+
+The July inventory missed the grid-recovery and pixelization projects below, although at least five already existed before 2026-07-31. By GitHub `created_at`:
+
+- pyxelate (2020-01)
+- PixelOE (2024-03)
+- proper-pixel-art (2024-09)
+- PixelRefiner (2026-02)
+- fast-pixelizer (2026-03)
+
+The July claim that "search stopped after saturation" therefore missed relevant families: candidate-grid model selection, and complete client-side TypeScript converters. The bounded-exhaustive caveat stands, with this gap recorded.
+
+### Pinned ledger additions
+
+| Candidate | Pinned revision | HEAD date | Declared license (GitHub API) |
+|---|---|---:|---|
+| [KennethJAllen/proper-pixel-art](https://github.com/KennethJAllen/proper-pixel-art/tree/4de0dda5ba066491b5b5fac3500365db4dfd665e) | `4de0dda5ba066491b5b5fac3500365db4dfd665e` | 2026-10-10 | MIT |
+| [KohakuBlueleaf/PixelOE](https://github.com/KohakuBlueleaf/PixelOE/tree/7ce444b36d3876a151d845d4493240e904454d89) | `7ce444b36d3876a151d845d4493240e904454d89` | 2026-09-28 | Apache-2.0 |
+| [sedthh/pyxelate](https://github.com/sedthh/pyxelate/tree/f4a046b8b148370a20ab7681fce160551e5fc49b) | `f4a046b8b148370a20ab7681fce160551e5fc49b` | 2026-01-18 | MIT |
+| [HappyOnigiri/PixelRefiner](https://github.com/HappyOnigiri/PixelRefiner/tree/c32659f350705f5f497fcc0737902f32915d2ef3) | `c32659f350705f5f497fcc0737902f32915d2ef3` | 2026-09-21 | MIT |
+| [dolphinep/breakfastz-pixel-truth](https://github.com/dolphinep/breakfastz-pixel-truth/tree/a1a3961c23d617b1cd7cda78b6051d9cde9ea401) | `a1a3961c23d617b1cd7cda78b6051d9cde9ea401` | 2026-10-11 | MIT |
+| [handsupmin/fast-pixelizer](https://github.com/handsupmin/fast-pixelizer/tree/5c041fceedab042973502e0dfa2e9f90e2fa9063) | `5c041fceedab042973502e0dfa2e9f90e2fa9063` | 2026-07-22 | MIT |
+
+### Grid-size model selection (CODE-DERIVED at the pins)
+
+- **proper-pixel-art** ([`mesh.py`](https://github.com/KennethJAllen/proper-pixel-art/blob/4de0dda5ba066491b5b5fac3500365db4dfd665e/proper_pixel_art/mesh.py), [`config.py`](https://github.com/KennethJAllen/proper-pixel-art/blob/4de0dda5ba066491b5b5fac3500365db4dfd665e/proper_pixel_art/config.py)):
+  - Each candidate pixel width builds a full mesh, scored by pixel-weighted mean within-cell grey variance.
+  - The current estimate is kept if its score is within (1 + 1.5) × best.
+  - Otherwise the largest eligible width within (1 + 0.2) × best is adopted.
+- **breakfastz-pixel-truth** ([`grid.ts`](https://github.com/dolphinep/breakfastz-pixel-truth/blob/a1a3961c23d617b1cd7cda78b6051d9cde9ea401/src/lib/pixel/grid.ts)):
+  - Candidates are each axis period × {1, 2, 3, ½, ⅓}, from 3 px up to a size limit.
+  - Interior noise is the 90th percentile of per-cell RGB standard deviation over cell centres, with a 25% margin trimmed.
+  - The largest candidate with noise ≤ 1.35 × best + 2 is chosen.
+  - Confidence is the smaller per-axis ratio of the final period's score to the median candidate score. A grid counts as detected above 1.4.
+- **PixelRefiner** ([`grid-search.ts`](https://github.com/HappyOnigiri/PixelRefiner/blob/c32659f350705f5f497fcc0737902f32915d2ef3/src/core/grid-search.ts)):
+  - Axis score = 0.75 × grid alignment + 0.15 × autocorrelation + 0.1 × local phase stability, scaled by a periodicity confidence.
+  - Pair score (lower is better) = reconstruction × 255 + 2·√(outW·outH) − (sx + sy) × 12. The area term explicitly favours coarser grids.
+  - Harmonic penalties live in a separate module that was not re-read (UNKNOWN constants).
+
+**INFERRED:** these tools converge on one rule. Score full candidate grids by within-cell residual, then prefer the **largest** cell size whose residual is within a tolerance of the best. Pure residual minimization always prefers smaller cells, and pure periodicity strength locks onto harmonics. This complements [state of the art §5.2](../algorithms/state-of-the-art.md#52-period-and-phase-evidence) as a benchmark hypothesis, not a selected default.
+
+### Other additions
+
+| Project | Contribution | License/status | Pixilate disposition |
+|---|---|---|---|
+| PixelRefiner | Client-side TypeScript converter (live at pixel-refiner.app) with an input classifier (refine, convert, preserve), inset-core medoid cell sampling, deterministic OKLab k-means, background tools, and a quality-baseline CI; mechanism details beyond the scoring above not re-read | MIT (pinned) | Highest-priority study and benchmark target; adapt specific functions only with notice after a pinned file-level review |
+| proper-pixel-art | Edge-anchored mesh, per-gap subdivision, and the width validation above | MIT (pinned) | Study and benchmark; adapt with notice |
+| breakfastz-pixel-truth | Fractional comb grid, offset carry-forward, size selection above, guarded cleanup rules | MIT (pinned); created 2026-10-11 | Study and benchmark; adapt with notice |
+| PixelOE | Continuous-tone pixelizer (no source-grid detection) with contrast-aware outline expansion before downscale; details draft-reported | Apache-2.0 (pinned) | Study; retain the Apache-2.0 licence and NOTICE terms if any code is adapted |
+| pyxelate | Continuous-tone pixelizer with exact target size and seeded palette fitting; details draft-reported | MIT (pinned) | Study only |
+| fast-pixelizer | Zero-dependency TypeScript snapper; reportedly the engine behind mono-pix; details draft-reported | MIT (pinned) | Benchmark baseline |
+| [ComfyUI-PixelArt-Detector](https://github.com/dimtoneff/ComfyUI-PixelArt-Detector) | Draft-reported: unseeded OpenCV k-means paths; coverage-threshold palette shrinking | MIT (July row) | July disposition stands; treat as nondeterministic |
+| painebenjamin/unfake.py | Third-party Python package (not Unfaker/unfake.js); the "unfake" backend of pixel-bench | MIT, draft-reported | Inventory only; never attribute its behaviour to Unfaker |
+| CalaKuad1/ComfyUI-PixelArt-Unfaker | Draft-reported: crops or pads an unfake result to a requested W×H | MIT, draft-reported | Inventory; post-hoc crop/pad is not target-constrained fitting |
+| tauraloke/ComfyUI-Unfake-Pixels; x0x0b/ComfyUI-spritefusion-pixel-snapper and other Pixel Snapper forks | Wrappers and ports | MIT, draft-reported | Derivatives; do not double-count |
+| Pixel Rehab | JavaScript port of the Retro Diffusion fixer | See the [Retro Diffusion spike](../products/retro-diffusion-pixel-art-fixer.md#derivative-pixel-rehab) | Derivative |
+| vardirhq/sindri-pixel (PR #13) | Draft-reported: global dynamic-programming line fit and residual-knee size selection | No licence, draft-reported | Ideas only |
+| Danamir/pixelart-cleaner | Draft-reported: irregular-span grid cleaner | GPL-3.0, draft-reported | Not approved for the current bundle |
+| Ign1s-Reiga/pixelfit, duniul/pixel-scale, Teo2/pixel-art-downscaler, wjhrdy/pixel-art-scaler, andreasjansson/pixel-art-downscaler | Small grid or scale tools | Mixed or no licence, draft-reported | Inventory only |
+| A1111 Pixelization extension | Neural pixelization | MIT wrapper; model weights under a non-commercial licence, draft-reported | Out of scope (model-based) |
+| Astropulse/sd-palettize, mrreplicart/sd-webui-pixelart, MidFord/BetterPixelArtDownscale, golota60/fixelart | Pixelization and downscale scripts | No licence stated, draft-reported | Ideas only |
+| gskaggs/Pyxeled | Implementation of Gerstner et al. 2012, "Pixelated Image Abstraction" | Draft-reported | Literature reference |
+| Astropulse K-Centroid (Aseprite script) | Tile 2-colour centroid resize | MIT, draft-reported | Study only |
+| olivierlesnicki/quantize (MMCQ), mattdesl/gifenc, mcychan/PnnQuant.js | Small quantizers | MIT, MIT, MPL-2.0, draft-reported | Quantizer bake-off candidates; MPL-2.0 has file-level obligations |
+| LibreSprite | GPL-2.0 editor fork | GPL-2.0, draft-reported | Behaviour reference only |
+
+### Conflicts resolved
+
+- **image-q licence (re-checked 2026-10-19):** [`packages/image-q/LICENSE`](https://github.com/ibezkrovnyi/image-quantization/blob/d1a4ac4a3b00c456737a03909b1bb523c569da25/packages/image-q/LICENSE) exists at the July pin. It carries MIT plus the NeuQuant and RgbQuant notices. A claim that "the repo has no license file" checked only the repository root. The July row stands.
+- **libimagequant:** the two-line distinction in §9 stands. Current v4 is GPL-3.0-or-later or commercial; the lovell v2.4.1 fork is BSD-2-Clause. A generalization that "every libimagequant WASM port is GPL-3" is incorrect.
+- **perfectPixel (re-checked at `72096de`):** grid refinement is chained outward from the centre in both directions. Each line is searched within ±`refine_intensity` (default 0.25) cell of the previous snapped line plus one cell. The §16 text is corrected. The licence posture (metadata MIT, no licence file) is unchanged.
+- **pixeldetector and Pixel It dates:** later "last push" dates are GitHub `pushed_at`. The ledger records the commit date of the pinned revision. There is no conflict.
+- **Unfaker licence wording:** see the [Unfaker addendum](../products/unfake-js.md#licence-unchanged). The distribution's licence path is not publicly stated; nothing here asserts a GPL obligation.
+- **Defect claims:** claims of implementation defects in named projects, made in the superseded draft from paraphrased reads without pinned revisions, were not re-verified and are not carried forward. The July pixeldetector `uint8` inference (§1) is unchanged.

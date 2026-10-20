@@ -4,6 +4,7 @@
 **Document type:** research-backed product requirements / design contract  
 **Status:** planning baseline; no implementation is authorized by this document  
 **Date:** 2026-07-31  
+**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; earlier text is retained with dated supersession notes  
 **License intent:** open source under MIT, subject to dependency and patent review  
 
 ## 1. Executive product contract
@@ -422,6 +423,7 @@ The following requirements have stable IDs. “Tier” references §19.
 | FR-020 | Offer mapped-margin/custom-canvas Trim restoration with previewed final dimensions. | Should / T2 | geometry goldens |
 | FR-021 | Never upload image bytes in the deterministic core; network status and optional telemetry remain separately inspectable. | Must / T1 | automated network audit |
 | FR-022 | Cancel work, release buffers, and preserve the last valid preview without corrupt partial exports. | Must / T1 | cancellation/resource tests |
+| FR-023 | Report deterministic input-provenance (source-generator) signals read from container metadata, with published output dimensions as weak, advisory evidence only, worded as “file metadata claims (signature not checked)”. The signal is report-only: it never selects a profile, preset, or default by itself. Prompts, workflow text, and usernames found in metadata are never copied into recipes, reports, or exports. Watermark handling is masking-only: a declared or estimated region may be excluded from analysis and is recorded in the recipe; no stage removes, inpaints, or recolors it. Added 2026-10-19 by `OWN-003` (§25); dimension wording amended 2026-10-19 (§25 `OWN-003` note). | Should / T0 experimental, T1 | provenance fixtures and no-prompt-leak test (`AC-PROV-001`) |
 
 ## 14. Determinism, replay, and metadata contract
 
@@ -630,6 +632,7 @@ This section is engineering policy, not legal advice.
 - **AC-CAN-001:** Cancellation meets NFR-PERF-003 on the reference platform.
 - **AC-A11Y-001:** An accessibility audit and keyboard-only test complete import, target/Trim setup, processing, warning review, recipe export, and PNG export at WCAG 2.2 AA.
 - **AC-LIC-001:** Release CI emits a reviewed SBOM/notices set and fails on unapproved license classes or unpinned dependencies.
+- **AC-PROV-001 (added 2026-10-19, `OWN-003`):** Fixtures with known container metadata report the expected provenance signal labelled “file metadata claims (signature not checked)”. Fixtures whose metadata contains prompt, workflow, or username text yield recipes, reports, and exports that contain none of that text. With no watermark mask applied, output pixels are identical whether detection runs or not; a recorded mask only excludes its region from analysis.
 
 ## 18. Measurement and benchmark policy
 
@@ -699,7 +702,7 @@ No item below is selected merely because research found a promising library or a
 
 | Decision | Entry criteria | Candidates / experiment | Exit criteria |
 |---|---|---|---|
-| OD-001 strict engine | T0 harness and reference fixtures exist | Rust/Wasm single core vs constrained TypeScript; scalar vs proven SIMD | canonical hash conformance, performance/memory budget, small auditable bundle, MIT-compatible closure |
+| OD-001 strict engine — **closed 2026-10-19 by owner decision `OWN-001` (§25)**; no comparative evidence was produced and `EX-001` was not run; the exit criteria remain verification obligations for the selected JavaScript engine | T0 harness and reference fixtures exist | Rust/Wasm single core vs constrained TypeScript; scalar vs proven SIMD | canonical hash conformance, performance/memory budget, small auditable bundle, MIT-compatible closure |
 | OD-002 codecs/color | hostile/color/orientation fixtures and policy table exist | `image` family, focused C/Wasm codecs, optional Little CMS | correct fixture pixels, fuzz/security pass, explicit profile behavior, browser matrix identity, license/patent review |
 | OD-003 raster reducer default | geometry/alpha metrics implemented | rational area, box, Mitchell, Lanczos3, Catmull-Rom, medoid candidates | Pareto result on halo/edge/color/human preference; deterministic hash; runtime budget |
 | OD-004 exact/approx grid | synthetic period/phase and ambiguity corpus exists | exact factorization set, instructed/unique recovery, runs, edge/autocorrelation/FFT, tile consensus | 100% valid-factorization enumeration; 100% original recovery only on instructed/uniquely identifiable cases; ambiguity fixtures never invent authority; calibrated contamination behavior |
@@ -737,7 +740,7 @@ Reasonable defaults below let planning proceed; each can change only through a d
 
 ### 22.1 Evidence keys
 
-- **[OWNER]** Internal product authority from the initiating request, not a public evidence citation: exact target dimensions; Trim uses opaque/visible pixels versus full canvas; broad raster/mixel support; deterministic non-AI processing; separate resizing, quantization, and background features; customizable algorithms; MIT/open source; heavy competitor research. Public claims require independent support from the other evidence keys.
+- **[OWNER]** Internal product authority from the initiating request, not a public evidence citation: exact target dimensions; Trim uses opaque/visible pixels versus full canvas; broad raster/mixel support; deterministic non-AI processing; separate resizing, quantization, and background features; customizable algorithms; MIT/open source; heavy competitor research. **2026-10-19 directives (§25):** a deterministic, fully client-side, JavaScript-only single-page application (Vite + Svelte, not SvelteKit); focus on the conversion algorithm and its tests rather than UI design; output at the exact user-requested size; detect the source generator where possible; crisp pixel art without mixels, orphan pixels, jaggies, or muddy anti-aliasing. Public claims require independent support from the other evidence keys.
 - **[SYN]** `docs/research-spikes/SYNTHESIS.md` — reconciled cross-spike feasibility, locked decisions, benchmark-gated decisions, product gap, risks, and falsification conditions.
 - **[BENCH]** `docs/research-spikes/evaluation/benchmark-methodology.md` — corpus governance, truth levels, metric semantics, statistical design, determinism/performance protocols, and claim-to-gate policy.
 - **[ALG]** `docs/research-spikes/algorithms/state-of-the-art.md` — especially “Why a universal best algorithm is impossible,” “End-to-end deterministic processing model,” §§1–2, §§5–10, “Cross-browser determinism contract,” “Recommended profiles,” and “Benchmark and validation plan.”
@@ -917,6 +920,7 @@ This section is the normalized source of truth for ownership. Each shipped norma
 | FR-020 | AC-TRIM-004 | 3, 10 | T2 restoration / deferred from T1 cut |
 | FR-021 | AC-OFF-001, AC-PRIV-001 | 9 | T1 / direct |
 | FR-022 | AC-CAN-001 | 9, 12 | T1 / direct |
+| FR-023 | AC-PROV-001 | 3, 11 | T0 experimental, then T1 Should / direct (added 2026-10-19, `OWN-003`) |
 | DET-001 | AC-DET-002 | 2, 9 | T0→T1 / direct |
 | DET-002 | AC-DET-001 | 2 | R0→T1 / direct |
 | DET-003 | AC-DET-001 | 2 | T0→T1 / direct |
@@ -988,5 +992,53 @@ This section is the normalized source of truth for ownership. Each shipped norma
 | AC-CAN-001 | G-009, NFR-PERF-001–003, FR-022 |
 | AC-A11Y-001 | G-006, OUT-002, TRIM-005, ALPHA-005, DITH-004, CLEAN-003, BG-006, FR-002/004/008, NFR-A11Y-001–006 |
 | AC-LIC-001 | G-008, NG-006, DITH-005, NFR-PERF-005, NFR-SEC-005, NFR-LIC-001–007 |
+| AC-PROV-001 | FR-023 |
 
 Until those conditions are met, “best algorithm” remains a research question, not a product requirement. The invariant that can be planned immediately is exact geometry plus explicit, reproducible choices.
+
+## 25. Owner decision log
+
+These entries are the documented product decisions that §21 requires before a default changes. They record owner authority (`[OWNER]`), not research evidence: none of them produces an experiment result or satisfies an experiment's exit criteria. Superseded text elsewhere is kept and carries a dated note that points here.
+
+### OWN-001 — Engine and application stack (2026-10-19)
+
+- **Decision:** a deterministic, fully client-side, JavaScript-only single-page application built with Vite and Svelte (not SvelteKit). This closes `OD-001` by owner decision in favour of the documented constrained TypeScript/JavaScript alternative, implemented in JavaScript.
+- **Rationale:** owner direction for the simplest web delivery and debugging path, the benefit already recorded for that alternative in master plan §4.2. **INFERRED, unmeasured:** JavaScript arithmetic is IEEE-754 double precision without fused contraction and `Math.sqrt` is correctly rounded, so cross-engine pixel identity is plausible when transcendental functions stay off decision paths.
+- **Supersedes:** the Rust/Wasm leading hypothesis in master plan §2 and §4.1 and in the synthesis architecture hypothesis, and the open status of `OD-001` in §20. The Rust/Wasm text is retained as the record of the alternative. No comparative evidence was produced and `EX-001` was not run.
+- **Remaining verification obligations:** the `OD-001` exit criteria (canonical hash conformance, performance and memory budget, small auditable bundle, MIT-compatible closure) now verify the selected engine; `DET-001`–`DET-008`, including the `DET-007` browser/architecture matrix and `AC-DET-002`, precede any strict-determinism claim; `NFR-PERF-005` applies to every dependency; product implementation still requires Gate B/R1.
+
+### OWN-002 — Exploratory prototype authorization (2026-10-19)
+
+- **Decision:** `prototype/` is an owner-requested exploratory JavaScript research prototype of the conversion algorithm and its test harness. It sits outside the Gate A/R0 Slice A and Gate B/R1 sequence.
+- **Rationale:** owner direction to explore the conversion algorithm and its tests directly.
+- **Supersedes:** for `prototype/` only, the master plan §16 statement that work remains documentation-only under `docs/`, and the matching scope statements in the research index and the repository agent guide.
+- **Remaining verification obligations:** the prototype is neither Slice A nor a Gate B product and passes no gate. It does not satisfy the Gate A preconditions in master plan §15, closes no `OD-*` or `EX-*` item, and selects no production profile or default. Its results are exploratory evidence under the research evidence labels, and its committed tests use project-owned procedural fixtures only (benchmark methodology §3).
+
+### OWN-003 — Source-generator detection as a provenance report (2026-10-19)
+
+- **Decision:** add `FR-023` (§13) and `AC-PROV-001` (§17.4): a report-only provenance signal read from container metadata only, worded as “file metadata claims (signature not checked)”; prompts, workflow text, and usernames are never persisted in recipes, reports, or exports; watermark handling is masking-only (a declared or estimated region is excluded from analysis and recorded, never altered).
+- **Rationale:** owner directive to detect the source generator where possible. A deterministic metadata reader is not a classifier, so it stays within `AUTO-001` and `NG-002`. Background: [input provenance signals](../research-spikes/algorithms/input-provenance-signals.md).
+- **Supersedes:** nothing; it adds requirements.
+- **Remaining verification obligations:** `AC-PROV-001`; the §16.1 privacy contract (no metadata text leaves the device); no authenticity claim while signatures are not checked; no watermark-removal behavior.
+- **Note (2026-10-19):** `FR-023` now reads “container metadata, with published output dimensions as weak, advisory evidence only”, matching [input provenance signals §3](../research-spikes/algorithms/input-provenance-signals.md#3-dimension-evidence). A dimension match is never a declaration and never selects a profile, preset, or default. An estimated watermark region is a generic corner fraction applied only when the container declares a visible mark; no pixel test and no vendor geometry ([§4](../research-spikes/algorithms/input-provenance-signals.md#4-declared-visible-watermarks-masking-only)).
+
+### OWN-004 — Crisp output through a named Clean profile (2026-10-19)
+
+- **Decision:** crisp output (no mixels, orphan pixels, jaggies, or muddy anti-aliasing) is delivered through a named, versioned, user-visible profile, “Clean” (for example the cleanup preset `ai-sprite-crisp/1`), which the user selects and which reports changed pixels per rule. It is not an engine default: engine defaults keep cleanup off and background removal off.
+- **Rationale:** meets the owner directive inside the existing contract. `AUTO-007` already allows destructive steps only through a named preset rule with a visible warning.
+- **Supersedes:** nothing. `CLEAN-001`, `AUTO-007`, `AC-CLEAN-001`, and the §21 background and dither/cleanup defaults stand.
+- **Remaining verification obligations:** each Clean rule is a formal serialized rule (`CLEAN-002`–`CLEAN-006`) with changed-pixel counts; `OD-009`/`EX-011` still gate promotion into any shipped profile; “Clean” is not a “pixel-perfect” claim under the benchmark claim gates.
+
+### OWN-005 — Prototype alpha policy (2026-10-19)
+
+- **Decision:** the prototype outputs binary alpha under the named policy `Binary(128)`, recorded in its report; `PreserveCoverage` is reported as unsupported in the prototype.
+- **Rationale:** owner directive against muddy anti-aliasing; naming the policy keeps the binarization visible instead of implicit (`ALPHA-002`).
+- **Supersedes:** nothing in the product contract. `FR-011`, `ALPHA-002`, and the §21 alpha default (`PreserveCoverage`) are unchanged; the prototype records a deviation, not a T1 conformance claim.
+- **Remaining verification obligations:** changing the product alpha default needs its own dated decision with evidence; `AC-ALPHA-001` still applies to the product.
+
+### OWN-006 — Exact requested size (2026-10-19)
+
+- **Decision:** target `W×H` is always required. A detected native size is reported only as `suggestedSize` evidence and never becomes the target.
+- **Rationale:** owner directive for the exact user-requested size; it reaffirms `G-001`, `GEO-001`, `GEO-003`, and `AUTO-004`.
+- **Supersedes:** the prototype's earlier automatic target sizing; no requirement text here.
+- **Remaining verification obligations:** `AC-GEO-001`; `GEO-002` applies if an interface copies `suggestedSize` into `W×H` (the derived value is shown before processing and recorded).

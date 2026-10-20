@@ -3,6 +3,7 @@
 **Project:** Pixilate (working name; temporary and uncertain)  
 **Research snapshot:** 2026-07-31  
 **Decision status:** research synthesis, not an implementation specification  
+**Addendum:** 2026-10-19 — owner decisions and prototype v1 findings ([2026-10-19 addendum](#2026-10-19-addendum-owner-decisions-and-prototype-v1))  
 **Evidence convention:** **VERIFIED**, **CODE-DERIVED**, **OBSERVED**, **INFERRED**, and **UNKNOWN** retain the meanings in the [research index](README.md).
 
 ## Answer to the original product thesis
@@ -52,7 +53,7 @@ This matrix separates capability from quality. “No” means the exposed produc
 
 Two apparent conflicts are resolved by precision:
 
-- PixelLab is not simply “missing target size.” **VERIFIED from public documentation/API:** two relevant tools expose target dimensions, while Unzoom/Pro use inferred or service-selected native sizing, and the relevant conversion operations are described as AI/model workflows rather than strict resampling. The opportunity is therefore **authoritative deterministic target geometry**, not merely adding width/height fields. ([PixelLab scorecard](products/pixellab.md#compact-requirements-scorecard))
+- PixelLab is not simply “missing target size.” **VERIFIED from public documentation/API:** two relevant tools expose target dimensions, while Unzoom/Pro use inferred or service-selected native sizing, and the relevant conversion operations are described as AI/model workflows rather than strict resampling. The opportunity is therefore **authoritative deterministic target geometry**, not merely adding width/height fields. ([PixelLab scorecard](products/pixellab.md#compact-requirements-scorecard)) *2026-10-19 note:* public MCP/OpenAPI documentation is consistent with Unzoom being algorithmic grid snapping rather than generative redraw, but its method remains INFERRED; see the [PixelLab addendum](products/pixellab.md).
 - A tool can be deterministic for one loaded RGBA buffer yet fail Pixilate’s end-to-end contract. Browser decoding, color conversion, unordered ties, floating reduction, encoder metadata, backend changes, or recipe timestamps can diverge. **CODE-DERIVED/INFERRED:** SpriteFusion and Unfaker demonstrate deterministic intent, not the full supported-matrix guarantee. ([SpriteFusion determinism](products/spritefusion-pixel-snapper.md#determinism-and-reproducibility), [Unfaker determinism](products/unfake-js.md#determinism-audit))
 
 ## Candidate ideas to evaluate
@@ -192,7 +193,7 @@ validated bytes
   -> pinned PNG encoder
 ```
 
-The leading hypothesis is one Rust-to-Wasm normative engine in a Worker, with Canvas used only to display previews. Candidate foundations are a minimal-feature pinned `image` codec layer, `fast_image_resize` for conventional kernels, owned rational-area/trim/grid/cell/component primitives, and a benchmark-selected permissive quantizer. Strict mode initially uses one scalar execution path, stable row-major loops, fixed-point/integer decisions where practical, and no relaxed SIMD or unordered parallel reduction. **INFERRED recommendation, not a final stack selection.** ([algorithm stack](algorithms/state-of-the-art.md#recommended-initial-stack), [open-source architecture](landscape/open-source-ecosystem.md#recommended-open-source-architecture))
+The leading hypothesis is one Rust-to-Wasm normative engine in a Worker, with Canvas used only to display previews. Candidate foundations are a minimal-feature pinned `image` codec layer, `fast_image_resize` for conventional kernels, owned rational-area/trim/grid/cell/component primitives, and a benchmark-selected permissive quantizer. Strict mode initially uses one scalar execution path, stable row-major loops, fixed-point/integer decisions where practical, and no relaxed SIMD or unordered parallel reduction. **INFERRED recommendation, not a final stack selection.** *(Superseded 2026-10-19 by `OWN-001`, see the [2026-10-19 addendum](#2026-10-19-addendum-owner-decisions-and-prototype-v1); retained as the record of the alternative.)* ([algorithm stack](algorithms/state-of-the-art.md#recommended-initial-stack), [open-source architecture](landscape/open-source-ecosystem.md#recommended-open-source-architecture))
 
 The profile hypothesis is likewise explicit: **Exact Grid Recovery** proves or accepts a lattice and otherwise refuses that claim; **Approximate Grid / Mixel** generates bounded grid and non-grid candidates with confidence; **Raster Abstraction** uses alpha-correct conventional reduction when no lattice is credible; **Manual Raster / Line Art** weights silhouette and topology; and **Background Selection** remains a separate mask-producing feature. Auto chooses among these named, versioned routes and records its evidence. It never creates a hidden sixth algorithm. ([recommended profiles](algorithms/state-of-the-art.md#14-recommended-profiles), [profile requirements](../planning/product-requirements.md#10-profiles-auto-confidence-and-fallback))
 
@@ -200,7 +201,7 @@ Alternative decisions and why they remain open:
 
 | Decision | Leading hypothesis | Credible alternative | Why not lock yet |
 |---|---|---|---|
-| Engine language | Rust/Wasm shared core | Constrained TypeScript core | Need bundle, memory, determinism, developer-cost, and device benchmarks. |
+| Engine language | Rust/Wasm shared core | Constrained TypeScript core | Need bundle, memory, determinism, developer-cost, and device benchmarks. **Superseded 2026-10-19 by `OWN-001`:** the owner decided for a JavaScript core without these benchmarks; they remain verification obligations. |
 | Conventional resize | `fast_image_resize` plus owned rational area | Pica or owned fixed-point filters | Cross-backend pixels, linear/premultiplied correctness, and size/performance need measurement. |
 | Quantizer | `quantette` or owned Wu + fixed Lloyd/Oklab | `image-q`, ExoQuant, `color_quant`, reviewed BSD libimagequant fork | Quality, alpha behavior, ties, provenance, runtime, and cross-target identity are unsettled. |
 | Mixel routing | Period/phase ensemble + rational/grid/irregular candidates | Simpler global grid plus medoid; no irregular DP in MVP | Complexity is unjustified unless it beats simple baselines on held-out mixels. |
@@ -289,7 +290,7 @@ These decisions are directly reflected in the [product contract](../planning/pro
 
 ## Decisions that remain benchmark-gated
 
-- Rust/Wasm versus constrained TypeScript as the normative engine.
+- Rust/Wasm versus constrained TypeScript as the normative engine. *(Superseded 2026-10-19 by `OWN-001`: decided by the owner, not by a benchmark.)*
 - Exact strict-v1 codecs, ICC coverage, maximum dimensions/pixels, and device SLOs.
 - Conventional raster reducer and boundary-extension defaults.
 - Approximate-grid signals, confidence calibration, and period/phase thresholds.
@@ -356,3 +357,41 @@ The plan should be changed, simplified, or stopped if the evidence shows any of 
 - User research shows that exact target/Trim/replay are not valuable enough to justify a new tool versus existing editors and specialist converters.
 
 Failure of the sophisticated mixel hypothesis would not falsify the exact-target product gap. It would narrow Pixilate to a deterministic geometry/palette workbench with honest grid-recovery options. Failure of exact, local, replayable conformance at acceptable cost would falsify the product’s core technical promise.
+
+## 2026-10-19 addendum: owner decisions and prototype v1
+
+The sections above are the 2026-07-31 synthesis. They are retained unchanged apart from dated supersession notes.
+
+### Owner decisions
+
+The owner decisions are recorded in [PRD §25](../planning/product-requirements.md#25-owner-decision-log):
+
+- **`OWN-001`:** a JavaScript-only, fully client-side Vite + Svelte single-page application. This closes `OD-001` by owner decision. No comparative evidence was produced and `EX-001` was not run. It supersedes the Rust/Wasm leading hypothesis and the engine-language row above; determinism and engine exit criteria remain verification obligations.
+- **`OWN-002`:** `prototype/` is an exploratory research prototype outside Gate A/R0 and Gate B/R1. It passes no gate.
+- **`OWN-003`:** source-generator detection becomes `FR-023`, a report-only container-metadata provenance signal with masking-only watermark handling and no persisted prompts or usernames.
+- **`OWN-004`:** crisp output is a named, user-visible Clean profile. The locked decisions above (background removal explicit; dither and cleanup off by default) stand.
+- **`OWN-005`:** the prototype records binary alpha as `Binary(128)`; the product alpha default is unchanged.
+- **`OWN-006`:** `W×H` is always required; a detected native size is only `suggestedSize` evidence.
+
+### Prototype v1 findings
+
+The prototype is described in the [prototype algorithm design](../planning/prototype-algorithm-design.md) and the [prototype test results](../reviews/prototype-v1-test-results.md). Its evidence is exploratory and in-sample. There is no held-out split, blinded panel, or confidence interval, and the thresholds were tuned on the same fixtures. **OBSERVED** below means reproduced on 2026-10-19 with Node and Vitest at the first 2026-10-19 prototype revision (before design D23), on a named project-owned procedural fixture (`proc-blob`, `proc-tile`, or `proc-icon` in `prototype/test/fixtures.js`) or a synthetic case in the prototype unit tests. Numbers from gitignored local samples (third-party AI outputs and local copies of CC0-dedicated generator showcases) are labelled **OBSERVED, local-only, not rights-cleared**. They cannot be reproduced from the repository and cannot back a public claim.
+
+| Finding | Evidence | Label | Bears on |
+|---|---|---|---|
+| Toe-corrected lightness for palette merging and other decision distances (design D1) | Unit test "a noisy pure-black outline yields exactly one dark entry": ±6 sRGB noise on a black outline gave 3 dark palette entries with raw Oklab L and 1 with the Okhsl toe. | OBSERVED (synthetic unit test); a general advantage stays INFERRED | `OD-007` |
+| Whitened harmonic spectrum plus octave guard for period selection (D6, D7) | A raw harmonic sum picked 3–4× the authored period in the synthetic grid tests; the whitened line spectrum and an octave guard that compares candidates on their own cuts recovered it. Some of the guard thresholds were set on local samples. | OBSERVED (synthetic grid tests); thresholds from local samples are local-only | `OD-004`, `EX-005` |
+| Cell step-ratio no-grid gate (D8): ratio ≥ 0.85 classes the input `none` | Smooth gradient and random sinusoid fields are classed `none`; a smooth periodic field passed a purity test alone. Gridded AI samples scored 0.12–0.69 and a painted control 1.00. | OBSERVED (synthetic fields); sample scores OBSERVED, local-only, not rights-cleared | `OD-004`, `EX-005` false-grid calibration |
+| Approximate-grid recovery on real inputs | Five local gridded AI samples were within ±2% of the review's own no-reference pitch estimate; one painted no-grid control was classed `none`. One sample gave the same output hash in Node and one Chromium build: a single observation, not a processing-determinism claim. | OBSERVED, local-only, not rights-cleared | `OD-004`, `EX-005`, `EX-013` |
+| Floating-subject background refusal (D16): automatic border keying is refused when more than 2% of border cells stay opaque after the fill | The rule stopped automatic keying from deleting opaque tiles and 1-bit art; the before/after scores come from a local copy of a CC0-dedicated showcase crop. | OBSERVED, local-only, not rights-cleared; the rule is a candidate refusal criterion | `OD-010`, `EX-010` "foreground touches the border" |
+| Painted-checkerboard stratum (D20) | AI "transparent" outputs can contain a painted checkerboard. Under the synthetic `fake-alpha` preset, `proc-blob` stayed almost fully opaque (IoU 0.219) until checker matching was widened and a straddle rule added; preset medians also include local crops. Real painted checkerboards are unmeasured. | OBSERVED (procedural, synthetic preset); medians local-only; the stratum need is INFERRED | `OD-010`; benchmark stratum B |
+| Coverage-based reduction to a target smaller than the recovered grid (D17) | Exact fractional coverage of native cells with tone grouping, thin-feature ridges, gap bridging, and optional orphan and outline steps. It was judged better on 16 of 18 local contact-sheet cases in an unblinded author-side review. Reductions of about 3× or more lost identity. | OBSERVED, local-only, not rights-cleared, unblinded visual judgement; a candidate method, not evidence of superiority | `OD-003`, `OD-006`, `OD-009` (its orphan and outline steps are cleanup under `OWN-004`) |
+| Adaptive merge radius, tried and reverted (D19): **negative result** | A noise-adaptive palette merge radius raised synthetic snapped-match scores but roughly doubled real palette sizes (for example 17 → 33 colors); every floor that kept real palettes in bounds made it a no-op. The fixed radius was kept. | OBSERVED, local-only, not rights-cleared | `OD-007` |
+
+The prototype also runs the procedural sprites through synthetic degradation presets. Those presets are parameterised from one or two local samples per generator and are not validated generator models.
+
+### Open decisions with early evidence
+
+`OD-003`, `OD-004`, `OD-005`, `OD-006`, `OD-007`, `OD-009`, and `OD-010` received early exploratory evidence. **None is closed**, and no `EX-*` protocol experiment has run. For `OD-004`, the prototype's exact fast path took the coarsest uniform-block factor, which conflicts with the factorization-set semantics above; the prototype now enumerates every valid factorization with an ambiguity flag (design D26) but still computes on the coarsest when none is instructed, which `OD-004` leaves open (2026-10-19). `OD-001` is closed by owner decision only.
+
+The product and landscape spikes carry dated 2026-10-19 addenda, and Retro Diffusion Pixel Art Fixer now has [its own spike](products/retro-diffusion-pixel-art-fixer.md). Where an addendum changes a fact in the competitor comparison above, the addendum governs.

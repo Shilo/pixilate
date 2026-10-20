@@ -4,7 +4,8 @@ Research date: 2026-07-31
 Product: [Unfaker on itch.io](https://jenissimo.itch.io/unfaker)  
 Authoritative source: [`jenissimo/unfake.js`](https://github.com/jenissimo/unfake.js)  
 Source snapshot audited: [`b2bee10c1c3b211a2532baca9088857b19480dca`](https://github.com/jenissimo/unfake.js/tree/b2bee10c1c3b211a2532baca9088857b19480dca) (current `master` when researched)  
-Live application version observed: 1.2.0
+Live application version observed: 1.2.0  
+**Addendum:** 2026-10-19 re-check at v1.4.0 ([addendum](#addendum--2026-10-19-v130v140-at-66368689)); where it differs from the July text, the addendum governs.
 
 ## Evidence labels
 
@@ -127,7 +128,7 @@ This is a pipeline/manifest inconsistency in the audited revision or an undocume
 
 ### Complex Edge / tiled detector (browser default)
 
-[`detect/edge.rs`](https://github.com/jenissimo/unfake.js/blob/b2bee10c1c3b211a2532baca9088857b19480dca/crates/unfake-core/src/detect/edge.rs) converts pixels to Rec.601-style grayscale, divides the image into a 3×3 set of regions with 25% overlap, skips regions with grayscale standard deviation below 5, forms horizontal and vertical absolute Sobel-energy profiles, and autocorrelates each profile over lags 2 through `min(profileLength / 8, 128)`. It chooses the first local peak at least 60% as strong as the global maximum, gathers X and Y candidates greater than one, then selects their mode. If no tile yields a candidate, it falls back to the central 75% region.
+[`detect/edge.rs`](https://github.com/jenissimo/unfake.js/blob/b2bee10c1c3b211a2532baca9088857b19480dca/crates/unfake-core/src/detect/edge.rs) converts pixels to Rec.601-style grayscale, divides the image into a 3×3 set of regions with 25% overlap, skips regions with grayscale standard deviation below 5, forms horizontal and vertical absolute Sobel-energy profiles, and autocorrelates each profile over lags 2 through `min(profileLength / 8, 128)`. It first skips the initial autocorrelation decay (the search start advances while the curve is still falling, up to `max(maxLag / 2, 3)`), then chooses the first local peak at least 60% as strong as the global maximum, falling back to the global maximum. It gathers X and Y candidates greater than one, then selects their mode. Tiles narrower or shorter than 50 pixels fall back to the central 75% region, regions under 30 pixels are skipped, and the same central-region fallback applies if no tile yields a candidate. *(Decay skip and size guards corrected 2026-10-19; they were already present at the pinned revision.)*
 
 - **Strength:** More tolerant of gradients and imperfect edges than exact runs; tiled voting is less hostage to one empty or noisy region.
 - **Failure:** Repeated textures, outlines, checker patterns, and harmonics can produce a plausible but incorrect period. The first sufficiently strong local peak favors a sub-harmonic. The maximum detectable period is 128.
@@ -163,7 +164,7 @@ The block reducers are implemented in [`downscale.rs`](https://github.com/jeniss
 | Median | Median R, G, and B independently among opaque samples; median alpha over the block. | Robust against sparse extreme samples. | Independent channels can combine into a nonexistent color; it does not respect palette identity. |
 | Mode | Mode of each channel independently, ties favor first encountered. | Simple and deterministic for ordered input. | Can synthesize nonexistent colors. Available in the core/library, not the browser menu. |
 | Mean | Integer average of opaque RGB; median alpha. | Smooth representation of continuous imagery. | Creates new colors and usually looks muddy for pixel art until requantized. |
-| Content-adaptive | Öztireli–Gross-style iterative reconstruction in CIE Lab, five fixed iterations; area pre-shrinks to at most about 3× the target ratio; alpha is area-resized separately. | Relevant candidate in this product for painterly, irregular, or gradient-heavy inputs with no stable exact cell color. | Can soften edges/halos, mixes colors, consumes the unsnapped original, and has no exact-pixel preservation guarantee. |
+| Content-adaptive | Per-output-pixel kernel/colour EM reconstruction in the style of Kopf, Shamir & Peers 2013 (the source comment names Öztireli–Gross; see addendum) in CIE Lab, five fixed iterations; area pre-shrinks to at most about 3× the target ratio; alpha is area-resized separately. | Relevant candidate in this product for painterly, irregular, or gradient-heavy inputs with no stable exact cell color. | Can soften edges/halos, mixes colors, consumes the unsnapped original, and has no exact-pixel preservation guarantee. |
 
 All block methods use a scalar integer scale. Without snapping, incomplete right/bottom blocks are discarded. With snapping, leading X/Y phase and trailing remainders are discarded. There is no way to request, for example, exactly 32×32 pixels unless the input dimensions and inferred scale happen to produce it.
 
@@ -183,7 +184,7 @@ The current core uses [`imagequant`](https://github.com/jenissimo/unfake.js/blob
 
 ### Automatic color count
 
-[`color_count.rs`](https://github.com/jenissimo/unfake.js/blob/b2bee10c1c3b211a2532baca9088857b19480dca/crates/unfake-core/src/color_count.rs) area-resizes to 64 pixels wide while preserving aspect ratio, applies a per-channel 5-sample median and 5-sample Gaussian smoothing, bins RGB in steps of 48, ignores alpha below 200, and counts bins occupying at least `max(3 pixels, 1.5% of the resized image)`. If that exceeds the cap it retries at 2%, then clamps the result to 2–32.
+[`color_count.rs`](https://github.com/jenissimo/unfake.js/blob/b2bee10c1c3b211a2532baca9088857b19480dca/crates/unfake-core/src/color_count.rs) area-resizes to 64 pixels wide while preserving aspect ratio, applies a per-channel 2-D 5×5 median and a separable 5×5 Gaussian (σ≈1) *(corrected 2026-10-19; same code at the pinned revision)*, bins RGB in steps of 48, ignores alpha below 200, and counts bins occupying at least `max(3 pixels, 1.5% of the resized image)`. If that exceeds the cap it retries at 2%, then clamps the result to 2–32.
 
 The percentage denominator includes the full resized canvas, including transparent pixels. **INFERRED:** A small opaque sprite in a large transparent canvas can therefore undercount its meaningful colors. Auto Colors is interpreted here as a coarse dominant-color estimate, not a palette-faithfulness analysis.
 
@@ -389,7 +390,7 @@ This is still a conventional, deterministic decision tree. It does not require A
 
 ## Unresolved questions and follow-up experiments
 
-1. **UNKNOWN:** Which exact source commit produced every hosted JavaScript asset? The live WASM matched the current repository snapshot, while selected JavaScript did not byte-match.
+1. **UNKNOWN:** Which exact source commit produced the hosted build? No public build-provenance mapping from deployment to commit was found.
 2. **UNKNOWN / legal review required:** Is the current Unfaker distribution relying on GPL compliance, a commercial libimagequant license, or another exception? No public clarification was found.
 3. **UNKNOWN:** Is content-adaptive's bypass of snapping and morphology intentional? If so, why does state/manifest presentation not disclose it?
 4. **CODE-DERIVED, needs golden reproduction:** Can dominant mean fallback cause actual final palette count to exceed Max Colors? The pipeline strongly indicates yes; add a constructed block corpus and assert actual output palette.
@@ -407,3 +408,94 @@ This is still a conventional, deterministic decision tree. It does not require A
 Unfaker validates that a non-AI, browser-local tool can recover clean integer-upscaled sprites and improve many AI mixels. It also exposes why Pixilate must be target-first rather than scale-first. Geometry, grid evidence, phase, reconstruction, palette, alpha, cleanup, and background removal should be separate stages with explicit contracts. Every stage needs a deterministic tie/boundary rule, canonical inputs, exact postconditions, a truthful recipe, and corpus-backed routing defaults.
 
 The primary idea to carry forward is not one reducer. It is a staged workbench with useful detectors and reducers—rebuilt around exact requested dimensions, non-destructive bounds policies, whole-color deterministic voting, final palette enforcement, alpha-aware analysis, conservative defaults, and an audited dependency set whose individual licenses are honored alongside MIT-licensed Pixilate code.
+
+## Addendum — 2026-10-19: v1.3.0–v1.4.0 at `66368689`
+
+**Re-check date:** 2026-10-19  
+**Pinned revision:** [`663686899e8394dfda25efd7f2a947f008c6f676`](https://github.com/jenissimo/unfake.js/tree/663686899e8394dfda25efd7f2a947f008c6f676) (tag `v1.4.0`, committed 2026-09-29; `master` HEAD on the re-check date)  
+**Method:** public GitHub raw files and API metadata, read through a web-fetch tool. Nothing was cloned, built, or run, and no hosted-build asset was inspected. The tool returns a model-mediated reading of each file, so constants were requested as verbatim quotes; re-read them at the pin before relying on them in code. Labels follow this spike's vocabulary.
+
+### Version timeline
+
+- **VERIFIED (commit history):** v1.3.0 (`9e29e03`, 2026-07-24) added `quantize_rgb`. It quantizes RGB only; pixels matching a reserved chroma colour within a tolerance skip palette selection, stay bit-exact, and take one slot of the colour budget. It also added a CLI `quantize` subcommand. The July pin `b2bee10` is a later commit on the same day, so it already contained v1.3.0. The July text did not describe it. The live-build observation (1.2.0) is unaffected.
+- **VERIFIED (commit history):** v1.4.0 (`6636868`, 2026-09-29) added fractional and elastic cell grids to the core, CLI, and browser pipeline.
+
+### New at v1.4.0 (CODE-DERIVED at the pin)
+
+**Fractional grid detector** ([`detect/grid.rs`](https://github.com/jenissimo/unfake.js/blob/663686899e8394dfda25efd7f2a947f008c6f676/crates/unfake-core/src/detect/grid.rs), `fractional_grid_detect`):
+
+- Profiles are L1 differences of premultiplied RGBA between adjacent columns and rows, so hidden RGB under zero alpha contributes no edge energy.
+- Per axis: at least 16 samples; `pmax = clamp(n/6, 4, 160)`; Hann window; zero-pad to `(8m).next_power_of_two()`; search the band `1/pmax … 1/2.1`; prominence is the peak divided by the band median.
+- Harmonic hygiene:
+  - Among peaks within 0.8 of the maximum, prefer the lowest frequency whose coherence is at least 0.75 of the maximum's.
+  - Divisor search: accept `f0 = fs/d` when every lower harmonic keeps at least 0.3 of the peak magnitude and coherence stays at least 0.75. The largest accepted `d` wins.
+- Refinement: a DFT score over up to 8 harmonics below Nyquist, in 6 rounds of 33 points, starting at ±1.5/m.
+- Integer lock: when `n/period` is within 0.25 of a whole cell count and that count scores at least 0.97 of the refined score, the period becomes exactly `n/count`.
+- Rejection, which falls back to the integer detectors:
+  - the axis periods differ by more than 2%;
+  - coherence is below 0.15, or below 0.3 when the period is within 0.005 of 16/k (a JPEG DCT signature);
+  - prominence is below 5.0;
+  - both axes are integer-like.
+- Tests use synthetic sprites: 10.24 px cells at 2048 px; 2.5 px cells at 500 px; a nearest 2× copy of a fractional sprite keeps 10.24; a 64-cell integer grid is left to the integer detectors; a manual 10.24 scale snaps to 200×200 cells. A CLI test downsamples a 500 px, 2.5 px-cell input to exactly 200×200.
+
+**Elastic grid** ([`detect/elastic.rs`](https://github.com/jenissimo/unfake.js/blob/663686899e8394dfda25efd7f2a947f008c6f676/crates/unfake-core/src/detect/elastic.rs)):
+
+- A per-axis dynamic program on a ¼-px lattice.
+- Spacing has hard bounds of [0.75, 1.3]·period and a soft cost λ(s − period)² with λ = 1/(0.25·period)².
+- Edge strength is normalized by its 90th percentile.
+- The first boundary may lie anywhere in (−max spacing, 0]; the end is the best boundary at or beyond the image extent.
+- The fit is adopted per axis only when its edge-energy gain is at least 1.5. It is skipped below a period of 8 px.
+
+**Inset sampling** ([`downscale.rs`](https://github.com/jenissimo/unfake.js/blob/663686899e8394dfda25efd7f2a947f008c6f676/crates/unfake-core/src/downscale.rs), `downscale_bounds`):
+
+- On the fractional/elastic path, a cell [a, b] uses only pixels whose centres lie in [a + m, b − m], where m = min(0.25·p, max((p − 1)/2, 0)).
+- An empty interior falls back to the single centre pixel.
+- The integer path still uses the full cell.
+
+**Pipeline order** ([`browser-tool/lib/pixel.js`](https://github.com/jenissimo/unfake.js/blob/663686899e8394dfda25efd7f2a947f008c6f676/browser-tool/lib/pixel.js)):
+
+1. Size limits.
+2. Alpha binarization.
+3. Heuristic integer scale.
+4. Fractional grid: the auto path calls `detectGrid`; a non-integer `manualScale` calls `gridForScale` when the core worker is available, and is rounded otherwise. A found grid replaces the scale with the mean of its two periods.
+5. Elastic grid, if enabled and the scale is at least 8.
+6. Phase crop, **only when no fractional or elastic grid was found**.
+7. Morphology.
+8. Pre-quantization (not for content-adaptive).
+9. Downscale.
+10. Post-quantization.
+11. Jaggy cleanup.
+
+**Defaults and controls:**
+
+- The library adds `elasticGrid: true`. The other library defaults are unchanged (32 colours, cleanup off).
+- The browser UI adds an "Elastic Grid" toggle, on by default. Its manual "Pixel Size" remains an integer from 1 to 32, so fractional manual scale is a library/CLI capability, not a browser control.
+- Other browser defaults are as recorded in July: 16 colours, morphology and jaggy cleanup on.
+
+### July findings: status at v1.4.0
+
+**Still holds (CODE-DERIVED at the pin):**
+
+- There is no target width/height, fit policy, or Trim. Output geometry is the detected or manual grid's cell count, or `floor(source / scale)` on the integer path.
+- Content-adaptive now receives the grid's cell count as its target. It still consumes the alpha-binarized original, not the cropped, morphed, or quantized buffer, so the bypass remains. Whether the manifest still over-reports snapping was not re-tested.
+- Dominant counting still uses `HashMap<u32, u32>` with `max_by_key` and no explicit tie rule, so strict determinism is not established.
+  - **INFERRED:** Rust's default `HashMap` hasher is randomly seeded per process on native targets. On `wasm32-unknown-unknown` the seed source may be fixed. Browser and native repeatability can therefore differ. Verify before any cross-runtime claim.
+- QVote's hidden 24-colour quantization, the 2–256 clamp under a 1024 "skip" sentinel, imagequant at speed 1 with dithering 0, and the `imagequant = "4.4"` dependency (default features off) are unchanged.
+- The destructive phase crop and full-cell integer sampling remain, but now only on the fallback path when no fractional or elastic grid is found.
+- The manifest timestamp was not re-checked (UNKNOWN at v1.4.0).
+
+**Corrected in the main text** (the July description was incomplete or wrong; the same code was present at `b2bee10`):
+
+- **Auto colour count:** a per-channel 2-D 5×5 median and a separable 5-tap Gaussian (σ≈1), not 5-sample 1-D filters.
+- **Tiled edge detector:** initial-decay skip, global-maximum fallback, and the 50 px tile and 30 px region guards.
+- **Content-adaptive attribution:** the source comment says "Öztireli–Gross EM". **INFERRED:** the implemented method, a per-output-pixel Gaussian kernel and colour fitted by EM, is that of Kopf, Shamir & Peers, "Content-Adaptive Image Downscaling" (SIGGRAPH Asia 2013). Öztireli & Gross, "Perceptually Based Downscaling of Images" (SIGGRAPH 2015), optimizes an SSIM-based objective instead.
+
+**Changed scope of a July finding:** "one scalar integer scale" now describes only the integer fallback. The fractional path estimates per-axis periods. It rejects axes that disagree by more than 2%, so non-square cells still fall back to integer detection.
+
+### Licence (unchanged)
+
+The core statically depends on `imagequant` 4.4.x, which is GPL-3.0-or-later or commercial. The distribution's licence path is not publicly stated (Unresolved question 2). It cannot be adopted into Pixilate's permissive bundle without a selected compliant path. This is not legal advice. The repository's own code remains MIT, so ideas and MIT-noticed code from the detector, elastic fit, and sampler are reusable in principle after an exact-revision review. The quantizer dependency is not.
+
+### Pixilate implication (INFERRED)
+
+v1.4.0's fractional detector and elastic dynamic program are the most complete public deterministic grid-recovery components reviewed for this spike. They still produce discovered geometry. The core verdict stands: Unfaker is scale-first, has no target W×H, and has a GPL/commercial quantizer dependency. Exact target geometry remains Pixilate's governing constraint.

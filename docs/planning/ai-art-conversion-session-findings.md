@@ -28,7 +28,7 @@ The discussion intentionally ignored most broader workflow concerns and concentr
 
 # 2. Main feasibility conclusion
 
-Pixilate can realistically achieve a substantially better conversion experience than existing grid-recovery-focused tools for broad classes of AI-generated artwork.
+Pixilate may be able to offer a better conversion experience than existing grid-recovery-focused tools for some classes of AI-generated artwork (INFERRED, unmeasured; see the status reminder at the end of this document).
 
 However, the product must not promise:
 

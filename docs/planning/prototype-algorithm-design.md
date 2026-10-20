@@ -1,0 +1,412 @@
+# Pixilate prototype v1 — algorithm design
+
+**Status:** exploratory research prototype under `OWN-001` and `OWN-002` ([PRD §25](product-requirements.md#25-owner-decision-log)). It is not the product implementation. It closes no `OD-*` or `EX-*` item and selects no production default beyond the owner decisions it records.  
+**Date:** 2026-10-19.
+
+This document describes the conversion algorithm in [`prototype/`](../../prototype/) as the code implements it on 2026-10-19. The code in `prototype/src/lib/core/*.js` and `prototype/src/lib/decode.js` is the source of truth for behaviour; where this document and the code disagree, the code wins and this document is wrong. The [Deviations](#deviations) table is the change history. Measured results and known limitations are in the [prototype test results](../reviews/prototype-v1-test-results.md).
+
+**Evidence.** Statements about behaviour describe the working tree. Measured statements carry the labels defined in the [research index](../research-spikes/README.md#how-to-read-the-evidence). Numbers from the gitignored AI samples are **OBSERVED, local-only, not rights-cleared**, and those samples are named only by opaque ID (`gpt-oni`, `gemini-mage`, `gpt-forest`, `unk-dungeon`, `unk-coat`, `ai-wizard`). Showcase crops (`onebit-td`, `onebit-ss`, `sparks`, `ui-ring`, `mz-front`) are also local-only ([artifact characterization §3.1](../research-spikes/evaluation/ai-artifact-characterization.md#31-external-pixellab-showcase-images-local-copy-not-tracked-here)). Every threshold is an in-sample `PROVISIONAL-PILOT` value: thresholds were tuned on the fixtures that measured them, with no held-out split, so none of this is benchmark evidence under the [benchmark methodology](../research-spikes/evaluation/benchmark-methodology.md).
+
+**Lineage.** The design draws on the [deterministic algorithm state of the art](../research-spikes/algorithms/state-of-the-art.md) and its [2026-10-19 addendum](../research-spikes/algorithms/state-of-the-art.md#2026-10-19-addendum-prototype-evidence-and-literature), the [canonical RGBA geometry spike](../research-spikes/algorithms/canonical-rgba-geometry-spike.md), the [border-connected background spike](../research-spikes/algorithms/border-connected-background-cleanup-spike.md), [input provenance signals](../research-spikes/algorithms/input-provenance-signals.md), the product audits of [Retro Diffusion](../research-spikes/products/retro-diffusion-pixel-art-fixer.md), [Unfaker](../research-spikes/products/unfake-js.md) and [SpriteFusion](../research-spikes/products/spritefusion-pixel-snapper.md), and the [open-source ecosystem](../research-spikes/landscape/open-source-ecosystem.md) survey. The owner's goals are in the [2026-10-18 session findings](session-findings-2026-10-18.md) and the [AI art conversion findings](ai-art-conversion-session-findings.md).
+
+**Third-party provenance.** Several constants and structures are re-implemented in JavaScript from public descriptions: the fractional-grid detector, integer lock, JPEG 16/k guard, elastic-cut dynamic program and inset sampling follow unfake.js v1.4.0 at `66368689` (MIT); the smallest-qualified 0.78 rule follows the Retro Diffusion fixer writeup at `ef376e57` (MIT); the raster contrast pick follows PixelOE (Apache-2.0). To the best of the team's knowledge the prototype contains no copied third-party code: the modules were written from the published descriptions, and the adopted constants are cited here. A production artifact still needs the full licence review (`NFR-LIC`); if any code is found to be translated, the corresponding copyright and licence notice (and PixelOE's NOTICE terms) must be kept in the source file and the build notices. The dependency list is in the [prototype README](../../prototype/README.md#licences-and-credits).
+
+**Notice.** Product, company, and model names may be trademarks of their respective owners. Pixilate is independent and is not affiliated with, endorsed by, or sponsored by any generator vendor or tool named here. Licence notes are engineering triage, not legal advice.
+
+## Prototype scope
+
+| Item | Prototype behaviour | Requirement or decision |
+|---|---|---|
+| Exact size | `targetW` and `targetH` are required integers in 1..1024 and are always the output size. A detected native size is reported only as `suggestedSize`. | `OWN-006`; `GEO-001`, `GEO-002`, `GEO-003`, `AUTO-004` |
+| Trim | Off by default. When on, the basis is the smallest box of pixels with `alpha > 0`. An empty set throws `empty-visible-region`. | `TRIM-001`, `TRIM-002`, `TRIM-004`, `TRIM-006`; `FR-004` |
+| Fit | `contain` (default), `stretch` or `cover`, anchor center, round half to even, odd remainder right/bottom. | `GEO-004`, `FR-005`, [PRD §9.4](product-requirements.md#94-aspect-crop-pad-and-stretch) |
+| Route | `auto`, `grid` or `raster`. A missing grid never forces the grid route. | `AUTO-001`, `AUTO-005`, `AUTO-006`, `AUTO-008` |
+| Cleanup | Off by default. `cleanup: true` selects the named, versioned Clean profile `ai-sprite-crisp/1`, which reports changed cells per rule. | `OWN-004`; `CLEAN-001`, `CLEAN-003`, `CLEAN-006`, `AUTO-007` |
+| Background | Off by default. `'auto'` (border estimate) or an explicit key with tolerance and 4/8 connectivity. Halo repair is a separate flag. Refusals are reported with a reason. | `OWN-004`; `BG-001`, `BG-002`, `BG-003`, `BG-007`, `AUTO-007` |
+| Alpha | Output alpha is binary under the named policy `Binary(128)`, recorded in the report. `PreserveCoverage` is unsupported. | `OWN-005`; `ALPHA-002` (prototype deviation from the `FR-011` default) |
+| Palette | `colors` is `'auto'` or 1..256, or an imported RGB palette is given; a final validator enforces it after every colour-producing stage. | `PAL-001`, `PAL-002`, `PAL-003`, `PAL-006`; `FR-010` |
+| Provenance | Report-only generator signal from container metadata, worded "file metadata claims (signature not checked)", plus published output dimensions as weak, advisory evidence. Prompts are never read or persisted. Watermark handling is masking only: a generic corner mask, only when the container declares a visible mark (D36). | `OWN-003`; `FR-023`, `AC-PROV-001` |
+| Determinism and identity | Fixed decode path for PNG and JPEG, deterministic arithmetic, a canonical-RGBA hash of the output, and a no-op identity path. | `OWN-001`; `FMT-003`, `FMT-006`; canonical spike |
+
+Outside the prototype: `PreserveCoverage` and `Matte` alpha, locked palette colours (`PAL-004`), dithering (`DITH-*`; none is applied), anchors other than center, colour management (`FMT-004`), animation (first frame only, warned), a line-art profile (`PRO-LINE`, T2 under `FR-006`), recipe import and replay (`FR-013`), and any T1 conformance claim.
+
+## Determinism rules
+
+- **Decode.** PNG and JPEG decode through pinned pure-JS decoders (`fast-png`, `jpeg-js`), never canvas readback, because Brave and Firefox can add noise to canvas reads (VERIFIED, [state of the art addendum](../research-spikes/algorithms/state-of-the-art.md#determinism-hazards-in-a-javascript-engine)). Other formats use a browser canvas decode that is marked non-strict (see [Decode](#decode)).
+- **Arithmetic.** No `Math.random` and no transcendental `Math` functions (`cbrt`, `pow`, `exp`, `log`, `sin`, `cos`, `atan2`) in the engine. `color.js` supplies a table-driven sRGB decode, a fixed Newton cube root, and `sinDet`/`cosDet`. `+ − × ÷`, `Math.sqrt`, `floor`, `round`, `abs`, `min` and `max` are allowed.
+- **Ties and order.** Every argmax keeps the lowest index. Sorts are stable with explicit tie keys. `Map` and `Set` are used only where insertion order is itself deterministic. Every cleanup pass reads the old grid and writes a new one (Jacobi style), so results do not depend on scan order.
+- **One thread.** One Web Worker runs the whole conversion. Nothing is partitioned by core count.
+- **Volatile data.** `report.timingsMs` is diagnostic only. The recipe and the canonical hash never contain timings, filenames, or decode passthrough fields.
+- **Claim.** Repeat runs are byte-identical (committed gate G-CONTRACT; `pipeline.test.js` "is deterministic (byte-identical image and report) and under 1 s"). Output was observed byte-identical between Chromium and Node on one sample (OBSERVED, local-only, not rights-cleared). Other engines are unverified, and the `DET-007` browser and architecture matrix has not been run, so no cross-engine claim is made.
+
+## Data types
+
+```js
+Img = { width, height, data: Uint8ClampedArray /* RGBA8, row-major */ }
+
+Axis = {
+  period, phase,            // source px; phase in [0, period)
+  cuts: Float64Array,       // count + 1 boundaries, cuts[0] = 0, cuts[count] = len, increasing
+  count, elastic,           // elastic: DP-adjusted cuts adopted
+  prominence, coherence, agreement,
+}
+
+Grid = {
+  x: Axis, y: Axis,
+  class: 'exact' | 'grid' | 'weak' | 'none', confidence /* 0..1 */, evidence: string[],
+  candidates,               // every valid exact factorization { sx, sy, phaseX, phaseY, countX, countY }, coarsest first
+  ambiguous,                // more than one non-trivial candidate, or an underdetermined axis
+  suggestedSize,            // [w, h] evidence only, or null
+  alternatives,             // { x, y }: qualified spectral periods [{ period, count, score }]
+}
+
+Cells = { w, h,
+  lab: Float32Array,        // OKLab, 3 per cell
+  alpha: Uint8Array,        // 0 or 255
+  dominance: Float32Array,  // winning-cluster share, 0..1
+  masked, pure: Uint8Array, // watermark-masked; every inset pixel identical (exact evidence)
+  rgb: Int32Array }         // exact 0xRRGGBB of pure opaque cells, else -1
+
+Indexed = { w, h, index: Int16Array /* -1 = transparent */, palette: Float32Array /* OKLab */,
+  rgb: Uint8Array /* the rendered RGB8 bytes per entry */ }
+```
+
+## API
+
+`prototype/src/lib/core/pipeline.js`:
+
+```js
+convert(img, opts, bytes?) -> { image, indexed, report }   // indexed is null on the identity path
+//  opts: targetW, targetH            required integers 1..1024
+//        trim = false                true: basis = alpha > 0 bounds
+//        fit = 'contain'             'contain' | 'stretch' | 'cover' (anchor center)
+//        route = 'auto'              'auto' | 'grid' | 'raster'
+//        cleanup = false             true: Clean profile 'ai-sprite-crisp/1'
+//        background = false          false | 'auto' | { key: [r, g, b], tolerance = 0.03, connectivity: 4 | 8 }
+//        halo = false                halo repair after background removal
+//        colors = 'auto'             'auto' | 1..256
+//        palette?                    [[r, g, b], ...] or flat bytes, 1..256 entries
+//        manualPeriod?               [px, py]
+//        format?, decode?, strict?, orientation?, warnings?   decodeImage passthrough (not in the recipe)
+convertCandidates(img, opts, bytes?) -> { candidates: [{ id, image, indexed, report }], recommended,
+                                          analysis: { grid, generator, suggestedSize }, failed: [{ id, code, message }] }
+analyze(img, opts?, bytes?) -> { grid, generator, suggestedSize }   // targets optional
+canonicalHash(img) -> Promise<hex>
+PixilateError { code, message }
+```
+
+Every option is validated before any allocation; a violation throws `PixilateError('invalid-input')`. `bytes` are the original file bytes and are used only for the provenance report.
+
+## Pipeline
+
+```
+decodeImage(bytes)                         decode.js     strict PNG/JPEG, EXIF orientation, warnings
+convert(img, opts, bytes)
+  normalize(opts); checkImage(img)                       invalid-input
+  identity when target == source and nothing else is requested (PRO-NOOP)
+  analysis (shared by convertCandidates):
+    canonicalize                           canonical.js  RGB under alpha 0 -> (0,0,0,0)
+    detectGenerator(bytes, img)            detect.js     report-only; watermark mask; lossy-container flag
+    analyzeBackground(img)                 cleanup.js    border estimate; painted-checkerboard mask
+    detectGrid | lockGrid(manualPeriod)    grid.js       exact factorization, else approximate detector
+  route: grid if a grid exists (auto), else raster
+  grid route:   sampleCells -> background -> Trim (cell box) -> fit -> Step 4 row
+                -> buildPalette -> [Clean] -> lock | reduceToTarget | upscaleInteger
+  raster route: [background on a 4 x target lattice] -> Trim (pixel box) -> fit -> crop
+                -> resampleToTarget -> background
+                -> buildPalette -> [Clean]
+  place (center, transparent pad) -> indexedToImage -> validate -> report
+```
+
+### Decode
+
+`decodeImage(bytes, mimeHint)` returns `{ img, format, decode, strict, orientation, warnings }`.
+
+- **Format** comes from magic bytes, then the MIME hint (`FMT-001`).
+- **Strict path.** PNG decodes with `fast-png`; every bit depth, colour type and `tRNS` key is normalized to RGBA8. JPEG decodes with `jpeg-js`. The EXIF orientation (PNG `eXIf`, JPEG APP1) is then applied as an exact pixel permutation before anything else (`FMT-002`); values 5–8 swap width and height, and an invalid value is warned and ignored. The result has `decode: 'js'` and `strict: true`.
+- **Warnings, never silent.** Ignored colour metadata (`iCCP`, `gAMA`, `cHRM`, `sRGB`, `cICP`, JPEG ICC, WebP `ICCP`: "pixels assumed sRGB"), animated PNG (default image only), and animated GIF or WebP (first frame only).
+- **Non-strict canvas fallback.** WebP, GIF, AVIF, BMP and unknown formats go through `createImageBitmap` and an `OffscreenCanvas` with `premultiplyAlpha: 'none'`, `colorSpaceConversion: 'none'` and `imageOrientation: 'from-image'`. The result is `decode: 'canvas'` and `strict: false`, and its first warning is "non-strict browser decode (canvas) for <format>: pixels may differ between browsers". Without those browser APIs (for example in Node) the decode fails.
+- **Size limit.** Inputs above 4096 × 4096 pixels (16.7 MP) are rejected before pixel decode: from the PNG IHDR before inflating, at the JPEG SOF (via `jpeg-js` `maxResolutionInMP`), and from the bitmap size on the canvas path.
+- **Passthrough.** `convert` copies `format`, `decode`, `strict` and `orientation` into `report.input`, and decode `warnings` lead `report.warnings`. None of them enter the recipe. The worker forwards all of them (`src/worker.js`; until 2026-10-19 it forwarded only `format` and `decode`).
+
+### Input validation and canonicalization
+
+`normalize` checks every option and throws `invalid-input` with a message naming the field (targets, booleans, enums, background key bytes, tolerance in 0..1, connectivity 4 or 8, colours, palette bytes, `manualPeriod`). `checkImage` checks the image shape. `canonicalize` then sets RGB under alpha 0 to `(0,0,0,0)` once, before any stage (`FMT-006`; canonical spike "Canonical buffer"), and returns the input unchanged when it is already canonical. The exact factorization also ignores RGB under alpha 0 when comparing lines.
+
+### Identity (PRO-NOOP)
+
+When `targetW × targetH` equals the source size and no stage is requested (`trim` off, background off, `colors: 'auto'`, no palette, no `manualPeriod`, `cleanup` off, `route: 'auto'`), `convert` returns the canonicalized input unchanged, partial alpha included. The report has `path: 'noop'` and `alphaPolicy: null`, and `indexed` is `null`. Any requested stage leaves this path (`pipeline.test.js` "convert: identity (PRO-NOOP)").
+
+### Shared analysis: provenance, background estimate, grid
+
+`analysis()` runs once per image and options; `convertCandidates` reuses it for every candidate.
+
+1. **Provenance** (`detect.js`, [input provenance signals](../research-spikes/algorithms/input-provenance-signals.md)). A synchronous sniffer walks PNG chunks, JPEG APP1/APP2/APP11 (including split JUMBF) and RIFF/WebP chunks without touching image data, reads C2PA claim-generator and `c2pa.created` fields with a minimal CBOR reader, and matches vendor markers, IPTC `digitalSourceType`, and tool text keys. A metadata match has confidence `'declared (unvalidated)'`, and evidence lines say "file metadata claims … (signature not checked)". Prompt-bearing keys (`parameters`, `prompt`, `workflow`) are reported by key name only; their content is never read, and no prompt text, username, job ID or timestamp enters the result. Without metadata, a table of published output dimensions gives `'possible'`: weak, advisory evidence that never selects a preset (`FR-023` as amended on 2026-10-19). When, and only when, the container declares a visible watermark (a C2PA action "Added visible watermark"), the detector returns a `watermarkMask` covering a generic bottom-right corner of 8 % × 8 % of the canvas (INFERRED conservative region; no vendor geometry and no pixel test; [input provenance signals §4](../research-spikes/algorithms/input-provenance-signals.md#4-declared-visible-watermarks-masking-only)) (D36). The mask only excludes that region from grid evidence, sampling and the palette; pixels are never altered. The detector never throws. Its only other output is `preset.jpegStrict` (a lossy container), a container property that the grid detector uses as JPEG evidence.
+2. **Background estimate** (`analyzeBackground`, on source pixels). The border ring is leader-clustered in toe-corrected OKLab at ΔE 0.04. Nothing is estimated when less than 40 % of the border is opaque. One cluster covering ≥ 60 % of the opaque border is a solid background. Two light clusters (L ≥ 0.6) covering ≥ 60 % that alternate with a stable run length are a painted checkerboard; its border-connected pixels within ΔE 0.06 of the segment between the two colours form a mask. That mask is OR-ed with the watermark mask and excluded from grid evidence **whether or not background removal is requested**: it removes checker periodicity from the analysis, not pixels.
+3. **Grid.** `detectGrid(img, { targetW, targetH, mask, preset })`. With `manualPeriod: [px, py]` the grid is instead `lockGrid` to `round(W/px) × round(H/py)` cells, and class `none` is raised to `weak` because the user vouches for the grid.
+
+### Exact factorization
+
+`grid.js` `factorize` implements the canonical spike's [exact factorization and ambiguity](../research-spikes/algorithms/canonical-rgba-geometry-spike.md#exact-factorization-and-ambiguity) rule under a serialized policy: "cuts at phase + k·scale, partial edge cells kept; an axis with < 2 change positions is bounded by the canvas edges (underdetermined)".
+
+- **Per axis, independently.** A change position is a column (row) that differs anywhere from the previous one. With change positions `c_i`, `G` is the gcd of their gaps; the valid scales are the divisors of `G`, and the phase is `c_0 mod s`. An axis with fewer than two change positions uses `gcd(c_0, len)` (or `len`) and is marked underdetermined. The cost is O(W × H) worst case, with an early exit per line.
+- **Candidates.** Every `(sx, sy)` pair of valid scales, with phases and cell counts, sorted coarsest first (area, then `sx`). The trivial 1 × 1 candidate is always present. `ambiguous` is true when more than one non-trivial candidate exists or an axis is underdetermined.
+- **Selection.** If a candidate's cell counts equal `targetW × targetH`, it is the **instructed lattice**. Otherwise the coarsest candidate is used and, when ambiguous, the evidence says "original grid not identified". `suggestedSize` is the coarsest candidate's counts, or `null` when an axis is underdetermined. The result is class `exact`, confidence 1, with integer cuts. Using the coarsest candidate is a reported working choice, not a recovery claim; the spike forbids treating it as one (see [Open questions](#open-questions-and-next-experiments)).
+- **Mixed axes.** If the coarsest candidate has scale 1 on an axis whose longest streak of consecutive changing lines is < 3, that axis is a non-integer upscale, and the approximate detector decides instead (the candidates are still listed).
+- **1:1 heuristic.** When no non-trivial candidate exists, the approximate detector runs first. If it does not find class `grid`, an image with ≤ 256 exact colours, binary alpha, and ≥ 3 consecutive changing lines on one axis (≥ 2 on the other) is reported as the trivial candidate: class `exact` with **confidence 0.9** and the evidence "1:1 candidate (heuristic, not proof)". A nearest-neighbour upscale by 3× or more changes at most two lines in a row. Upscales below 3× can pass this test; they then rely on the spectral path, and a `grid` result overrides the heuristic.
+
+### Approximate grid detector
+
+`spectralGrid` runs per axis on images of at least 16 × 16 px. It is the prototype's form of the "spectral hygiene" and "DP cuts" implications drawn from the product audits ([Retro Diffusion](../research-spikes/products/retro-diffusion-pixel-art-fixer.md), [Unfaker](../research-spikes/products/unfake-js.md)).
+
+1. **Edge profiles.** Premultiplied per-channel L1 differences between adjacent pixels (four channels including alpha), soft-thresholded by 8, clamped at the 95th percentile of the unmasked terms above the median, and summed per boundary. Masked pixels contribute nothing. Three band profiles per axis feed window agreement. Period-8 blockiness is measured against periods 7 and 9 as controls.
+2. **JPEG evidence** is a lossy container or period-8 blockiness ≥ 1.2 × the 7/9 controls. With it, periods within 0.5 % of `16/k` (k = 1..8) must reach coherence 0.30 instead of 0.15, both to compete as candidates and in the class gate (the JPEG guard).
+3. **Spectrum.** Hann window, mean removed, zero-padded at least 8×. The magnitude is **whitened** (divided by its mean over ±24 natural bins, then a running max over ±1.5 bins), and the **harmonic sum** adds the excess over 2 at each harmonic `h/q` below Nyquist, weighted `1/h` (D6).
+4. **Candidates** are the local maxima of the harmonic sum on a 0.25 % log grid over `[2.1, min(len/4, 128)]`, plus the target prior `len/T` when a target is given (a candidate, never an override). **Smallest-qualified rule:** the smallest candidate scoring ≥ 0.78 × the best wins. Every qualified period is kept as an `alternative`.
+5. **Refine** the period by a cosine-comb score (DFT magnitudes at up to 8 harmonics) over five zoom rounds.
+6. **Octave guard** (D7): up to three moves between `p`, `2p` and `p/2`, comparing mean OKLab variance in fixed-width windows inside each candidate's own cuts on 96 sampled lines. Moving to `2p` needs `2p` qualified, a fundamental ratio ≥ 0.6, and variance ≤ 1.3 × that of `p`. Moving to `p/2` needs `p` to lack its fundamental (ratio < 0.6) and variance < 0.5 × that of `p`.
+7. **Axes.** Both axes are unified to the geometric mean only if neither cell count moves by ≥ 0.25 cell. **Integer lock:** when `len/p` is within 0.25 cell of an integer N and the comb score at `len/N` is ≥ 0.97 × that at `p`, `p` becomes `len/N`.
+8. **Cuts.** Phase by a quarter-pixel comb search. Regular cuts merge edge slivers under half a cell. For `p ≥ 4`, **elastic cuts** by DP on a quarter-pixel lattice maximize edge strength at the cuts minus `λ(s − p)²`, with `λ = 1/(0.25p)²` and widths in `[0.75p, 1.3p]`. They are adopted only at ≥ 1.5 × the regular grid's edge capture and, under `lockGrid`, only when they keep the fixed count.
+9. **Window agreement** (D10): the energy-weighted share of overlapping windows (`max(256, 8p)` px) whose local pick is within 12 % of `p` or where `p` still qualifies. It is 1 (not applicable) below 256 px.
+10. **Borrowing.** An axis is confident at prominence ≥ 5, coherence ≥ 0.15 and agreement ≥ 0.5. An unconfident axis borrows the confident axis's period.
+11. **Class.** Both axes must pass the gate (prominence, coherence threshold, agreement), or only the confident axis when one borrowed. Purity is then measured on subsampled cells: the ratio of median interior OKLab spread to median across-boundary contrast, and the **cell step ratio** (in-cell slope over one cell ÷ neighbour contrast, D8). A step ratio ≥ 0.85 gives `none` ("periodic but seamless"). Otherwise purity < 0.5 gives `grid`, and anything else (including a borrowed axis) gives `weak`. Confidence is a monotone map of prominence, coherence, agreement and purity, and the raw numbers go to `evidence`.
+
+`lockGrid(img, countX, countY)` fixes the period to `len/count` and re-solves phase and cuts, falling back to regular cuts when the elastic count does not match.
+
+### Route, Trim, fit and path selection
+
+**Route.** `auto` takes the grid route when the class is not `none`, else raster. A requested `grid` route without a grid is refused to raster with a warning. Warnings also flag "no reliable source grid detected", "weak grid evidence" and "ambiguous exact grid: several valid factorizations".
+
+**Trim** uses `alpha > 0` with strict comparison (`tau = 0`, recorded). Under Trim the target is not passed to `detectGrid` as a lattice hint, because it sizes the trimmed basis, not the full canvas (D34). On the grid route Trim runs on source pixels after cell sampling and background removal (pixels in removed cells are not visible) and is rounded outward to whole cells, so background alpha is the input to Trim (`BG-008`). On the raster route a requested background is first removed on a working lattice of 4 × the target (at most the source size) built from linear-light area cells of the full canvas; source pixels whose working cell was removed are not visible to Trim, so background alpha is the input to Trim on both routes (D34). The background stage then runs again on the target cells after resampling, with the floating-subject check off when Trim cropped.
+
+**Fit** (`fitBox`) maps the basis (cells on the grid route, pixels on the raster route) into the target box:
+
+- `contain`: uniform scale, each resized axis rounded half to even and clamped to 1..T, centred with the odd remainder right/bottom, transparent padding.
+- `stretch`: the whole box, with an "aspect distortion" warning when the aspect changes.
+- `cover`: crops the basis to the target aspect (rounded half to even, centred, odd remainder right/bottom) and maps the crop onto the whole box, with a "cover crop" warning and the crop rectangle in the report.
+
+Contain and cover work on both routes; nothing falls back silently to stretch.
+
+**Grid-route rows.** After fit, `N × M` is the cell count of the (cropped) basis and `fw × fh` the resized size. This is the target-constrained branch: the requested size shapes the search instead of being applied afterwards.
+
+| Condition (per axis; axes in different rows use `nonint`) | Path | Notes |
+|---|---|---|
+| Class `exact` and `N × M = fw × fh` | `exact` | Palette only; Clean cleanup is skipped. |
+| `\|N − T\| ≤ max(1, 0.02 T)`, or, for non-exact classes, `\|N − T\| ≤ 0.05 T` on both axes and the minimum over axes of `lockGrid(T).coherence / lockGrid(N).coherence` ≥ 0.97 (D12) | `grid-locked` | Re-sample on the locked lattice. Class `exact` never locks (D22). |
+| `N/T` within 2 % of an integer k ≥ 2 | `grid-reduce-k` | Palette on native cells, then `reduceToTarget`. Warns "detail reduced". |
+| `T/N` within 2 % of an integer k ≥ 2 and `T mod k = 0` | `grid-upscale-k` | Relock to `T/k` cells if needed (class `exact` only when `T/k = N`), then a nearest-neighbour ×k upscale (D21). Warns "target exceeds native resolution". |
+| Trim on, `contain`, and `fw ≥ N`, `fh ≥ M` | `grid-upscale-k` | Integer upscale by `floor(min(fw/N, fh/M))`, then padding: trimmed sprites are never stretched by a non-integer factor. |
+| Otherwise | `grid-then-resample` | `reduceToTarget` at any ratio, including T > N. Warns "non-integer ratio, approximate", plus "detail reduced" or "target exceeds native resolution". |
+
+After a Trim or cover crop on the grid route, re-sampling (lock or relock) of a background that `'auto'` already removed on the full canvas uses the 60 % gate without the floating-subject check, because a crop's border is mostly sprite.
+
+### Cell sampling
+
+`sampleCells(img, grid, { mask })` reads each cell's interior, inset by `min(0.25 × cell size, (cell size − 1)/2)` per side (at least the centre pixel). A pixel with alpha ≥ 128 is opaque; a cell is opaque when at least half of its interior pixels are. Opaque pixels are visited centre-out (raster order on ties) and leader-clustered at ΔE 0.04 in toe-corrected OKLab (D1). The cell colour is the mean of the heaviest cluster after dropping its top and bottom 20 % by L (D18), and `dominance` is that cluster's share. A cell whose inset pixels all share one RGB is `pure` and keeps that exact colour (D13). A cell more than half masked is `masked`.
+
+This separates structure from colour within a cell: the cluster vote decides which colour family owns the cell, and the trimmed mean estimates its colour. A global structure-only label quantization before the vote, as in Retro Diffusion, is not implemented (see [Open questions](#open-questions-and-next-experiments)).
+
+### Raster route
+
+`resampleToTarget(src, fw, fh)` first applies an exact box filter in premultiplied linear light down to a working image of 4 × the target (fractional coverage; each tap boundary is computed directly, so there is no cumulative drift; float weights are normalized per tap). It then applies a summed-area Kuwahara filter (radius 2) and makes one pick per 4 × 4 block. A top-hat ridge step on the unfiltered working image finds thin dark or light lines, and each line crossing claims exactly one cell (D3). Ridge cells take their darkest or brightest pixel. Other cells follow the PixelOE contrast rule on L (minimum L for a long bright tail, maximum L in the mirror case, else the centre-weighted medoid). A cell is opaque when at least 8 of its 16 working pixels have coverage ≥ 0.5. The selection runs in OKLab after the linear-light area step, which is a mixel-style abstraction choice rather than a fidelity reducer. PixelOE's contrast-aware outline expansion before downscaling is not implemented.
+
+### Native-to-target reduction
+
+`reduceToTarget(indexed, tw, th, { clean })` maps native indexed cells onto any target by exact fractional coverage. It first checks the work budget (see [Errors and limits](#errors-and-limits)). Then:
+
+1. **Tone groups.** Entries within ΔE 0.05 (chroma weighted ×2) of a more frequent entry vote as one group.
+2. **Alpha** by opaque coverage ≥ 0.5, or ≥ 0.25 where the cell is the ridge across a thin part.
+3. **Colour** is the most-covered group, unless a salient group (> 0.15 from the 3 × 3 regional group) from a source feature of ≥ 0.4 output cells of area is the ridge across that feature and its contrast-boosted coverage beats the rest of the cell (one cell per line crossing). At extreme ratios (≥ 9 source px per output cell) interior cells read as flat masses: the outline group cannot win them by plain coverage, and only features covering ≥ 0.15 of the cell override the vote.
+4. **Clean-only passes** run only when `clean` is true and are counted in `changed`:
+   - `bridge`: a plain cell that joins two separate pieces of a contrasting line takes that line's group, only when at least two pieces hold the same source feature component and that component crosses the cell with a run thinner than a cell side (one thin source line; D30).
+   - `orphan`: an output cell with no same-group 8-neighbour keeps its group only as an accent (distinct from every neighbour, and in a calm spot or a small source feature); otherwise it takes the neighbour mode.
+   - `outline`: when at least half of the source silhouette is darker than its inside **and** one outline group holds at least a quarter of the silhouette pixels, every output silhouette cell takes the outline group found near its footprint (D31).
+5. **Isolated features.** An output cell isolated from every opaque neighbour whose colour is mostly source-feature coverage gets dominance 1, so the Clean `island` rule leaves sparks and dots alone (D31).
+
+### Palette
+
+`buildPalette(cells, { colors, palette, exact })` works on cells, never source pixels, and returns OKLab entries together with their **RGB8 bytes** (`rgb`), which are what is rendered.
+
+- **Imported palette:** each opaque cell snaps to the nearest entry in toe-corrected OKLab, and output RGB is byte-exact. Cluster-level assignment is not implemented.
+- **Dedupe** opaque, unmasked cells by RGB8 with counts (a pure cell's key is its exact source RGB).
+- **Exact rule:** for class `exact`, or when ≥ 95 % of palette-shaping cells are `pure` (D14), with `colors: 'auto'`, the palette is the unique colours when there are ≤ 256. More colours fall back to Wu, warned "exact art quantized".
+- **Otherwise:** Wu (1991) box cuts on a 32³ toe-OKLab lattice to `K0 = min(64, distinct)` (D5), then ≤ 20 weighted Lloyd iterations (exact Elkan skip, empty clusters dropped, ties to the lowest index), then Ward merging while the closest pair is < 0.045, never merging a cluster whose nearest neighbour is > 0.12 away. A numeric `colors` keeps merging until K ≤ `colors` and overrides that protection. Entries are cluster medoids (colours that exist in the cells), in cluster order.
+- **Caps are warned:** "palette capped at 64 colors (requested N)" when `colors > 64` and more distinct colours exist.
+- Masked cells do not shape the palette and snap to the nearest entry.
+
+The palette is built last on the cell grid, after the spatial reduction to cells. On the grid reduce paths it is built on native cells before `reduceToTarget`, which then votes on indices, so no new colour can appear.
+
+### Clean profile `ai-sprite-crisp/1`
+
+`cleanup: true` selects the Clean profile (`OWN-004`). It is never on by default and is recorded in `report.cleanup.profile` and `recipe.profile`. It enables:
+
+- `cleanup(indexed, cells)` on the palette grid. It is skipped for class `exact` on native cells, and it runs after `reduceToTarget` for every class. Its rules:
+  - `orphan`: a cell with no same-index 8-neighbour takes the opaque-neighbour mode, only if its dominance is < 0.6 or it is within ΔE 0.08 of that mode.
+  - `rareLone`: a lone 4-connected cell of a colour used ≤ 2 times with dominance < 0.5 takes the neighbour mode.
+  - `pinhole`: a transparent cell enclosed by one index is filled.
+  - `island`: an opaque cell with no opaque neighbour and dominance < 0.6 is removed.
+  - `pixelPerfect`: the L-corner middle cell of a 1-px stroke takes the mode of its non-stroke neighbours, except at true right angles and at stroke ends (an arm with no onward stroke cell, D35); of 8-adjacent candidates only the lowest in raster order changes.
+- the `reduceToTarget` passes `bridge`, `orphan` and `outline` (reported as `reduceBridge`, `reduceOrphan` and `reduceOutline`).
+
+No pass changes a `pure` cell or a cell inside a strict 3 × 3 two-colour checker dither. `report.cleanup.changed` counts changed cells per rule, in palette-grid cells before any integer upscale and placement. With `cleanup: false` every count is zero (`pipeline.test.js` "cleanup off changes zero cells; the Clean profile reports changed cells per rule"). This is the "guarded cleanup, off by default" stance: bounded rules, exact-evidence protection and counts, but no Euler or hole topology guard yet. The committed G-TRAP (Clean profile) gate requires that Clean loses no small-feature recall (tolerance 0.01) and adds no line breaks against cleanup off on the same input (D35).
+
+### Background stage
+
+Background removal is an explicit stage, off by default. It runs on cells: native cells on the grid route (before Trim, the palette and any reduction) and target cells on the raster route (before the palette), so background and halo colours never take palette slots. Removed cells become transparent; enclosed holes stay. After the flood fill, a background speck is removed with the background and counted in `report.background.specks`: a floating 8-connected opaque component (every outside neighbour removed or off-canvas) smaller than 0.5 % of the remaining opaque cells whose cells all lie within ΔE 0.09 of a background colour (D33).
+
+| Mode | Colours | Gate | Comparison |
+|---|---|---|---|
+| `false` (default) | none | none | reason `off` |
+| `'auto'`, solid | border estimate | ≥ 90 % of border cells background-coloured with RMS spread < 0.03, then ≤ 2 % of border cells left opaque by the fill (floating-subject check, D16) | ΔE < 0.03 (D15) |
+| `'auto'`, painted checkerboard | both checker colours | ≥ 60 % border coverage, then the floating-subject check | ΔE < 0.035 with chroma ×2; a cell between the two colours whose 4-neighbours are all background also passes (D20) |
+| `{ key, tolerance, connectivity }` | the user's key | none | ΔE ≤ `tolerance` (default 0.03) |
+
+The fill is a flood from the border over transparent, masked and background-coloured cells, 4-connected by default or 8-connected when requested. A fill that would leave no opaque cell is refused. `halo: true` then gives an opaque cell beside the removed region the colour of an opaque 4-neighbour when it lies within 0.03 of the segment from that neighbour to a background colour, and counts it (`BG-007`).
+
+`report.background` records `mode`, `estimate` (RGB of the estimated or keyed colours), `applied`, `reason`, `removed` cells, `specks` (cells removed by the speck rule), `connectivity`, `metric` (`toe-OKLab dE`), `tolerance`, `comparison` (`<` or `<=`) and `halo: { enabled, changed }`. The refusal reasons are `off`, `no background estimate`, `no background color`, `border coverage N% < 90%` (or `< 60%`), `border color spread too high`, `subject touches the border` and `no subject`.
+
+### Alpha policy
+
+`report.alphaPolicy` and `recipe.alphaPolicy` are `Binary(128)` on every converted path (`OWN-005`). A source pixel is opaque when its alpha is ≥ 128 (grid sampling, background estimate). A cell is opaque by majority coverage: at least half of its inset pixels on the grid route, at least 8 of 16 working pixels with coverage ≥ 0.5 on the raster route, and coverage ≥ 0.5 (≥ 0.25 on thin-feature ridges) in `reduceToTarget`. Output alpha is 0 or 255. The identity path keeps the input's alpha and reports `alphaPolicy: null`. `PreserveCoverage` is unsupported.
+
+### Placement, render and validation
+
+The palette grid is placed centred in the `targetW × targetH` canvas with transparent padding (`fw`, `fh` and the offset are reported). `indexedToImage` writes each entry's RGB8 bytes with alpha 255, and `-1` as `(0,0,0,0)`. The mandatory final validator then checks that every visible pixel has alpha 255 and an RGB that is a palette entry, and that the number of visible colours is within `colors` or the imported palette size. A violation throws `internal-invariant` (`PAL-006`). `report.output.colors` is the number of visible colours actually used, so "used M of N" is visible (`PAL-003`).
+
+### Candidates
+
+`convertCandidates` runs the shared analysis once, then one route run per candidate:
+
+| Candidate | When | Route and cleanup |
+|---|---|---|
+| `original` | the identity rule holds, ignoring route and cleanup | identity |
+| `grid` | class is not `none` | grid route, cleanup off |
+| `clean` | always | grid route with Clean when a grid exists, else raster with Clean |
+| `smooth` | always | raster route, cleanup off |
+
+Identical output images are deduped: the earlier id survives and later ids alias to it. A candidate that throws a `PixilateError` is listed in `failed`; if all fail, the first error is rethrown. The **recommendation** is a rule table on the grid class, not a quality score: `original` when present; class `none` or `weak` gives `smooth`; class `exact` gives `grid`; otherwise `clean`.
+
+### Report and recipe
+
+```js
+report = {
+  input: { width, height, format, decode, strict, orientation },        // decode passthrough
+  generator: { family, model, confidence, evidence },
+  grid: { class, confidence, native, nativeFull, period, phase, elastic, cuts /* source px */,
+          evidence, candidates, ambiguous, alternatives, suggestedSize },
+  route, path,  // 'noop' | 'exact' | 'grid-locked' | 'grid-reduce-k' | 'grid-upscale-k' | 'grid-then-resample' | 'illustration'
+  trim: { enabled, tau: 0, comparison: '>', box },
+  fit: { mode, anchor: 'center', basis, basisUnit: 'cells' | 'px', crop, resized, offset },
+  background: { mode, estimate, applied, reason, removed, specks, connectivity, metric, tolerance, comparison, halo },
+  cleanup: { profile, changed },
+  alphaPolicy,
+  output: { width, height, colors, colorsAllowed, transparent },
+  recipe: { engine: { id: 'pixilate-prototype-js', version, constants }, profile, alphaPolicy, options },
+  warnings, timingsMs,
+}
+```
+
+`recipe.options` holds the normalized input-affecting options only: targets, `trim` as `{ tau: 0, comparison: '>' }`, fit, anchor, route, cleanup, background, halo, colours, palette and `manualPeriod`. `ENGINE.version` changes with behaviour, and `ENGINE.constants` whenever a pixel-changing constant changes. `report.grid.alternatives` carries the qualified spectral periods from `detectGrid` (copied into the report since 2026-10-19).
+
+### Canonical hash
+
+`canonicalHash(img)` is SHA-256 (Web Crypto; browsers and Node ≥ 19) over exactly:
+
+```text
+ASCII("pixilate/canonical-rgba/v1")  0x00  u32le(width)  u32le(height)  row-major RGBA8
+```
+
+with RGB under alpha 0 canonicalized to zero first. This is byte for byte the candidate serialization in the canonical spike's [hash proposal](../research-spikes/algorithms/canonical-rgba-geometry-spike.md#domain-separated-canonical-hash-proposal). That proposal is still an R0 review item, and using it in the prototype does not accept it. The worker hashes each output image and returns the hash with the PNG; the hash is not stored in the report. The spike's other domains (semantic result, recipe input, recipe result, encoded file) are not implemented. Pinned vector: a 1 × 1 transparent image hashes to `9b31f773e33c9c89d0e64fa6c8e8d1073319a067b5cf879f7e009672770840ac` (`pipeline.test.js` "canonicalHash (pixilate/canonical-rgba/v1)"). PNG export uses `fast-png`; byte-identical PNG files are not claimed (`OUT-005`).
+
+### Errors and limits
+
+`PixilateError` codes, taken from the canonical spike's set where it defines one:
+
+| Code | Raised by |
+|---|---|
+| `invalid-input` | option or image validation, before allocation |
+| `empty-visible-region` | Trim found no pixel with alpha > 0 (hidden RGB is ignored) |
+| `algorithm-budget-exceeded` | `reduceToTarget` when `tw × th × K > 2^25`, before it allocates its coverage tables |
+| `internal-invariant` | the final palette and alpha validator |
+
+Decode failures (too large, undecodable format) are plain `Error`s, and the worker reports them with `code: null`. Cancellation is the page terminating the worker: an operational outcome, not an engine result.
+
+| Limit | Value |
+|---|---|
+| Target | 1..1024 per axis |
+| Input | ≤ 4096 × 4096 px, checked before pixel decode; `jpeg-js` memory cap 2048 MB |
+| Coverage budget | `tw × th × K ≤ 2^25` (two Float32 tables of 128 MiB each) |
+| Palette | imported ≤ 256 entries; `colors` ≤ 256 with Wu `K0 ≤ 64`; exact palette ≤ 256 unique colours |
+| Approximate detector | images ≥ 16 × 16 px; periods 2.1 to min(len/4, 128) px |
+| UI download | nearest-neighbour upscale capped at 16.7 MP |
+
+## Verification
+
+Run `npm install` and `npm test` inside `prototype/` (Vitest). The suites are per module (`decode`, `detect`, `grid`, `sample`, `palette`, `cleanup`, `resample`, `pipeline`), plus harness self-tests and regression gates. The committed gates run on project-owned procedural fixtures only and are defined in [quality metrics §D](../research-spikes/evaluation/pixel-art-quality-metrics.md#d-passfail-gates-for-automated-regression-tests):
+
+- **G-CONTRACT:** no throw, exact size, binary alpha, repeat-run identity.
+- **G-EXACT:** clean integer nearest-neighbour upscales are 100 % exact, with the palette equal to ground truth, exact scale, and a suggested size equal to the lattice.
+- **G-TRAP:** cleanup traps (1-bit art, sparse sparks, UI right angles) keep small-feature recall G8 ≥ 0.95 with cleanup off. **G-TRAP (Clean profile)** is relative: on the same seed and input, Clean may not lose G8 recall (tolerance 0.01) or add line breaks against cleanup off, so a detection miss is not charged to cleanup (D35).
+- **G-RATCHET:** per-group medians and the no-grid false-grid rate do not regress against `test/baseline.json`, which only `node scripts/update-baseline.mjs` rewrites.
+
+Local suites skip when the gitignored files are absent: a showcase ratchet against a local baseline, and real-sample acceptance. In the latter, the five gridded private samples classify `grid` or `weak` with `suggestedSize` within ±2 % of the measured pitch in [artifact characterization §1.1](../research-spikes/evaluation/ai-artifact-characterization.md#11-measured-local-real-samples-local-measured), and `ai-wizard` classifies `none` (OBSERVED, local-only, in-sample).
+
+## Open questions and next experiments
+
+These are recorded gaps and untested implications, not planned design. Each would be settled by the named experiment or decision in the [experiment register](master-plan.md#6-early-experiment-register) or [PRD §20](product-requirements.md#20-open-implementation-decisions-with-entryexit-criteria).
+
+1. **Ambiguous exact grids** (`OD-004`, `EX-004`). When several factorizations are valid and none is instructed, the prototype computes on the coarsest and labels it "original grid not identified". The spike's rule is that the coarsest is not a recovery; whether to refuse, require an instructed lattice, or offer the candidates is open.
+2. **Auto route for class `weak`** (`AUTO-005`, `AUTO-006`, `EX-005`). `convert` with `route: 'auto'` takes the grid route for a weak grid (warned), while `convertCandidates` recommends `smooth`. Calibrated three-way grid / mixel / no-grid confidence, including an a-contrario test and a run-length cross-check that brackets the spectral bias, is untested.
+3. **Detector extensions** (`EX-005`). Not implemented: a second-difference channel for smooth upscales, Retro Diffusion's differential 8k versus 8k + 4 JPEG lattice test, and banded per-region cuts for sprite sheets with phase resets.
+4. **Structure-only labels before the cell vote** (`OD-006`, `EX-006`). A global adaptive-K label quantization (Retro Diffusion) against the current per-cell leader clustering.
+5. **Mixel candidate ensemble** (`OD-005`, `EX-009`). The prototype has one rule-table path and no versioned candidate score. `reduceToTarget` is a candidate method for grid-safe sizing whose evidence is unblinded and local-only (D17).
+6. **Raster reducer** (`OD-003`, `EX-003`). PixelOE-style contrast-aware outline expansion before downscaling, and DPID-style detail weighting, against the current area + Kuwahara + contrast-pick path.
+7. **Palette** (`OD-007`, `EX-007`). Cluster-level (Hungarian) snapping to an imported palette, empty-cluster refill instead of drop, a stable public palette order, and locked colours (`PAL-004`).
+8. **Clean profile safety** (`OD-009`, `EX-011`). The relative Clean G-TRAP gate passes on the procedural traps only; add a topology guard (components, holes, Euler number; `CLEAN-004`) and a diff overlay (`CLEAN-003`). Clean stays off by default until `EX-011` passes.
+9. **Background on source pixels** (`OD-010`, `EX-010`). Removal runs on cells (native cells, or the 4 × target lattice before Trim on the raster route, D34), never on source pixels; whether that lattice is fine enough for thin or near-background subject parts is unmeasured. Mask preview and undo (`BG-006`) are UI work outside the engine.
+10. **Decode and colour** (`OD-002`, `EX-002`). Typed decode errors (decode failures are still untyped `Error`s, reported with `code: null`), colour-profile conversion instead of "assumed sRGB", and strict refusal of animated or non-PNG/JPEG input.
+11. **Cross-engine determinism** (`DET-007`, `AC-DET-002`). Hash the committed gate outputs on engines beyond Chromium and Node.
+12. **Alpha** (`OWN-005`, `FR-011`). `PreserveCoverage` output, which the product contract keeps as the default.
+
+## Deviations
+
+The change history. D1–D22 record the first build against the original contract; D23–D36 record the 2026-10-19 revision. A superseded row stays as history and names what replaced it. Test names refer to `prototype/test/`.
+
+| # | Change | Reason | Evidence |
+|---|---|---|---|
+| D1 | All cell comparisons (sample clustering, palette Wu/Lloyd/Ward, cleanup and background distances) use toe-corrected lightness `toeL(L)` (Ottosson's Okhsl toe, sqrt only) on a working copy; stored colours stay true OKLab. | Raw OKLab L is steep near black. | OBSERVED, procedural: a pure-black outline with ±6 sRGB noise gave 3 dark palette entries in raw OKLab and 1 with `toeL` (`palette.test.js` "a noisy pure-black outline yields exactly one dark entry (toe-corrected L)"). |
+| D2 | `Cells` carries `masked`; `sampleCells` takes `opts.mask`; `buildPalette` takes `opts.exact`. (Later also `pure`, D13, and `rgb`, D32.) | Carries the watermark mask and the exact-class palette rule through the contract. | Interface change; no measurement. |
+| D3 | `resampleToTarget` adds a top-hat ridge step that finds thin lines before Kuwahara. | Kuwahara erases lines thinner than 3 px. | OBSERVED, procedural: without it, a 48 → 32 cell reduction of a half-cell outline left gaps in the ring (`resample.test.js` "keeps a half-cell line … closed via ridge protection"). |
+| D4 | `removeBackground` applies the 90 % / 60 % border gate itself; `analyzeBackground` keeps the 60 % detection rule. *Since D25 the gate applies to `'auto'` only; key mode has none.* | `bg` carries only colours, so coverage must be counted where the cells are. | Interface change; no measurement. |
+| D5 | Wu's initial K0 stays capped at 64 even when `colors` is larger. *Since D32 the cap is warned.* | Palettes above 64 colours are out of prototype scope. | Scope decision; no measurement. |
+| D6 | The harmonic sum runs on a whitened line spectrum (magnitude over a ±24-bin local mean, ±1.5-bin max), minus 2, weighted 1/h. | A raw harmonic sum rates multiples of p at least as high as p. | OBSERVED, procedural grid tests: the raw sum picked 3p–4p. |
+| D7 | The octave guard compares cell uniformity on each candidate's own (elastic) cuts; moving up to 2p also needs 2p spectrally qualified with its own fundamental (line(1/q) / line(2/q) ≥ 0.6). | Without it one local sample doubled its period to 53 px, and `unk-dungeon` (about 5.3 px cells) locked y to 2.7 px. | OBSERVED: true-period line ratio ≥ 0.88 versus doubled ≤ 0.32, partly measured on private samples (local-only, not rights-cleared). |
+| D8 | Extra no-grid feature: a cell step ratio (in-cell slope over one cell ÷ neighbour contrast) ≥ 0.85 gives class `none`. | Contract purity alone passed smooth periodic fields (purity 0.34). | Gridded private samples 0.12–0.69 and the painted control `ai-wizard` 1.00 (OBSERVED, local-only, not rights-cleared); a synthetic wave field 1.32 (OBSERVED, procedural; `grid.test.js` "smooth gradient and random sinusoid field (no grid) -> none"). |
+| D9 | *Superseded by D26 and D27.* The 1:1 passthrough also needed 1-px runs on both axes and yielded to a confident `grid` result. | Smooth non-integer NN upscales with ≤ 256 colours were misread as native. | OBSERVED, procedural (in-sample). |
+| D10 | Window agreement counts a window when p is still qualified there; it is not applied below 256 px. | Mixel windows lock to half cells; small images have too few windows. | OBSERVED, procedural (in-sample). |
+| D11 | *Superseded by D16, and moot since D25 (background off by default).* Class `exact` ran `'auto'` background removal like other classes. | Exact 1-bit art kept its background. | `onebit-ss` IoU 0.30 → 0.999 once removal ran (OBSERVED, showcase crop, local-only). |
+| D12 | The 0.97 lock rule compares elastic coherence, not comb scores: a lock is attempted when \|N − T\| ≤ 0.05 T on both axes and accepted when the minimum over axes of `lockGrid(T).coherence / lockGrid(N).coherence` is ≥ 0.97. The report gains `fit` and `grid.cuts` (source px, 0.01 px). *The `fit` report was reshaped by D24.* | A drifting source makes a regular T lattice score badly on the comb even when T is right; judging both lattices with elastic cuts on the same image compares like with like. The cuts feed the UI cut-line overlay. | OBSERVED on drifting procedural presets (in-sample). |
+| D13 | `sampleCells` returns `pure` (every inset pixel the same RGB, or fully transparent); cleanup never changes a pure cell. | Protects exact evidence from cleanup. | Clean NN inputs 100 % pure, AI-like presets 0–4 %; sparse-spark recall G8 0.73 → 1.00, UI ring 0.92 → 0.99 (OBSERVED on synthetic presets over the showcase crops `sparks` and `ui-ring`, local-only; `cleanup.test.js` "never changes pure cells (exact evidence), even noise-like ones"). |
+| D14 | `buildPalette` treats a grid with ≥ 95 % pure cells and ≤ 256 colours like class `exact` (unique colours; a numeric `colors` still caps). | Close glow ramps 0.015–0.029 apart were merged on clean inputs. | OBSERVED, procedural (`palette.test.js` "a clean grid (≥ 95% pure cells) keeps every exact color, even near-duplicates"). |
+| D15 | The background colour match tightened from ΔE 0.06 to 0.03. A drop-shadow allowance ("achromatic darkening up to 0.2") was tried and reverted. | 0.06 ate pale subject ink. The shadow rule classified light-grey hair as shadow and deleted it, and ground shadows are often wanted in game sprites. | `proc-icon` IoU 0.64 → 1.00 under `nonint-nn` (OBSERVED, procedural). The shadow rule on `gpt-oni` gave bbox fill 0.41 and light share 0.19, against 0.618 and 0.512 before (OBSERVED, local-only, not rights-cleared); guarded by `cleanup.test.js` "real-sample background guards" on `gpt-oni`, `gemini-mage` and `unk-coat`. Cost: synthetic fake-alpha IoU drops where the generator draws shadows that its ground truth excludes. |
+| D16 | `removeBackground` `'auto'` is refused when > 2 % of border cells stay opaque after the fill (floating-subject check). *`'auto'` only since D25.* | `'auto'` keyed out opaque tiles and 1-bit art. | `onebit-td` IoU 0.129 → 1.000 (OBSERVED, showcase crop, local-only); `cleanup.test.js` "auto leaves full-bleed art opaque (1-bit tileset touching the border); true still removes". |
+| D17 | One `reduceToTarget` replaces the contract's integer-reduce and non-integer resample rows: exact fractional coverage of native indices, tone groups, alpha by coverage, salient-feature ridge claims, gap bridging, orphan accents, outline rebuild, then `cleanup()`. *Partly superseded: the bridge, orphan and outline passes and the trailing cleanup run only under the Clean profile (D23); bridging is narrowed by D30 and the outline rebuild by D31; the subject-fit upscale row became the Trim + contain row (D24).* | The contract's rows fragmented outlines and left orphans at non-integer ratios. | Unblinded author-side contact sheets of private samples: 16 of 18 cases looked better; outline coverage `gpt-oni` at 32 px 0.39 → 0.76; fragments `gemini-mage` at 32 px 23.9 → 12.1 per 100 px; orphans 42 → 9; mixel check ≤ 0.08 everywhere; 1–19 ms (OBSERVED, local-only, not rights-cleared, unblinded; a candidate method, not evidence of superiority). |
+| D18 | `sampleCells` returns the mean of the heaviest leader cluster after dropping its top and bottom 20 % by L, instead of its medoid; pure cells keep their exact colour. The `mode` option is gone. | The medoid is one pixel and keeps its texture or noise (about 0.01 ΔE on the AI presets); the leader radius already keeps neighbour colours out. | Palette-collapse cells 9.2 % → 6.4 % (`gpt-image-like`); `EM_snap` −0.4 to +4.3 points per AI preset; clean presets unchanged (OBSERVED on synthetic presets over procedural and showcase sprites, local-only). |
+| D19 | Tried and reverted: a noise-adaptive merge radius `clamp(2.5σ, 0.03, 0.045)`. Auto palettes keep τ_merge = 0.045. | It raised synthetic scores but bloated real palettes; any floor that kept real palettes within +20 % made it a no-op. | Synthetic `jpeg-heavy` `EM_snap` 0.902 → 0.984 and `gemini-like` 0.679 → 0.778 (OBSERVED); palettes `unk-dungeon` 17 → 33, `gpt-oni` 32 → 42 and `gemini-mage` 41 → 57 colours (OBSERVED, local-only, not rights-cleared). |
+| D20 | Painted-checkerboard backgrounds: the checker pair matches at ΔE 0.035 with chroma ×2 (solid backgrounds stay at 0.03), and a cell between the two checker colours is background only when all four neighbours are. | The floating-subject check refused removal because straddling and textured checker cells missed 0.03 by a hair. | Before: `proc-blob` IoU 0.219, `mz-front` 0.256. After: fake-alpha median `EM_snap` 0.523 → 0.682 and IoU 0.807 → 0.869; tinted pale ink 0.051 away is kept; other presets unchanged (OBSERVED, procedural and showcase, local-only; `cleanup.test.js` "painted checkerboard: removes squares, texture and straddling cells; keeps pale ink near the grey"). |
+| D21 | An integer ratio below 1 (T/N within 2 % of an integer k, T divisible by k) NN-upscales by k instead of using the `reduceToTarget` vote. *Originally for canvas fit only; since D24 it applies under every fit.* | An integer NN upscale is exact; `reduceToTarget` below ratio 1 duplicates cells unevenly. | Design reasoning; no measurement. |
+| D22 | Review hardening: class `exact` never locks or relocks to a fractional period; the exact unique-colour palette needs ≤ 256 colours, else Wu (K ≤ 64); background removal is refused when the fill would leave no opaque cell; inputs over 16.7 MP are rejected at decode from the PNG IHDR, JPEG SOF or bitmap size; targets are capped at 1024 and the upscaled download at 16.7 MP. | Exact cells are the art; unbounded colours and sizes exhausted memory; solid inputs came out empty. | OBSERVED, procedural: a fractional period dropped rows (100² art at T = 98); 22,500 unique colours overflowed `Int16` indices and allocated K × K tables (about 4 GB); solid and 1 × 1 inputs came out fully transparent (`pipeline.test.js` "exact native n² art, target T: resampled, never locked to a fractional period", "exact grid with > 32767 unique colours …", "background removal never leaves an empty image and says why"; `decode.test.js` size tests). |
+| D23 | Owner-decision API (`OWN-004`, `OWN-005`, `OWN-006`): `targetW × targetH` required and validated (typed `invalid-input`); explicit `trim` (`alpha > 0`, `empty-visible-region`); `fit` and `route` options; cleanup and background off by default; `cleanup: true` selects the named Clean profile `ai-sprite-crisp/1`, which gates every cleanup pass including the `reduceToTarget` passes and reports changed cells per rule; `Binary(128)` recorded as `alphaPolicy`; a PRO-NOOP identity path. Removed: automatic target sizing (`targetW: null`), the `fit` values `'auto'`, `'canvas'` and `'subject'`, the default `removeBackground: 'auto'`, and default-on cleanup and `pixelPerfect`. | The PRD contract (`GEO-001`, `GEO-003`, `TRIM-*`, `CLEAN-001`, `AUTO-007`, `ALPHA-002`) and the owner decisions in PRD §25. | OBSERVED, procedural probes on the previous code (2026-10-19): `targetW: 0` gave a 0 × 8 image, `2.5` a width of 2.5, and `5000` bypassed the cap; a native 32 × 32 sprite at its own size with the old defaults lost its background and was re-placed as a 13 × 19 subject. Tests: `pipeline.test.js` "convert: input validation", "trim: same subject with different transparent margins gives the same output (AC-TRIM-001)", "trim on an all-transparent input throws empty-visible-region (hidden RGB ignored)", "cleanup off changes zero cells; the Clean profile reports changed cells per rule", "convert: identity (PRO-NOOP)"; `resample.test.js` "clean: false skips bridge, orphan and outline passes (zero changes reported)". |
+| D24 | `stretch`, `contain` (default) and `cover` work on both routes: anchor center, round half to even with each contained axis clamped to 1..T, odd remainder right/bottom; cover crops are reported and warned; stretch warns on an aspect change. Supersedes the contract's subject fit and the fit naming in D17 and D21. | `GEO-004`, `FR-005` and PRD §9.4; Contain previously worked only on native grid cells. | OBSERVED, procedural probe on the previous code: `fit: 'subject'` on a no-grid input silently became stretch (2 × 600 → 40 × 40, stretched 20× horizontally). Tests: `pipeline.test.js` "contain and cover also work on the grid route", "round half to even: 40x10 contained in 10x10 -> 10x2 (2.5 rounds down), odd remainder bottom", "extreme aspect: contain clamps the minor axis to 1 px; no silent stretch", "exact W x H for every fit (1x1, 1x9, 9x1 and non-square)". |
+| D25 | Background is an explicit stage: `false` (default), `'auto'`, or an explicit key with inclusive tolerance, 4- or 8-connectivity and no gates; halo repair is its own `halo` flag with a changed count; `report.background` records the mode, estimate, applied flag, refusal reason, removed cells, connectivity, metric, tolerance and comparison. | `BG-001`–`BG-003`, `BG-007` and `AUTO-007`; refusals had been silent. | OBSERVED, procedural probe on the previous code: the report had no background field, and an `'auto'` refusal said nothing. Tests: `pipeline.test.js` "default: off, reported, no transparency invented", "'auto' removes it and reports estimate, removed cells, connectivity and tolerance; trim then crops", "explicit key with tolerance and 8-connectivity", "'auto' refusal is reported (full-bleed art touches the border)", "background re-sampled after the trim crop is still removed (lock path)"; `cleanup.test.js` "halo repair (own flag) …", "key mode: inclusive tolerance, no gates; 8-connectivity floods through diagonal gaps", "reports refusals with a reason". |
+| D26 | Exact factorization: separable per-axis enumeration of every valid `(scale, phase)` with partial edge cells; all candidates listed coarsest first; an `ambiguous` flag; the instructed lattice when a candidate matches the target; no suggested size for an underdetermined axis; RGB under alpha 0 ignored. Supersedes D9 and the contract's square-only, phase-0, largest-n fast path. | The canonical spike's "Exact factorization and ambiguity" and `AC-PRO-001`: the coarsest valid factor is not a recovery. | OBSERVED, procedural probes on the previous code: an `sx = 2 / sy = 3` image was not exact, and the spectral path counted 23 x cells (truth 24); a uniform 128² input was reported as "native 2 × 2"; 2 × 2 equal-adjacent art upscaled ×2 was reported as factor 4. Tests: `grid.test.js` "detectGrid exact factorization" (anisotropic, 1-px phase shift, equal-adjacent and nested, checkerboard ×4, uniform and stripes, hidden RGB). |
+| D27 | 1:1 heuristic: ≤ 256 exact colours, binary alpha, ≥ 3 consecutive changing lines on one axis and ≥ 2 on the other; class `exact` at confidence 0.9 with "heuristic, not proof" evidence; a `grid` result overrides it. Supersedes D9. | A nearest-neighbour upscale by ≥ 3× changes at most two lines in a row; the previous 1-px-run test let non-integer upscales of 1-bit art pass as native. | OBSERVED, procedural: the `proc-1bit` `nonint-nn` seed 40 case was classed 1:1 `exact` before (`grid.test.js` "non-integer NN upscales of 1-bit / UI traps are not exact …", "1:1 native art is the trivial candidate with confidence < 1, not proof"). |
+| D28 | Decode: the EXIF orientation is applied as an exact pixel permutation before analysis; ignored colour metadata and animation are warnings; the canvas fallback is `strict: false` with a leading warning; `format`, `decode`, `strict` and `orientation` pass through into `report.input`, and decode warnings lead `report.warnings`, outside the recipe. | `FMT-002`–`FMT-004` and `FR-002`. `jpeg-js` ignores EXIF, so rotated photos were analysed sideways, and the canvas path was silent. | Tests: `decode.test.js` "EXIF orientation (FMT-002)" and "decode warnings" (including "canvas fallback is never silent: decode canvas, strict false, animated GIF first frame"); `pipeline.test.js` "convert: decode passthrough". |
+| D29 | Provenance: metadata matches are `'declared (unvalidated)'` with "file metadata claims … (signature not checked)" evidence; prompt-bearing text keys are reported by name only and never parsed; watermark handling is masking only. | `OWN-003`, `FR-023`, `AC-PROV-001`, and the privacy rule in input provenance signals §6. | Tests: `detect.test.js` 'PNG tEXt "parameters" -> AUTOMATIC1111 by key only; prompt and settings never reach the result (privacy)', "XMP-only Midjourney -> declared; description text and job ID are not echoed", "declared visible watermark -> generic bottom-right 8% corner mask, pixels unchanged" (see D36). |
+| D30 | `reduceToTarget` bridges a gap only along one thin source line: at least two neighbouring pieces must hold the same source feature component, and that component must cross the cell with a run thinner than a cell side. | Bridging joined separate strokes, dots and dither into blobs. | OBSERVED, procedural (`resample.test.js` "Clean does not bridge the gap between two parallel thick strokes of one component"). |
+| D31 | The outline rebuild needs a dominant outline colour: one group holding at least a quarter of the silhouette pixels, besides at least half of the silhouette being darker than inside. An isolated output cell that is mostly a source feature gets dominance 1, so the Clean `island` rule keeps it. | On a misread grid, edge noise counted as an outline, and the rebuild plus island removal erased sparks. | OBSERVED, procedural (`resample.test.js` "Clean on a misread 1:1 grid (9.4x upscale): sparks with edge noise survive (no outline rebuild, no island removal)"). |
+| D32 | Canonical contract: alpha-0 RGB is canonicalized once at entry; the palette carries RGB8 bytes alongside OKLab (pure cells keep their exact source RGB, imported palettes render byte-exact); a mandatory final validator (binary alpha, palette membership, colour cap) throws `internal-invariant`; palette caps are warned; a `2^25` coverage budget throws `algorithm-budget-exceeded` before allocation; `canonicalHash` implements `pixilate/canonical-rgba/v1`; the recipe records the engine id, version and constants version. | `FMT-006`, `PAL-002`, `PAL-003` (no silent cap), `PAL-006`, and the canonical spike's hash proposal and typed errors. | OBSERVED, procedural probes on the previous code: varying only hidden RGB changed the class (`exact` versus `grid`) and the report; `colors: 200` gave 63 colours with no warning; a 1024² 256-colour 1:1 input reduced to 1000² allocated two ~1 GB coverage arrays (7.6 s, 2.2 GB resident). Tests: `pipeline.test.js` "convert: alpha-0 RGB canonicalization (metamorphic)", "canonicalHash (pixilate/canonical-rgba/v1)", "a requested palette above the 64-entry cap is warned (200 -> at most 64)", "an imported palette is rendered byte-exact"; `palette.test.js` "pure cells keep their exact source RGB as the palette bytes"; `resample.test.js` "refuses coverage tables above the budget before allocating them". |
+| D33 | Background-speck rule inside the background stage: after the flood fill, a floating 8-connected opaque component under 0.5 % of the remaining opaque cells whose cells all lie within ΔE 0.09 of a background colour is removed with the background and reported as `background.specks`. It replaces the earlier subject-box rule that silently dropped components under 0.5 % of the opaque area when cropping (`fit: 'subject'`, removed in D23). | Stray near-background noise cells that the 0.03 tolerance missed widened the Trim box; the old drop was silent and applied to any colour, including real sparks. | OBSERVED, procedural (in-sample): committed `trim-subject` group median `EM_snap` 0.526 → 0.853 and IoU 0.573 → 0.928 together with D34 (`test/baseline.json`). Tests: `cleanup.test.js` "a tiny floating near-background speck goes with the background; a distinct spark stays"; `pipeline.test.js` "grid route: trim + contain at the native cell count reproduces the full-canvas result (stray bg specks do not widen the box)". |
+| D34 | Background before Trim on the raster route: a requested background is removed on a 4 × target working lattice (area cells of the full canvas, at most the source size) before Trim, and Trim ignores source pixels in removed cells; the post-resample background pass then skips the floating-subject check when Trim cropped. Under Trim the target is no longer passed to `detectGrid` as a lattice hint. Replaces the "trim uses source alpha" warning. | `BG-008` (background alpha is the input to Trim) held only on the grid route, so an opaque canvas was never trimmed on the raster route; the target sizes the trimmed basis, so as a full-canvas lattice prior it misled the detector. | OBSERVED, procedural (in-sample): see D33 for the `trim-subject` medians. Test: `pipeline.test.js` "raster route: background removal runs before Trim, so an opaque canvas is trimmed to the subject". |
+| D35 | Clean `pixelPerfect` leaves stroke ends alone: an L-corner whose arm has no onward stroke cell is a stroke end, not a jaggy, and is not changed. The Clean G-TRAP gate becomes relative: on the same seed and input, Clean may not lose G8 recall (tolerance 0.01) or add line breaks against cleanup off. Replaces the tracked expected failure. | Removing a stroke-end corner broke 1-bit and UI lines; an absolute G8 gate under Clean also charged detection misses (a raster-route fallback) to cleanup. | OBSERVED, procedural (in-sample): committed `nonint-nn+cleanup` `passT3` 1 → 0.667 is the `proc-1bit` seed-52 detection miss (classed `none`, raster route), identical with cleanup off; `mixel-detail` medians unchanged or higher. Test: `regression.test.js` "G-TRAP (Clean profile): no feature loss vs cleanup off". |
+| D36 | Provenance watermark handling: the pixel brightness test and the vendor mark geometry are removed; a `watermarkMask` is produced only when the container declares a visible watermark, as a generic bottom-right 8 % × 8 % corner (INFERRED conservative region). Confidence `'likely'` no longer exists. Published output dimensions stay as weak, advisory `'possible'` evidence under `FR-023` as amended on 2026-10-19 (PRD §25 `OWN-003` note). | `FR-023` and [input provenance signals §4](../research-spikes/algorithms/input-provenance-signals.md#4-declared-visible-watermarks-masking-only) rule 3: no vendor geometry; a pixel test is not container metadata. | Tests: `detect.test.js` "bright corner mark without a declaration -> no mask, no family (no pixel test)", "declared visible watermark -> generic bottom-right 8% corner mask, pixels unchanged". The local `gemini-mage` sample declares a visible mark and is still masked (OBSERVED, local-only, not rights-cleared). |

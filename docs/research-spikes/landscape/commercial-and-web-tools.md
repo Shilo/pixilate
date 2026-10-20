@@ -1,6 +1,7 @@
 # Commercial and web image-to-pixel-art landscape
 
 **Research date:** 2026-07-31  
+**Addendum:** 2026-10-19 inventory additions ([addendum](#addendum--2026-10-19-inventory-additions)); where it differs from the July text, the addendum governs.  
 **Scope:** user-facing converters, grid-recovery tools, general image processors, and adjacent AI products  
 **Project constraint:** Pixilate is intended to be open source under MIT and deterministic; this report does not recommend copying code merely because a product is publicly accessible.
 
@@ -21,7 +22,7 @@ That gap is real, but it is not solved by selecting one universally “best” r
 
 Selected implementation and workflow references from the review are:
 
-- **Retro Diffusion Pixel Art Fixer Standard** for grid-period estimation and reconstruction of distorted pixel art. It is MIT and unusually well documented, but its inferred size can be wrong and its own manual pixel-size override remains important.
+- **Retro Diffusion Pixel Art Fixer Standard** for grid-period estimation and reconstruction of distorted pixel art. It is MIT and unusually well documented, but its inferred size can be wrong and its own manual pixel-size override remains important. See the dedicated [Retro Diffusion spike](../products/retro-diffusion-pixel-art-fixer.md).
 - **SpriteFusion Pixel Snapper** for a small, browser-native grid-snapping reference. See the dedicated [SpriteFusion spike](../products/spritefusion-pixel-snapper.md).
 - **Unfake.js** for user-visible recovery controls. See the dedicated [Unfake.js spike](../products/unfake-js.md).
 - **GameTorch image_to_pixel_art_wasm** for a compact MIT Rust/WASM palette-and-downsample baseline.
@@ -63,11 +64,12 @@ Search families included:
 
 Official pages, documentation, source, and license files were preferred over blogs and aggregator descriptions. Marketing language such as “AI,” “smart,” “pixel perfect,” and “custom resolution” was not treated as an algorithm specification.
 
-The three tools named by the project owner have dedicated deep spikes and are not duplicated here:
+The three tools named by the project owner have dedicated deep spikes and are not duplicated here. Since 2026-10-19, Retro Diffusion Pixel Art Fixer has one too:
 
 - [PixelLab](../products/pixellab.md)
 - [SpriteFusion Pixel Snapper](../products/spritefusion-pixel-snapper.md)
 - [Unfake.js](../products/unfake-js.md)
+- [Retro Diffusion Pixel Art Fixer](../products/retro-diffusion-pixel-art-fixer.md)
 
 ## Hands-on fixture design
 
@@ -86,9 +88,7 @@ Desired measurements were exact native output dimensions, opaque bounding box, u
 
 | Tool | Fixture and settings | Result | Interpretation |
 |---|---|---|---|
-| [Retro Diffusion Pixel Art Fixer Standard](https://www.retrodiffusion.ai/tools/pixel-art-fixer/) | Distorted 83×77 grid, Auto | **OBSERVED:** reported `9×8 px`, grid `8.79×9.61 px`, 14 colors, 124 ms. | The true result was 8×8, so automatic size inference missed by one column on this fixture. |
-| Retro Diffusion Standard | Same fixture, manual pixel size 10 | **OBSERVED:** reported `8×8 px`, `10×10 px` grid, nine colors, 24 ms. | Manual override recovered the intended dimensions, although color count still exceeded the six-color source. |
-| Retro Diffusion Standard | Continuous 256×192 illustration, Auto | **OBSERVED:** reported `17×15 px`, grid `14.82×13.11 px`, 22 colors, 261 ms. | With no true lattice, the detector still selected a plausible one. Auto-detection therefore needs confidence, mode selection, and previews—not silent authority. |
+| [Retro Diffusion Pixel Art Fixer Standard](https://www.retrodiffusion.ai/tools/pixel-art-fixer/) | Distorted grid (Auto and manual size 10); continuous illustration (Auto) | **OBSERVED:** auto missed the 8×8 truth by one column; manual size 10 recovered 8×8; a 17×15 lattice was asserted on continuous art. Full results are in the [dedicated spike](../products/retro-diffusion-pixel-art-fixer.md#hands-on-probes-observed-2026-07-31). | Auto-detection needs confidence, alternatives, and refusal; it must not have silent authority. |
 | [Pixel It](https://giventofly.github.io/pixelit/) | Distorted grid, default scale 7 | **OBSERVED:** preview canvas remained 83×77 while pixels were visually enlarged into blocks. | Its primary operation is a pixelation effect rendered at source canvas size, not an exact native low-resolution export contract. |
 | Pixel It | Entered Max Width 32 and reloaded the fixture | **OBSERVED:** the session did not show a native canvas change. **CODE-DERIVED:** the library does contain a separate proportional `resizeImage()` path. | The UX path was not reliable enough here to score; the code establishes max-bound support, not arbitrary exact W×H. |
 | [Tezumie Image-to-Pixel](https://tezumie.github.io/Image-to-Pixel/) | Continuous illustration, pixel width 16, PICO-8, no dither | **OBSERVED:** processing completed and controls remained responsive. | It offers a true pixel-width workflow and broad palette/dither control. Height remains aspect-derived; displayed canvas dimensions were UI dimensions and were not treated as export dimensions. |
@@ -109,7 +109,7 @@ Legend: **Exact W×H** means independent native output dimensions, not a block-s
 | PixelLab Unzoom / Resize / Image to Pixel | Hosted AI product | Dedicated spike | Dedicated spike | Proprietary/hosted | Research reference; see [spike](../products/pixellab.md). |
 | SpriteFusion Pixel Snapper | Web/vendor-reported local | Infers/snap-recovers a grid; limitations in dedicated spike | Grid-oriented rather than a complete palette lab | MIT core repository | Focused public-code reference; see [spike](../products/spritefusion-pixel-snapper.md). |
 | Unfake.js | Web/local | Flexible manual grid recovery | Extensive recovery controls | See dedicated license analysis | Strong UX/algorithm reference; see [spike](../products/unfake-js.md). |
-| [Retro Diffusion Pixel Art Fixer Standard](https://www.retrodiffusion.ai/tools/pixel-art-fixer/) | Web/vendor-reported local; active at snapshot | Auto period/phase recovery or manual pixel size; result dimensions inferred, not independently requested W×H | Auto/explicit/custom palette; Bayer 2/4/8 and strength | [MIT at audited revision](https://github.com/Retro-Diffusion/pixel-art-fixer/tree/ef376e57e1c272633ca2dbf5f29ec3fcf6596465) | Thoroughly documented open grid-recovery reference in this survey; Pixilate still needs safeguards for inference mismatch. Strict repeated-byte behavior was not independently established. |
+| [Retro Diffusion Pixel Art Fixer Standard](https://www.retrodiffusion.ai/tools/pixel-art-fixer/) | Web/vendor-reported local; active at snapshot | Auto period/phase recovery or manual pixel size; result dimensions inferred, not independently requested W×H | Auto/explicit/custom palette; Bayer 2/4/8 and strength | [MIT at audited revision](https://github.com/Retro-Diffusion/pixel-art-fixer/tree/ef376e57e1c272633ca2dbf5f29ec3fcf6596465) | Thoroughly documented open grid-recovery reference; see [spike](../products/retro-diffusion-pixel-art-fixer.md). |
 | [Pixel It](https://giventofly.github.io/pixelit/) | Web/local; active repo | Block effect at source canvas size; max width/height proportional helper | Default/custom palette; nearest RGB remap | [MIT at audited revision](https://github.com/giventofly/pixelit/tree/9c53dfa191fcb2f4a4507c21f40647c29e352939) | Useful minimal baseline, insufficient target contract. |
 | [Tezumie Image-to-Pixel](https://tezumie.github.io/Image-to-Pixel/) | Web/local; v2 | Exact pixel width; aspect-derived height; download native pixel or original resolution | Custom/Lospec palettes; Floyd–Steinberg, Atkinson, Bayer, ordered, clustered | [MIT library template and Apache-2.0 app at audited revision](https://github.com/Tezumie/Image-to-Pixel/tree/b0d5b7422db309dae22c2a69d4ebca0ce8c14b78) | Strong browser palette/dither reference; no grid recovery or independent W×H. Library-license placeholder needs resolution before reuse. |
 | [GameTorch](https://gametorch.app/image-to-pixel-art) | Web/local + Rust CLI | Longest-side target; aspect-derived other side; optional longest-side upscale | Lab k-means or fixed palette; histogram resampling; no published dither | [MIT at audited revision](https://github.com/gametorch/image_to_pixel_art_wasm/tree/4cf0fff2dfbba410cbabcc67fb638a3032af76b5) | Strong compact Rust/WASM baseline; exact W×H, trim, and grid recovery absent. |
@@ -151,15 +151,7 @@ Legend: **Exact W×H** means independent native output dimensions, not a block-s
 
 ### 1. Retro Diffusion Pixel Art Fixer Standard
 
-**VERIFIED vendor claim / CODE-DERIVED scope:** The [Standard tool](https://www.retrodiffusion.ai/tools/pixel-art-fixer/) is described as browser-local, deterministic, and non-neural, and its [audited source revision](https://github.com/Retro-Diffusion/pixel-art-fixer/tree/ef376e57e1c272633ca2dbf5f29ec3fcf6596465) is under MIT. This spike did not capture repeated output bytes across runs or browsers, so strict determinism remains **UNKNOWN**. The separate Neural variant is server-side and out of scope for Pixilate’s deterministic core.
-
-**CODE-DERIVED:** The [pinned repository revision](https://github.com/Retro-Diffusion/pixel-art-fixer/tree/ef376e57e1c272633ca2dbf5f29ec3fcf6596465) describes a multi-signal grid detector using autocorrelation, run-length/self-similarity evidence, and candidate arbitration, followed by even-grid reconstruction. Adaptive k-means is used for structural voting, while output colors are reconstructed from original pixels with center weighting rather than simply returning cluster centroids. The implementation also contains strategies for drift, non-integer cells, JPEG noise, transparency majority, and manual pixel-size override. Published input guards include a 16-pixel minimum side and a four-megapixel maximum. This is substantially more purpose-built than “resize with nearest neighbor.”
-
-**OBSERVED:** It missed the exact width of the distorted 8×8 fixture (`9×8`) but recovered `8×8` when pixel size was forced to 10. It also inferred a `17×15` lattice for a continuous illustration that had no ground-truth lattice.
-
-**VERIFIED but vendor-reported:** The companion [pixel-bench repository](https://github.com/Retro-Diffusion/pixel-bench) publishes a benchmark methodology covering thousands of distortions and reports exact-size/alignment advantages over competitors. Those numeric outcomes were not independently reproduced in this spike and must not be presented as neutral third-party validation.
-
-**Takeaway:** Reuse and test the open ideas/code as permitted, but never equate a detector’s best candidate with user intent. Pixilate needs confidence, alternative candidates, target-size priority, and a visible manual override.
+Moved on 2026-10-19 to the dedicated [Retro Diffusion Pixel Art Fixer spike](../products/retro-diffusion-pixel-art-fixer.md), including the 2026-07-31 OBSERVED probes and the pixel-bench caveats.
 
 ### 2. Pixel It
 
@@ -313,7 +305,7 @@ This is engineering research, not legal advice. Pixilate-owned code may be MIT w
 
 | Candidate | License evidence | MIT project posture |
 |---|---|---|
-| Retro Diffusion Pixel Art Fixer Standard | MIT at pinned audited revision | Potentially suitable to study, fork, or incorporate with copyright/license notice; audit exact transitive dependencies and verify strict output behavior independently. |
+| Retro Diffusion Pixel Art Fixer Standard | MIT at pinned audited revision | See the [dedicated spike](../products/retro-diffusion-pixel-art-fixer.md#licensing-and-reuse). |
 | SpriteFusion Pixel Snapper | Repository MIT; see dedicated spike | Candidate with exact-revision notice, provenance, and dependency review. |
 | Pixel It | Repository MIT | Suitable baseline with notice. |
 | GameTorch image_to_pixel_art_wasm | Repository MIT | Suitable with notice; audit Rust crate licenses and deterministic behavior. |
@@ -387,3 +379,34 @@ All links were checked or discovered during the 2026-07-31 research pass.
 - Editor/tool primitives: [Aseprite resize](https://www.aseprite.org/docs/resize/), [Aseprite CLI](https://www.aseprite.org/docs/cli/), [Aseprite pixel format API](https://www.aseprite.org/api/command/ChangePixelFormat), [GIMP scale](https://docs.gimp.org/3.0/en_GB/gimp-image-scale.html), [GIMP indexed conversion](https://docs.gimp.org/3.0/en/gimp-image-convert-indexed.html), [Krita image menu](https://docs.krita.org/en/reference_manual/main_menu/image_menu.html), [ImageMagick options](https://imagemagick.org/script/command-line-options.php), [ImageMagick resize guide](https://usage.imagemagick.org/resize/), [ImageMagick license](https://imagemagick.org/license/)
 - Additional web tools: [Online Tools House](https://onlinetoolshouse.com/image-to-pixel-art/), [Photo2PixelArt](https://photo2pixelart.com/), [MakePixelArt](https://makepixelart.app/), [image-to-pixel-art.com](https://image-to-pixel-art.com/), [ImageToPix](https://imagetopix.com/converter), [Pixel Art Village](https://pixelartvillage.org/), [Img2Pixel](https://img2pixel.com/), [Photo2Pixel](https://coding.tools/photo2pixel.html), [Pixora](https://pixora.cloud/)
 - Generic/AI references: [PineTools](https://pinetools.com/pixelate-effect-image), [LunaPic](https://www2.lunapic.com/editor/?action=pixels), [Canva](https://www.canva.com/features/pixelate-image/), [Adobe](https://www.adobe.com/creativecloud/photography/discover/pixelate-image.html), [Rosebud](https://rosebud.ai/ai-game-assets)
+
+## Addendum — 2026-10-19 inventory additions
+
+**Snapshot:** 2026-10-19. These rows come from a superseded 2026-10-18 ecosystem draft that was not part of this canonical set, merged here and re-labelled. Only cells marked **re-checked 2026-10-19** were re-read in public sources for this addendum. Every other cell is an unverified surface signal (**UNKNOWN** until checked) and must not be cited as a product fact. The July coverage boundary still applies, and these additions show that it missed some current web converters.
+
+### Additional web converters and editors
+
+| Product | What it contributes | Source/license signal | Fit for Pixilate |
+|---|---|---|---|
+| [pixel-refiner.app](https://pixel-refiner.app) | Client-side grid recovery with input-class routes (refine, convert, preserve), background tools, and palettes | Repository MIT (re-checked 2026-10-19); see the [open-source addendum](open-source-ecosystem.md#addendum--2026-10-19-inventory-additions) | Strong study and benchmark candidate |
+| [mono-pix.com](https://mono-pix.com) | "Snap" grid recovery, reportedly built on the `fast-pixelizer` engine (not re-checked) | Engine package MIT (re-checked 2026-10-19); app repository licence UNKNOWN | Benchmark baseline |
+| [perfectPixel web demo](https://theamusing.github.io/perfectPixel_webdemo/) | Browser demo of the FFT grid method | No licence file (see [perfectPixel](open-source-ecosystem.md#16-perfectpixel-the-most-relevant-newly-found-grid-recovery-reference)) | Ideas and benchmark only |
+| [Pixel Rehab](https://arcade.pirillo.com/pixel-rehab.html) | Browser port of the Retro Diffusion fixer with exact output size up to 1024 px | Credits MIT (re-checked 2026-10-19); see the [Retro Diffusion spike](../products/retro-diffusion-pixel-art-fixer.md#derivative-pixel-rehab) | Derivative; benchmark, not independent validation |
+| PixelMe (iOS) | AI photo-to-pixel subscription app | Proprietary; hosted AI | Out of scope (generative, hosted) |
+| Pic2Dot, Wayline, DigitalCoding, Jukeboxprint, insMind converters | Commodity downscale plus palette | UNKNOWN | Same commodity layer as §15 |
+| [Pixel Composer](https://github.com/Ttanasart-pt/Pixel-Composer) | Node-based VFX editor with posterize and palette nodes | Code licence UNKNOWN (not re-checked); binary sold separately | Not an AI-grid tool; UX reference only |
+
+### Cleanup tools
+
+| Product | Stated function | Signal | Disposition |
+|---|---|---|---|
+| Adopt Pixels (Astropulse, Aseprite extension) | Replaces orphans with the most common surrounding colour, with a user-set threshold and iteration count | Commercial; vendor-described, not re-checked | Orphan-rule UX reference |
+| ClusterSweep | Offline despeckle that merges isolated 1×1 pixels | UNKNOWN | Inventory only |
+| Orphan Pixel Corrector (itch.io) | Orphan cleanup | UNKNOWN | Inventory only |
+| AB16 (Aseprite extension) | Up/downscale; method UNKNOWN | UNKNOWN | Inventory only |
+
+### Conflicts resolved
+
+- **Pixelicious (re-checked 2026-10-19):** `pixelicious.xyz` still returns a 301 redirect to [Scenario Pixelate](https://www.scenario.com/features/pixelate/). The [itch.io listing](https://hugo-dz.itch.io/image-to-pixel-art-converter) "Online image to Pixel Art converter" by Hugo-Dz (the SpriteFusion author) links to that domain. Both names therefore point to one domain lineage, not two current products. The commercial relationship between the listing and Scenario is **UNKNOWN**. §10 stands.
+- **Lospec Pixel Art Scaler:** source and licence remain **UNKNOWN**. Failing to locate a source does not establish that it is closed.
+- **PixaTool, PixelOver, GIMP:** the July rows stand. Prices are not recorded (no decision value), and GIMP is cited from the 3.0 documentation.

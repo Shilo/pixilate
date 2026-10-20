@@ -1,6 +1,7 @@
 # PixelLab public product spike
 
-**Research snapshot:** 2026-07-31
+**Research snapshot:** 2026-07-31  
+**Addendum:** 2026-10-19 public OpenAPI/MCP documentation re-check ([addendum](#addendum--2026-10-19-public-openapi-and-mcp-documentation)); where it differs from the July text, the addendum governs.
 
 **Product:** [PixelLab](https://www.pixellab.ai/)
 
@@ -42,6 +43,7 @@ The differentiated opportunity is therefore not merely adding width and height f
 | Non-generative processing | Relevant Resize/conversion workflows are described as AI/model operations | VERIFIED |
 | Canonical pixel replay across a pinned engine matrix | No such public contract located | UNKNOWN |
 | Explicit palette controls | Available in several workflows, including reduction/target-palette surfaces | VERIFIED, exact enforcement semantics UNKNOWN |
+| Alpha preserved through native-scale recovery | Unzoom: no. Output is opaque because transparency is composited onto white before grid detection (2026-10-19 addendum) | VERIFIED |
 | Separate background-removal workflow | Yes | VERIFIED |
 | Deterministic key/flood/component background rules | No such public contract located | UNKNOWN / not located |
 | Public implementation reuse grant for the service algorithms | No public reuse grant located in the reviewed sources | VERIFIED as a search result, not proof that no private license exists |
@@ -190,3 +192,49 @@ Use PixelLab as a dated workflow comparator, not as a code or algorithm source. 
 - [Public v2 OpenAPI schema](https://api.pixellab.ai/v2/openapi.json)
 - [Privacy policy](https://www.pixellab.ai/privacypolicy)
 - [Terms of service](https://www.pixellab.ai/termsofservice)
+
+## Addendum — 2026-10-19 (public OpenAPI and MCP documentation)
+
+**Sources retrieved 2026-10-19:** the [public v2 OpenAPI schema](https://api.pixellab.ai/v2/openapi.json) and the [MCP documentation](https://api.pixellab.ai/mcp/docs). No API or MCP tool was called and no credits were spent. These are mutable vendor statements, and costs are dated snapshots. The July public-source boundary above still applies.
+
+### VERIFIED from the public documentation
+
+**Unzoom** (`POST /unzoom`; MCP `unzoom_image`):
+
+- **Purpose:** recovers native-resolution pixel art from an upscaled image by detecting the pixel grid and downsampling onto it. Slightly uneven pixel sizes, for example from a lossy resize, are described as handled.
+- **Limits:** input at least 256×256 and at most 2048×2048 in area; out-of-range input returns 422.
+- **Alpha:** the result is always opaque. Grid detection works in RGB, so input transparency is composited onto white first.
+- **Palette:** `quantize` is an integer from −1 to 256, default 0. `0` auto-detects a palette, `-1` keeps every colour the downsample produces, and `2`–`256` quantizes to exactly that many colours.
+- **Response:** `image`, `original_size`, `unzoomed_size` (the detected native size), and `zoom_factor_detected`, a single number for how many screen pixels each art pixel occupied.
+- **Not exposed:** no target width/height, phase, alternative candidates, or confidence field. This partly answers Unresolved question 3: one scalar factor is returned and no confidence is exposed.
+- **Cost (MCP):** 0.1 generations. The MCP text says the tool "runs locally in under a second".
+
+**Image to pixel art, standard** (`POST /image-to-pixelart`; MCP `image_to_pixelart`):
+
+- **Required fields:** `image`, `image_size`, and `output_size`. The input-size schema allows 16–2048 px per side. The exact bound on `output_size` was not confirmed in this pass (UNKNOWN).
+- **Generation parameters:** `text_guidance_scale` 1–20 (default 8); `init_image_strength` 0–999 (default 0, with 100–300 described as the useful range); a `fixer`/faithful mode that stays closer to the source; optional `seed`.
+- **Cost (MCP):** 1 generation, about 20–60 s asynchronously. The output defaults to a quarter of the source width.
+
+**Image to pixel art Pro Flash:** the output size is chosen automatically. Cost (MCP): 6 generations.
+
+**Correct pixel art** (MCP `correct_pixelart`):
+
+- **Purpose:** sharpens edges, drops stray pixels, and tightens the palette.
+- **Strength:** `strength` defaults to 0.1; higher values "redraw more and can change details".
+- **Cost (MCP):** 0.1 generations, about 20–60 s asynchronously.
+
+**Reduce colours** (MCP `reduce_colors`):
+
+- **Purpose:** quantizes one or more images onto a smaller shared palette.
+- **Parameters:** `num_colors` is optional and auto-detected when omitted; a palette image may hold at most 256 colours; dithering is none, 2×2, 4×4, or 8×8, with strength default 5.0.
+- **Speed (MCP):** "runs locally in about a second".
+
+### INFERRED
+
+- Unzoom's parameter surface (no seed or guidance, sub-second runtime, "downsample onto the grid") suggests algorithmic grid snapping rather than generative re-synthesis. Its implementation remains **UNKNOWN**.
+- "Runs locally" in the MCP text describes where the service executes, not client-side processing. Unzoom remains a remote, metered service under Pixilate's local-core contract.
+- Image to pixel art's guidance, img2img strength, and seed parameters fit the existing classification: generative conversion that accepts an output size.
+
+### Contract impact
+
+These details sharpen two scorecard rows (palette and alpha) but do not change the verdict. PixelLab is a workflow comparator, not an implementation reference. Pixilate's alpha policies must never silently composite onto a matte. A tri-state palette control (keep all / auto / exact N) is a useful UX precedent for Pixilate's own serialized palette contract.
