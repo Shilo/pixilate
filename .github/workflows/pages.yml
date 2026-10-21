@@ -1,0 +1,58 @@
+# Builds the MVP app (app/) on every push to main and publishes it to GitHub Pages.
+# One-time repository setting: Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+name: Deploy app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits rather than cancelling a running deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            prototype/package-lock.json
+            app/package-lock.json
+      - id: pages
+        uses: actions/configure-pages@v5
+      # The app imports the engine from prototype/src/lib, and its codecs from prototype/node_modules.
+      - run: npm ci
+        working-directory: prototype
+      - run: npm test -- --no-file-parallelism
+        working-directory: prototype
+      - run: npm ci
+        working-directory: app
+      - run: npm test
+        working-directory: app
+      # base_path is "" for a user site and "/<repo>" for a project site.
+      - run: npx vite build --base "${{ steps.pages.outputs.base_path }}/"
+        working-directory: app
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

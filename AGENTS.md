@@ -86,6 +86,8 @@ App build: cd app && npm run build
 
 [app/src/lib/opts.js](app/src/lib/opts.js): app settings to engine options; [app/test/parity.test.js](app/test/parity.test.js) proves app output equals the engine's.
 
+[.github/workflows/pages.yml](.github/workflows/pages.yml): every push to main runs both test suites, builds app/ and publishes it to GitHub Pages (repository setting: Pages source GitHub Actions).
+
 ## Tests
 
 [docs/planning/testing-todo.md](docs/planning/testing-todo.md): live AI-image test plan and open algorithm work.
