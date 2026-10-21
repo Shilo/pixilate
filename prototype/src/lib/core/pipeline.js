@@ -15,7 +15,7 @@ import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.5.0', constants: 25 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.6.0', constants: 25 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -98,7 +98,7 @@ function analysis(img0, o, bytes) {
     if (wm) for (let i = 0; i < mask.length; i++) mask[i] |= wm[i]
   }
   lap('background')
-  let grid
+  let grid, ramp = null // ramp: the d2 fallback's rampShare, kept for recommend(); null when not computed
   if (o.manualPeriod) {
     const [px, py] = o.manualPeriod
     grid = lockGrid(img, Math.max(1, Math.round(W / px)), Math.max(1, Math.round(H / py)), { mask, preset: gen.preset })
@@ -115,7 +115,7 @@ function analysis(img0, o, bytes) {
     // Ramp share (OBSERVED, procedural + local-only samples): natives 0-0.03, gridded AI 0.03-0.06,
     // smooth upscales 0.25-0.89.
     if (grid.class === 'none' || grid.class === 'weak' || grid.class === 'grid' || (grid.class === 'exact' && grid.confidence < 1)) {
-      const ramp = rampShare(img)
+      ramp = rampShare(img)
       if (ramp >= 0.15) {
         const g2 = detectGrid(img, { ...dopts, profile: 'd2' }), c2 = minCoherence(g2), lattice = grid.class === 'weak' || grid.class === 'grid'
         const c1 = lattice ? minCoherence(grid) : 0
@@ -128,7 +128,7 @@ function analysis(img0, o, bytes) {
     }
   }
   lap('grid')
-  return { img, gen, wm, bg, mask, grid, timingsMs }
+  return { img, gen, wm, bg, mask, grid, ramp, timingsMs }
 }
 
 const r3 = (v) => Math.round(v * 1000) / 1000
@@ -543,14 +543,96 @@ export function convert(img, opts = {}, bytes = null) {
 
 const sameImage = (a, b) => a.width === b.width && a.height === b.height && a.data.every((v, i) => v === b.data[i])
 
+// ---- Recommendation: evidence-based rule table on the analysis and the candidate outputs ----
+// Constants measured on the procedural bench and extra procedural sets (OBSERVED).
+const REC_RAMP = 0.15 // smooth-upscale evidence: rampShare threshold (same as the d2 fallback)
+const REC_OFF = 2 // lattice vs fitted target cells >= 2x off on an axis: the lattice disagrees with the target
+const REC_REDUCE = 1.25 // min(basis / resized) >= this is a reduction; Clean is never recommended there
+const REC_AGREE = 97 // percent of union-opaque output pixels on which grid and clean agree (light touch)
+const REC_SAME2 = 0.05 * 0.05 // squared raw OKLab distance for "same colour" in the agreement count
+const REC_COV = 0.03 // Clean may lower outline coverage by at most this
+
+/** Union-opaque pixels (alpha >= 128 in either) n, and those opaque in both with OKLab distance < 0.05. */
+function outputAgreement(A, B) {
+  const a = new Float64Array(3), b = new Float64Array(3), d = A.data, e = B.data
+  let n = 0, same = 0
+  for (let p = 0; p < d.length; p += 4) {
+    const oa = d[p + 3] >= 128, ob = e[p + 3] >= 128
+    if (!oa && !ob) continue
+    n++
+    if (!oa || !ob) continue
+    srgbToOklab(d[p], d[p + 1], d[p + 2], a, 0); srgbToOklab(e[p], e[p + 1], e[p + 2], b, 0)
+    const dl = a[0] - b[0], da = a[1] - b[1], db = a[2] - b[2]
+    if (dl * dl + da * da + db * db < REC_SAME2) same++
+  }
+  return { n, same }
+}
+
+/**
+ * Outline coverage (quality metrics Q11, simplified): boundary = opaque pixels with a transparent or
+ * out-of-image N4 neighbour; one counts 1 when its OKLab L <= the mean L of its opaque non-boundary N4
+ * neighbours - 0.05, and 0.5 when it has none. null when the output is fully opaque or fully transparent.
+ */
+function outlineCoverage(img) {
+  const { width: w, height: h, data: d } = img
+  const op = (x, y) => x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3] >= 128
+  let opaque = 0
+  for (let p = 3; p < d.length; p += 4) if (d[p] >= 128) opaque++
+  if (opaque === w * h || opaque === 0) return null
+  const B = new Uint8Array(w * h), L = new Float64Array(w * h), t = new Float64Array(3)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!op(x, y)) continue
+    const q = (y * w + x) * 4
+    srgbToOklab(d[q], d[q + 1], d[q + 2], t, 0); L[y * w + x] = t[0]
+    if (!op(x - 1, y) || !op(x + 1, y) || !op(x, y - 1) || !op(x, y + 1)) B[y * w + x] = 1
+  }
+  let nb = 0, ol = 0
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!B[y * w + x]) continue
+    let s = 0, n = 0
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (op(x + dx, y + dy) && !B[(y + dy) * w + x + dx]) { s += L[(y + dy) * w + x + dx]; n++ }
+    nb++
+    if (n && L[y * w + x] <= s / n - 0.05) ol++
+    else if (!n) ol += 0.5
+  }
+  return nb ? ol / nb : null
+}
+
+/** Rule table -> { id, rule, evidence }; the first matching rule wins. */
+function recommend(A, cls, candidates, alias, original) {
+  const r1 = (v) => Math.round(v * 10) / 10, r2 = (v) => Math.round(v * 100) / 100
+  if (original) return { id: 'original', rule: 'identity', evidence: 'recommended original: the target equals the source and no stage is requested' }
+  if (cls === 'none' || cls === 'weak') return { id: 'smooth', rule: 'no-grid', evidence: `recommended smooth: grid class ${cls}` }
+  if (cls === 'exact' && A.grid.confidence === 1) return { id: 'grid', rule: 'exact', evidence: 'recommended grid: exact grid' }
+  const gc = candidates.find((c) => c.id === alias.grid)
+  if (!gc) return { id: alias.clean ? 'clean' : 'smooth', rule: 'grid-failed', evidence: 'recommended fallback: the grid candidate failed' }
+  const [bw, bh] = gc.report.fit.basis, [fw, fh] = gc.report.fit.resized
+  const off = Math.max(bw / fw, fw / bw, bh / fh, fh / bh), red = Math.min(bw / fw, bh / fh)
+  const ramp = A.ramp ?? rampShare(A.img), d2 = A.grid.profile === 'd2'
+  if (ramp >= REC_RAMP && !d2 && off >= REC_OFF)
+    return { id: 'smooth', rule: 'smooth-upscale-off-target', evidence: `recommended smooth: smooth-upscale evidence (ramp share ${r2(ramp)} >= ${REC_RAMP}) and the ${bw}x${bh} lattice is ${r1(off)}x off the ${fw}x${fh} target` }
+  const cc = alias.clean !== alias.grid ? candidates.find((c) => c.id === alias.clean) : null
+  if (cc && !d2 && red < REC_REDUCE) {
+    const { n, same } = outputAgreement(gc.image, cc.image), agreeOk = same * 100 >= REC_AGREE * n
+    const cg = outlineCoverage(gc.image), ccv = outlineCoverage(cc.image), covOk = cg === null || ccv === null || ccv >= cg - REC_COV
+    const pct = n ? (100 * same) / n : 100
+    if (agreeOk && covOk)
+      return { id: 'clean', rule: 'light-touch-clean', evidence: `recommended clean: light touch (agreement ${r1(pct)} % >= ${REC_AGREE} %, outline ${cg === null ? 'n/a' : `kept ${r2(ccv)} vs ${r2(cg)}`})` }
+    return { id: 'grid', rule: 'grid', evidence: `recommended grid: Clean declined (${!agreeOk ? `agreement ${r1(pct)} % < ${REC_AGREE} %` : `outline coverage ${r2(ccv)} < ${r2(cg)} - ${REC_COV}`})` }
+  }
+  return { id: 'grid', rule: 'grid', evidence: `recommended grid: ${d2 ? 'smooth-upscale lattice (d2)' : red >= REC_REDUCE ? `reduction ${r2(red)}x >= ${REC_REDUCE}` : 'Clean identical to grid'}` }
+}
+
 /**
  * convertCandidates(img, opts, bytes?) -> { candidates: [{ id, image, indexed, report }], recommended,
- * analysis: { grid, generator, suggestedSize }, failed: [{ id, code, message }] }.
+ * recommendation: { id, rule, evidence }, analysis: { grid, generator, suggestedSize }, failed: [{ id, code, message }] }.
  * Shared analysis once; opts as convert (route and cleanup are set per candidate):
  * original (identity, only when the noop rule holds), grid (grid route, cleanup off; grid found),
  * clean (Clean profile on the grid route, else the raster route), smooth (raster route, cleanup off).
- * Identical outputs are deduped (the earlier id survives). Recommendation: original when present;
- * no grid or class 'weak' -> smooth; class 'exact' -> grid; otherwise clean.
+ * Identical outputs are deduped (the earlier id survives). Recommendation (recommend(), first match):
+ * original when present; class none/weak -> smooth; exact at confidence 1 -> grid; grid failed -> clean
+ * else smooth; smooth-upscale evidence with a d1 lattice >= 2x off the target -> smooth; Clean when it
+ * is a light touch (>= 97 % pixel agreement with grid, outline coverage kept; d1, no reduction); else grid.
  */
 export function convertCandidates(img, opts = {}, bytes = null) {
   checkImage(img)
@@ -575,7 +657,7 @@ export function convertCandidates(img, opts = {}, bytes = null) {
     candidates.push({ id, ...r })
   }
   if (!candidates.length) throw firstError
-  const want = specs[0][0] === 'original' ? 'original' : cls === 'none' || cls === 'weak' ? 'smooth' : cls === 'exact' ? 'grid' : 'clean'
+  const rec = recommend(A, cls, candidates, alias, specs[0][0] === 'original')
   const { cuts, ...grid } = gridReport(A.grid, A.grid, [0, 0])
-  return { candidates, recommended: alias[want] ?? candidates[0].id, analysis: { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }, failed }
+  return { candidates, recommended: alias[rec.id] ?? candidates[0].id, recommendation: rec, analysis: { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }, failed }
 }

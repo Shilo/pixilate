@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare } from '../src/lib/core/pipeline.js'
 import { degrade, PRESETS, noGrid } from './synth.js'
-import { proceduralSprites, readPng, repoPath } from './fixtures.js'
+import { CANVAS_OPTS, proceduralSprites, readPng, repoPath } from './fixtures.js'
+import { scoreCase } from './metrics.js'
 
 /** Integer NN upscale of an RGBA image. */
 function nn(img, k) {
@@ -521,11 +522,11 @@ describe('convert: smooth-upscale fallback (second-difference lattice)', () => {
 describe('convertCandidates', () => {
   const ids = (r) => r.candidates.map((c) => c.id)
 
-  it('grid input: grid / clean / smooth from one analysis, clean or smooth recommended by class', () => {
+  it('grid input: grid / clean / smooth from one analysis, a reduction recommends grid (smooth when weak)', () => {
     const { img } = degrade(BLOB, PRESETS['gpt-image-like'], 11), [N, M] = analyze(img).suggestedSize
     const r = convertCandidates(img, { targetW: Math.round(0.7 * N), targetH: Math.round(0.7 * M), fit: 'stretch' })
     expect(ids(r)).toEqual(['grid', 'clean', 'smooth'])
-    expect(r.recommended).toBe(r.analysis.grid.class === 'weak' ? 'smooth' : 'clean')
+    expect(r.recommended).toBe(r.analysis.grid.class === 'weak' ? 'smooth' : 'grid')
     expect(r.candidates.map((c) => [c.report.route, c.report.cleanup.profile])).toEqual([['grid', null], ['grid', CLEAN_PROFILE], ['raster', null]])
     expect(r.analysis.suggestedSize).toEqual([N, M])
   })
@@ -541,6 +542,60 @@ describe('convertCandidates', () => {
     expect(ids(r)[0]).toBe('grid')
     expect(ids(r)).not.toContain('clean')
     expect(r.recommended).toBe('grid')
+  })
+
+  describe('recommendation rule', () => {
+    const sprite = (id) => proceduralSprites(1).find((s) => s.id === id).img
+    const run = (img, T) => convertCandidates(img, { ...CANVAS_OPTS, targetW: T.width, targetH: T.height })
+    const em = (r, id, T, truth) => scoreCase(r.candidates.find((c) => c.id === id).image, T, { truth }).emSnap
+    const rec = (r) => [r.recommended, r.recommendation.rule]
+
+    it('supersampled non-integer NN with a high ramp share but a confident d1 lattice stays grid', () => {
+      const { img, truth } = degrade(sprite('proc-icon'), { ...PRESETS['nonint-nn'], cellSize: 14 }, 1)
+      const r = run(img, truth.sprite)
+      expect(rampShare(img)).toBeGreaterThanOrEqual(0.3)
+      expect(rec(r)).toEqual(['grid', 'grid'])
+      expect(em(r, 'grid', truth.sprite, truth)).toBeGreaterThan(em(r, 'smooth', truth.sprite, truth) + 0.5)
+    })
+
+    it('a smooth upscale whose d1 lattice is far off the target recommends smooth', () => {
+      for (const [id, p, extra, margin] of [['proc-ui', 'bicubic-x8-clean', {}, 0.2], ['proc-blob', 'bilinear-x8', { cellSize: 3 }, 0.3]]) {
+        const { img, truth } = degrade(sprite(id), { ...PRESETS[p], ...extra }, 1)
+        const r = run(img, truth.sprite)
+        expect(rec(r), p).toEqual(['smooth', 'smooth-upscale-off-target'])
+        expect(em(r, 'smooth', truth.sprite, truth), p).toBeGreaterThan(em(r, 'grid', truth.sprite, truth) + margin)
+      }
+      const { img, truth } = degrade(sprite('proc-ui'), PRESETS['bicubic-x8-clean'], 1)
+      expect(run(img, truth.sprite).recommendation.evidence).toBe('recommended smooth: smooth-upscale evidence (ramp share 0.24 >= 0.15) and the 5x4 lattice is 7.8x off the 39x27 target')
+    })
+
+    it('a light-touch Clean on an AI-like grid is recommended', () => {
+      const { img, truth } = degrade(sprite('proc-blob'), PRESETS['fake-alpha'], 9)
+      const r = run(img, truth.sprite)
+      expect(rec(r)).toEqual(['clean', 'light-touch-clean'])
+      expect(r.recommendation.evidence).toBe('recommended clean: light touch (agreement 98.4 % >= 97 %, outline kept 0.23 vs 0.23)')
+      expect(em(r, 'clean', truth.sprite, truth)).toBeGreaterThanOrEqual(em(r, 'grid', truth.sprite, truth) - 0.03)
+    })
+
+    it('textured art (sub-cell noise on a 2x native) declines Clean', () => {
+      const T = sprite('proc-icon'), k = 2, pad = 3, w = T.width + 2 * pad, h = T.height + 2 * pad
+      const N = { width: w * k, height: h * k, data: new Uint8ClampedArray(w * h * k * k * 4) }
+      for (let y = 0; y < T.height * k; y++) for (let x = 0; x < T.width * k; x++) {
+        const q = (((y / k) | 0) * T.width + ((x / k) | 0)) * 4, o = ((y + pad * k) * N.width + x + pad * k) * 4
+        const f = 0.85 + 0.3 * (((Math.imul((x * 73856093) ^ (y * 19349663), 2654435761) >>> 0) % 1000) / 1000)
+        for (let c = 0; c < 3; c++) N.data[o + c] = Math.min(255, Math.round(T.data[q + c] * f))
+        N.data[o + 3] = T.data[q + 3]
+      }
+      const { img } = degrade(N, { ...PRESETS['gpt-image-like'], marginFrac: 0, cellSize: [4, 6.5] }, 1)
+      const r = run(img, { width: w, height: h })
+      expect(rec(r)).toEqual(['grid', 'grid'])
+      expect(r.recommendation.evidence).toMatch(/^recommended grid: Clean declined \(agreement [\d.]+ % < 97 %\)$/)
+    })
+
+    it('is deterministic on a repeat run', () => {
+      const { img, truth } = degrade(sprite('proc-blob'), PRESETS['fake-alpha'], 9)
+      expect(run(img, truth.sprite).recommendation).toEqual(run(img, truth.sprite).recommendation)
+    })
   })
 
   it('target == source: the identity is offered first and recommended', () => {

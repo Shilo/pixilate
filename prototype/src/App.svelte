@@ -246,7 +246,7 @@
       {#each result.candidates as c}
         <label>
           <input type="radio" name="cand" value={c.id} bind:group={sel} />
-          <b>{c.id}</b>{c.id === result.recommended ? " (Recommended)" : ""}
+          <b>{c.id}</b>{c.id === result.recommended ? ` (Recommended${result.recommendation ? `: ${result.recommendation.evidence}` : ""})` : ""}
           — {c.width}×{c.height}, {fmt(c.report.output?.colors)} colours, {c.report.warnings.length} warning(s)
         </label>
       {/each}
