@@ -4,7 +4,7 @@
 **Document type:** research-backed product requirements / design contract  
 **Status:** planning baseline; no implementation is authorized by this document  
 **Date:** 2026-07-31  
-**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; earlier text is retained with dated supersession notes  
+**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; 2026-10-20 — `OWN-007` (first designed MVP app); earlier text is retained with dated supersession notes  
 **License intent:** open source under MIT, subject to dependency and patent review  
 
 ## 1. Executive product contract
@@ -1042,3 +1042,10 @@ These entries are the documented product decisions that §21 requires before a d
 - **Rationale:** owner directive for the exact user-requested size; it reaffirms `G-001`, `GEO-001`, `GEO-003`, and `AUTO-004`.
 - **Supersedes:** the prototype's earlier automatic target sizing; no requirement text here.
 - **Remaining verification obligations:** `AC-GEO-001`; `GEO-002` applies if an interface copies `suggestedSize` into `W×H` (the derived value is shown before processing and recorded).
+
+### OWN-007 — First designed MVP application (2026-10-20)
+
+- **Decision:** build a first designed MVP application in `app/`: a Vite + Svelte single-page app (not SvelteKit), in JavaScript or TypeScript, themed with the GlassKit library (a requirement), following an Apple-like philosophy (easy, intuitive, minimal, for casual users), working on desktop and mobile at every resolution and orientation. It reuses the prototype engine and must keep its determinism and client-side guarantees (`OWN-001`).
+- **Rationale:** owner direction to move from the research harness to a usable, tested product-quality interface.
+- **Supersedes:** for `app/` only, the rule that implementation beyond the prototype needs separate approval (master plan §15–16) and `OWN-002`'s "not product work" scope. It closes no `OD-*` or `EX-*` and passes no gate.
+- **Remaining verification obligations:** GlassKit licence and dependency review (`NFR-PERF-005`); interface requirements in this document (Trim preview, recorded recipe, explicit opt-in stages, `GEO-002` for a suggested size); design and usability testing across viewports; the `DET-*` obligations before any strict-determinism claim.
