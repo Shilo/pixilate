@@ -16,6 +16,8 @@
 // over-removal would count and missed background would not; ours' emIn is that of the on-run recommended id,
 // and the two runs can recommend different ids in a few cases), on all
 // cases. Trim-subject and +cleanup cases are skipped (no reference can trim; cleanup changes only ours).
+// emIn masks first, then applies a common cap (a baked-in background must not take a k-means cluster); ours
+// also reports emInOn, the same score on the default background-on run.
 // Palette modes (round 3): `native` = every method at its own documented palette cap (Pixel Snapper 16, unfake
 // 32, Retro Diffusion K 16, breakfastz 16, fast-pixelizer 32/256; ours, area, nearest, PixelOE, pixeldetector,
 // Real-PixelArt, proper-pixel-art and PixelRefiner uncapped or auto), where emSnap's 0.05 snap tolerance favours
@@ -129,9 +131,11 @@ for (const [i, c] of MODE === 'cases' ? cases.entries() : []) {
   const score = (out, outIn = out) => {
     const r = {}
     for (const [suf, K] of CAPS) {
-      const o = K ? capK(out, K === 'truth' ? KT : K) : out, oi = outIn === out ? o : K ? capK(outIn, K === 'truth' ? KT : K) : outIn
-      const s = scoreCase(o, T, { truth }), si = scoreCase(withAlpha(oi, T), T, { truth })
-      r[`em${suf}`] = bgFree ? r4(s.emSnapRec ?? s.emSnap) : null; r[`emIn${suf}`] = r4(si.emSnapRec ?? si.emSnap)
+      // emIn: impose the truth mask BEFORE the common cap, so a baked-in background cannot take a k-means cluster
+      const k = K === 'truth' ? KT : K, capped = (im) => (K ? capK(im, k) : im), emIn = (im) => { const s = scoreCase(capped(withAlpha(im, T)), T, { truth }); return r4(s.emSnapRec ?? s.emSnap) }
+      const s = scoreCase(capped(out), T, { truth })
+      r[`em${suf}`] = bgFree ? r4(s.emSnapRec ?? s.emSnap) : null; r[`emIn${suf}`] = emIn(outIn)
+      if (outIn !== out) r[`emInOn${suf}`] = emIn(out) // ours: the default (background-on) run, for over-removal
       if (!K) Object.assign(r, { de: r4(s.deMean), f1: r4(s.f1T1), iou: r4(s.iou), colours: colourCount(out) })
     }
     return r
