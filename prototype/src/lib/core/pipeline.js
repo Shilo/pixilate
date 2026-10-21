@@ -15,7 +15,7 @@ import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.8.0', constants: 27 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.9.0', constants: 28 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -110,8 +110,9 @@ function analysis(img0, o, bytes) {
     grid.evidence.unshift(`manual period ${px} x ${py}`)
     if (grid.class === 'none') grid.class = 'weak' // the user vouches for the grid
   } else {
-    // with Trim the target sizes the trimmed basis, so it is no prior for the full canvas
-    const dopts = { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset }
+    // with Trim the target sizes the trimmed basis, so it is no prior for the full canvas, and the canvas
+    // count is not refined over its margins (D52)
+    const dopts = { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset, noRefine: o.trim }
     grid = detectGrid(img, dopts)
     // Smooth-upscale fallback: no pure grid, but many pixels sit on straight ramps (a bilinear/bicubic
     // upscale of pixel art) -> re-detect on second differences; adopt only a coherent pure grid. A

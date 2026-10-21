@@ -343,6 +343,45 @@ function elasticCuts(e, len, p) {
   return mergeSlivers([0, ...inner.reverse(), len], p)
 }
 
+/**
+ * Count-constrained cuts (idea: Real-PixelArt `targetAxis`, MIT; clean-room, D52): exactly n cells over
+ * [0, len]. Interior cut k lies within +-0.45p of its anchor k p + d (d = the comb phase, signed: the
+ * regular lattice after sliver merging); quarter-pixel DP minimizing sum over cuts of -e(c) +
+ * 1.2 ((c - anchor) / p)^2 plus sum over interior cells of 3.5 ((width - p) / p)^2; the two edge cells
+ * are free within [0.5p, 1.5p]. Null when no path exists.
+ */
+function countCuts(e, len, n, phase) {
+  const p = len / n, R = 0.45 * p, d = phase > p / 2 ? phase - p : phase
+  const gapC = (g, edge) => { if (edge) return g < 0.5 * p || g > 1.5 * p ? Infinity : 0; const t = (g - p) / p; return 3.5 * t * t }
+  let prevPos = [0], prevCost = [0]
+  const levels = []
+  for (let k = 1; k < n; k++) {
+    const a = k * p + d, lo = Math.max(1, Math.ceil((a - R) * 4)), hi = Math.min(len * 4 - 1, Math.floor((a + R) * 4))
+    const pos = [], cost = [], from = []
+    for (let j = lo; j <= hi; j++) {
+      const c = j / 4
+      let bv = Infinity, bi = -1
+      for (let i = 0; i < prevPos.length && prevPos[i] < c; i++) {
+        const v = prevCost[i] + gapC(c - prevPos[i], k === 1)
+        if (v < bv) { bv = v; bi = i }
+      }
+      if (bv === Infinity) continue
+      const t = (c - a) / p
+      from.push(bi); pos.push(c); cost.push(bv - interp(e, c) + 1.2 * t * t)
+    }
+    if (!pos.length) return null
+    levels.push({ pos, from })
+    prevPos = pos; prevCost = cost
+  }
+  let bv = Infinity, bi = -1
+  for (let i = 0; i < prevPos.length; i++) { const v = prevCost[i] + gapC(len - prevPos[i], true); if (v < bv) { bv = v; bi = i } }
+  if (bi < 0) return null
+  const cuts = new Array(n + 1)
+  cuts[0] = 0; cuts[n] = len
+  for (let k = n - 1; k >= 1; k--) { const L = levels[k - 1]; cuts[k] = L.pos[bi]; bi = L.from[bi] }
+  return cuts
+}
+
 function capture(e, cuts) {
   let s = 0
   for (let k = 1; k < cuts.length - 1; k++) s += interp(e, cuts[k])
@@ -363,6 +402,39 @@ function coherence(x, cuts) {
     re += x[i] * cosDet(a); im += x[i] * sinDet(a); tot += Math.abs(x[i])
   }
   return tot > 0 ? Math.sqrt(re * re + im * im) / tot : 0
+}
+
+const expNeg = (x) => { if (x >= 40) return 0; let v = 1 - x / 1024; for (let i = 0; i < 10; i++) v *= v; return v } // ~e^-x with * only
+
+/**
+ * Chance-corrected edge support (idea: Real-PixelArt, MIT; clean-room, D52): peaks of the edge signal
+ * (local maxima, first index of a plateau, above min + 0.16 range) weighted by height; match =
+ * gauss(d / tol), d = distance to the nearest cut ('d2': nearest cell centre), tol = max(0.65, 0.14p);
+ * chance = min(0.85, 2.5066 tol / p) (the share uniform edges would reach); support =
+ * clip((match - chance) / (1 - chance), 0, 1). Null below 4 peaks.
+ */
+function edgeSupport(A, cuts, p) {
+  const e = A.e, len = A.len
+  let lo = Infinity, hi = -Infinity
+  for (let i = 1; i < len; i++) { if (e[i] < lo) lo = e[i]; if (e[i] > hi) hi = e[i] }
+  const amp = hi - lo
+  if (!(amp > 0)) return null
+  let ref = Array.from(cuts)
+  if (A.d2) { const m = []; for (let k = 0; k + 1 < ref.length; k++) m.push((ref[k] + ref[k + 1]) / 2); ref = m }
+  const thr = lo + 0.16 * amp, tol = Math.max(0.65, 0.14 * p), chance = Math.min(0.85, (2.5066 * tol) / p)
+  let sw = 0, sm = 0, np = 0, k = 0
+  for (let i = 1; i < len; i++) {
+    const v = e[i]
+    if (v <= thr || v < e[i - 1] || v < e[i + 1] || (v === e[i - 1] && i > 1)) continue
+    while (k + 1 < ref.length && ref[k + 1] <= i) k++
+    let d = Math.abs(i - ref[k])
+    if (k + 1 < ref.length) d = Math.min(d, Math.abs(ref[k + 1] - i))
+    const w = (v - lo) / amp, z = d / tol
+    sw += w; sm += w * expNeg((z * z) / 2); np++
+  }
+  if (np < 4) return null
+  const s = (sm / sw - chance) / (1 - chance)
+  return s < 0 ? 0 : s > 1 ? 1 : s
 }
 
 // ---------------------------------------------------------------- within-cell uniformity (anti-octave guard)
@@ -547,7 +619,7 @@ function buildAxis(A, p, fixedCount) {
   const { phase, cuts, elastic, gain } = cutsFor(A, p, fixedCount)
   return {
     period: p, phase, cuts: Float64Array.from(cuts), count: cuts.length - 1, elastic,
-    prominence: linePeak(A.sp, 1 / p) / Math.max(1e-12, A.med), coherence: coherence(A.x, cuts), gain,
+    prominence: linePeak(A.sp, 1 / p) / Math.max(1e-12, A.med), coherence: coherence(A.x, cuts), gain, support: edgeSupport(A, cuts, p),
   }
 }
 
@@ -652,19 +724,32 @@ function nativeLooking(img, u32, [sx, sy]) {
   return `${seen.size} exact colours, binary alpha, ${sx}/${sy} consecutive changing columns/rows (an NN upscale >= 3x has <= 2)`
 }
 
+/**
+ * D52: an axis below the prominence gate still counts when its lattice is coherent and its edges sit on
+ * the cuts far above chance (sparse 1-bit art and fractional NN upscales have weak spectral lines).
+ */
+const admitted = (a) => a.prominence >= 2.5 && a.coherence >= 0.4 && a.agreement >= 0.5 && a.support != null && a.support >= 0.7
+
 /** Shared gate: class, confidence, evidence from two finished axes. */
 function classify(pr, X, Y, jpeg, ev, forced) {
   const thr = (a) => (jpeg && near16k(a.period) ? 0.3 : 0.15)
-  const ok = (a) => a.prominence >= 5 && a.coherence >= thr(a) && a.agreement >= 0.5
+  const ok = (a) => (a.prominence >= 5 && a.coherence >= thr(a) && a.agreement >= 0.5) || admitted(a)
   const { ratio: pur, step } = purity(pr, X.cuts, Y.cuts)
   for (const [n, a] of [['x', X], ['y', Y]]) {
     ev.push(`${n}: period ${f2(a.period)} phase ${f2(a.phase)} count ${a.count} prominence ${f2(a.prominence)} coherence ${f2(a.coherence)} (min ${thr(a)}) agreement ${f2(a.agreement)} elastic ${a.elastic ? 'yes' : 'no'} (gain ${f2(a.gain)})`)
   }
   ev.push(`purity ratio ${f2(pur)} (grid < 0.5), cell step ratio ${f2(step)} (seamless >= 0.85)`)
+  const sup = (a) => (a.support == null ? '-' : f2(a.support))
+  ev.push(`edge support x ${sup(X)} y ${sup(Y)} (chance-corrected; an axis is admitted at >= 0.7, a coarse lattice needs a mean >= 0.15)`)
   const both = ok(X) && ok(Y), any = forced ? ok(forced === 'x' ? Y : X) : both
   let cls = 'none'
   if (any && step < 0.85) cls = pur < 0.5 && !forced ? 'grid' : 'weak'
   else if (any) ev.push('none: periodic but seamless (in-cell slopes explain the cell-to-cell change)')
+  // D52: a coarse lattice (< 12 cells on an axis) whose edges barely beat chance is a shapes scene, not a grid
+  if (cls !== 'none' && X.support != null && Y.support != null && (X.support + Y.support) / 2 < 0.15 && Math.min(X.count, Y.count) < 12) {
+    ev.push(`none: mean edge support ${f2((X.support + Y.support) / 2)} < 0.15 on a coarse ${X.count}x${Y.count} lattice`)
+    cls = 'none'
+  }
   const q = (a) => Math.min(1, a.prominence / 15) * Math.min(1, a.coherence / (2 * thr(a))) * Math.min(1, a.agreement)
   const confidence = Math.max(0, Math.min(1, Math.min(q(X), q(Y)) * Math.min(1, Math.max(0.1, 1 - pur))))
   return { cls, confidence: Math.round(confidence * 1000) / 1000 }
@@ -676,7 +761,8 @@ function emptyGrid(img, ev, why, alternatives = { x: [], y: [] }) {
 }
 
 /**
- * detectGrid(img, { targetW?, targetH?, mask?, preset?, profile? }) -> Grid.
+ * detectGrid(img, { targetW?, targetH?, mask?, preset?, profile?, noRefine? }) -> Grid.
+ * noRefine: skip the D52 count refinement (the pipeline sets it under Trim).
  * mask: Uint8Array (1 = excluded pixel, e.g. watermark/checkerboard). preset.jpegStrict = JPEG container.
  * profile: 'd1' (default, first differences) or 'd2' (second differences, smooth upscales; see edgeProfiles);
  * spectral grids carry it as grid.profile so lockGrid can re-solve on the same profile.
@@ -710,7 +796,7 @@ export function detectGrid(img, opts = {}) {
   // <= 256 colours + binary alpha, no pure grid: the trivial candidate, reported as a heuristic.
   return exactOf(top, 0.9, [`1:1 candidate (heuristic, not proof): ${native}`], [W, H])
 }
-function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1' } = {}) {
+function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noRefine = false } = {}) {
   const ev = [], alternatives = { x: [], y: [] }
   if (img.width < 16 || img.height < 16) return emptyGrid(img, ev, 'none: image smaller than 16 px')
   const pr = edgeProfiles(img, mask, profile)
@@ -744,9 +830,40 @@ function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1' } = 
       ev.push(`${names[a]}: integer lock to ${N} cells`)
     }
   }
+  // D52 count refinement: among regular lattices with N0 +- K cells (K = 5 %, 1..2), keep the most coherent.
+  // Off below 12 cells, at coherence < 0.25 and under Trim (a full canvas with wide margins extrapolates
+  // the period over the margins); reverted below when the refined axis loses confidence.
+  const unrefined = periods.slice()
+  if (!noRefine) for (let a = 0; a < 2; a++) {
+    const A = axes[a], reg = (q) => {
+      let ph = phaseOf(A.e, A.len, q)
+      if (A.d2) { ph = (ph + q / 2) % q; if (q - ph < 0.125) ph = 0 }
+      return regularCuts(A.len, q, ph)
+    }
+    const c0 = reg(periods[a]), N0 = c0.length - 1, base = coherence(A.x, c0)
+    if (N0 < 12 || base < 0.25) continue
+    const K = Math.min(2, Math.max(1, Math.round(0.05 * N0)))
+    let best = base, bn = N0
+    for (let n = N0 - K; n <= N0 + K; n++) {
+      if (n === N0 || A.len / n < QMIN) continue
+      let c = reg(A.len / n)
+      if (c.length - 1 !== n) c = Array.from(regularAxis(A.len, A.len / n).cuts)
+      const h = coherence(A.x, c)
+      if (h > best + 1e-9) { best = h; bn = n }
+    }
+    if (bn !== N0) { ev.push(`${names[a]}: count refinement ${N0} -> ${bn} cells (coherence ${f2(base)} -> ${f2(best)})`); periods[a] = A.len / bn }
+  }
   let [X, Y] = axes.map((A, a) => ({ ...buildAxis(A, periods[a]), agreement: agreement(A.bands, A.len, periods[a]) }))
   // An unconfident axis borrows the confident axis's period.
-  const conf = (a) => a.prominence >= 5 && a.coherence >= 0.15 && a.agreement >= 0.5
+  const conf = (a) => (a.prominence >= 5 && a.coherence >= 0.15 && a.agreement >= 0.5) || admitted(a)
+  for (let a = 0; a < 2; a++) {
+    if (periods[a] === unrefined[a] || conf(a ? Y : X)) continue
+    const A = axes[a], o = { ...buildAxis(A, unrefined[a]), agreement: agreement(A.bands, A.len, unrefined[a]) }
+    if (!conf(o)) continue
+    ev.push(`${names[a]}: count refinement reverted (refined axis not confident)`)
+    periods[a] = unrefined[a]
+    if (a) Y = o; else X = o
+  }
   let forced = null
   if (conf(X) !== conf(Y)) {
     const [src, dst, d] = conf(X) ? [X, 1, 'y'] : [Y, 0, 'x']
@@ -772,10 +889,15 @@ export function lockGrid(img, countX, countY, { mask, preset, profile = 'd1' } =
   const axes = [setupAxis(pr.Px, pr.W, pr.bx, pr.d2), setupAxis(pr.Py, pr.H, pr.by, pr.d2)]
   const [X, Y] = [countX, countY].map((n, a) => {
     const A = axes[a], p = A.len / n, ax = buildAxis(A, p, n)
-    if (ax.count !== n) { // elastic count mismatch (rejected) or a numeric edge case: fall back to n regular cells
+    // D52: elastic cuts rejected for their count, or regular cuts with the wrong count: count-constrained DP
+    if (!A.d2 && p >= 4 && n >= 2 && (ax.count !== n || (!ax.elastic && ax.gain >= 1.5))) {
+      const cc = countCuts(A.e, A.len, n, ax.phase)
+      if (cc) Object.assign(ax, { cuts: Float64Array.from(cc), count: n, elastic: true, coherence: coherence(A.x, cc), support: edgeSupport(A, cc, p) })
+    }
+    if (ax.count !== n) { // a numeric edge case: fall back to n regular cells
       let c = regularCuts(A.len, p, ax.phase)
       if (c.length - 1 !== n) c = Array.from(regularAxis(A.len, p).cuts)
-      Object.assign(ax, { cuts: Float64Array.from(c), count: n, elastic: false, coherence: coherence(A.x, c) })
+      Object.assign(ax, { cuts: Float64Array.from(c), count: n, elastic: false, coherence: coherence(A.x, c), support: edgeSupport(A, c, p) })
     }
     return { ...ax, agreement: agreement(A.bands, A.len, p) }
   })

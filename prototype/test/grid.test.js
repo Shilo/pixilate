@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import jpeg from 'jpeg-js'
 import { detectGrid, lockGrid } from '../src/lib/core/grid.js'
 import { analyzeBackground } from '../src/lib/core/cleanup.js'
-import { PRESETS, degrade } from './synth.js'
+import { PRESETS, degrade, noGrid } from './synth.js'
 import { proceduralSprites, readPng, repoPath } from './fixtures.js'
 
 // ---- tiny seeded renderer (explicit cell size, phase and drift, so truth is exact) ----
@@ -369,6 +369,48 @@ describe('detectGrid exact factorization', () => {
 
 // ---- binding acceptance: local real AI samples (gitignored; skipped when absent) ----
 // Expected counts = the implied logical grids measured in ai-artifact-characterization.md 1.1.
+describe('D52 edge support, count refinement and count-constrained lock cuts', () => {
+  const sp = (id) => proceduralSprites(1).find((s) => s.id === id).img
+  const support = (g) => g.evidence.find((e) => e.startsWith('edge support'))
+
+  it('admits low-prominence axes with strong edge support: proc-1bit nonint-nn seed 40 -> 24 x 24 grid', () => {
+    const { img, truth } = degrade(sp('proc-1bit'), PRESETS['nonint-nn'], 40)
+    const g = detectGrid(img)
+    expect(Math.min(g.x.prominence, g.y.prominence)).toBeLessThan(5) // below the spectral gate
+    expect(['grid', 'weak']).toContain(g.class)
+    expect([g.x.count, g.y.count]).toEqual([truth.cellsX, truth.cellsY])
+    expect(Math.min(g.x.support, g.y.support)).toBeGreaterThanOrEqual(0.7)
+    expect(support(g)).toBeDefined()
+  })
+
+  it('rejects a coarse lattice whose edges barely beat chance (no-grid shapes scene, seed 3)', () => {
+    const g = detectGrid(noGrid('shapes', 3))
+    expect(g.class).toBe('none')
+    expect(g.evidence.some((e) => e.startsWith('none: mean edge support'))).toBe(true)
+  })
+
+  it('count refinement moves an off-by-one count to the more coherent lattice (proc-tile drift-heavy seed 6)', () => {
+    const { img, truth } = degrade(sp('proc-tile'), PRESETS['drift-heavy'], 6)
+    const g = detectGrid(img), g0 = detectGrid(img, { noRefine: true })
+    expect([g0.x.count, g0.y.count]).not.toEqual([truth.cellsX, truth.cellsY])
+    expect([g.x.count, g.y.count]).toEqual([truth.cellsX, truth.cellsY])
+    expect(g.evidence.some((e) => /count refinement \d+ -> \d+ cells/.test(e))).toBe(true)
+    expect(detectGrid(img)).toEqual(g) // deterministic
+  })
+
+  it('lockGrid falls back to count-constrained DP cuts with exactly the locked count (proc-ui gemini-like seed 3)', () => {
+    const { img, truth } = degrade(sp('proc-ui'), PRESETS['gemini-like'], 3)
+    const g = lockGrid(img, truth.cellsX, truth.cellsY), c = g.x.cuts, p = img.width / truth.cellsX
+    expect(g.x.count).toBe(truth.cellsX)
+    expect(g.x.elastic).toBe(true) // the elastic DP missed the count; the count-constrained DP did not
+    expect(c.length).toBe(truth.cellsX + 1)
+    expect([c[0], c[c.length - 1]]).toEqual([0, img.width])
+    for (let k = 1; k < c.length; k++) expect(c[k] - c[k - 1]).toBeGreaterThan(0.09 * p)
+    for (const w of [c[1] - c[0], c[c.length - 1] - c[c.length - 2]]) { expect(w).toBeGreaterThanOrEqual(0.5 * p); expect(w).toBeLessThanOrEqual(1.5 * p) }
+    expect(lockGrid(img, truth.cellsX, truth.cellsY).x.cuts).toEqual(c)
+  })
+})
+
 const REAL = [
   ['gpt-forest', 'gpt-forest.png', 250, 142],
   ['gpt-oni', 'gpt-oni.png', 125, 116],

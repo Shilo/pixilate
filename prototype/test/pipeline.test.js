@@ -601,14 +601,28 @@ describe('convertCandidates', () => {
     })
 
     it('a smooth upscale whose d1 lattice is far off the target recommends smooth', () => {
-      for (const [id, p, extra, margin] of [['proc-ui', 'bicubic-x8-clean', {}, 0.2], ['proc-blob', 'bilinear-x8', { cellSize: 3 }, 0.3]]) {
+      for (const [id, p, extra, margin] of [['proc-tile', 'bilinear-x8', { cellSize: 3 }, 0.3], ['proc-tile', 'bilinear-x8', { cellSize: 5 }, 0.1]]) {
         const { img, truth } = degrade(sprite(id), { ...PRESETS[p], ...extra }, 1)
         const r = run(img, truth.sprite)
         expect(rec(r), p).toEqual(['smooth', 'smooth-upscale-off-target'])
         expect(em(r, 'smooth', truth.sprite, truth), p).toBeGreaterThan(em(r, 'grid', truth.sprite, truth) + margin)
       }
-      const { img, truth } = degrade(sprite('proc-ui'), PRESETS['bicubic-x8-clean'], 1)
-      expect(run(img, truth.sprite).recommendation.evidence).toBe('recommended smooth: smooth-upscale evidence (ramp share 0.24 >= 0.15) and the 5x4 lattice is 7.8x off the 39x27 target')
+      const { img, truth } = degrade(sprite('proc-tile'), { ...PRESETS['bilinear-x8'], cellSize: 3 }, 1)
+      expect(run(img, truth.sprite).recommendation.evidence).toBe('recommended smooth: smooth-upscale evidence (ramp share 0.71 >= 0.15) and the 10x3 lattice is 6.7x off the 20x20 target')
+    })
+
+    it('former off-target cases now resolve in detection (D52): the true d2 lattice, or no grid', () => {
+      // proc-ui bicubic x8: count refinement lets the 39 x 27 second-difference lattice replace the 5 x 4 one
+      let { img, truth } = degrade(sprite('proc-ui'), PRESETS['bicubic-x8-clean'], 1)
+      let r = run(img, truth.sprite)
+      expect(r.analysis.suggestedSize).toEqual([39, 27])
+      expect(rec(r)).toEqual(['grid', 'grid'])
+      expect(em(r, 'grid', truth.sprite, truth)).toBeGreaterThan(em(r, 'smooth', truth.sprite, truth) + 0.1)
+      // proc-blob bilinear, 3 px cells: the coarse 3 x 4 lattice fails the edge-support gate
+      ;({ img, truth } = degrade(sprite('proc-blob'), { ...PRESETS['bilinear-x8'], cellSize: 3 }, 1))
+      r = run(img, truth.sprite)
+      expect(r.analysis.grid.class).toBe('none')
+      expect(rec(r)).toEqual(['smooth', 'no-grid'])
     })
 
     it('a light-touch Clean on an AI-like grid is recommended', () => {
