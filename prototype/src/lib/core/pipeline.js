@@ -15,7 +15,7 @@ import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.6.0', constants: 25 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.7.0', constants: 26 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -346,7 +346,9 @@ function run(A, o) {
   const changed = {}
   const add = (ch, prefix = '') => { for (const k in ch) { const key = prefix ? prefix + k[0].toUpperCase() + k.slice(1) : k; changed[key] = (changed[key] || 0) + ch[k] } }
   const clean = (cells) => {
-    let ix = buildPalette(cells, { colors: o.colors, palette: o.palette, exact })
+    // D48: deconvolved smooth-upscale cells pass the kernel residual (the palette may keep close colours apart)
+    const kernelRms = grid.profile === 'd2' && route === 'grid' && A.kernel?.a != null ? A.kernel.rms : null
+    let ix = buildPalette(cells, { colors: o.colors, palette: o.palette, exact, kernelRms })
     for (const w of ix.warnings) if (!warnings.includes(w)) warnings.push(w)
     lap('palette')
     if (o.cleanup && !exact) { ix = cleanup(ix, cells); add(ix.changed); lap('cleanup') }

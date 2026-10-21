@@ -1,9 +1,16 @@
 // Step 6: palette from cell colors (contract: algorithm-design.md; literature C.6).
 // Dedupe by RGB8 -> Wu (1991) box cuts on OKLab -> weighted Lloyd -> Ward merge -> medoids.
+// Deconvolved smooth-upscale cells with a near-exact kernel keep close colours apart unless the pair
+// looks like one colour (D48).
 // All distances use toe-corrected L (toeL); palette entries keep the true OKLab of their medoid.
 import { oklabToSrgb, srgbToOklab, toe, toeL } from './color.js'
 
 const TAU_MERGE = 0.045, TAU_PROTECT = 0.12, MAX_LLOYD = 20, K_MAX = 64
+// D48 split gate: kernel residual below SPLIT_RMS_MAX (fitcells EARLY_RMS, premultiplied RGB RMS);
+// a near pair still merges when closer than TAU_FLOOR, when it is a small (< SPLIT_MIN_CELLS) sliver
+// touching its partner within TAU_DUP, or when >= MID_SHARE of its cells project into the middle band
+// (MID_BAND .. 1 - MID_BAND) of the centroid axis (overlapping, not separable, clusters).
+const SPLIT_RMS_MAX = 1, TAU_FLOOR = 0.015, TAU_DUP = 0.03, SPLIT_MIN_CELLS = 10, MID_BAND = 1 / 3, MID_SHARE = 0.1
 // Wu lattice: 32 bins per axis over the sRGB gamut in OKLab (out-of-range values clamp to edge bins)
 const BINS = 32, S1 = BINS + 1, LO = [0, -0.25, -0.33], HI = [1, 0.28, 0.21]
 
@@ -73,15 +80,17 @@ function wu(U, wt, nu, k) {
 }
 
 /**
- * buildPalette(cells, { colors: 'auto' | number, palette?: Uint8Array (flat RGB), exact?: boolean })
+ * buildPalette(cells, { colors: 'auto' | number, palette?: Uint8Array (flat RGB), exact?: boolean, kernelRms?: number | null })
  * -> Indexed { w, h, index, palette (OKLab), rgb (flat RGB8, the rendered bytes), warnings }.
  * Transparent cells get -1. `palette`: imported RGB entries, nearest-entry snap (rendered byte-exact).
  * `exact` (class 'exact', or ≥ 95% of cells `pure`; colors 'auto'; ≤ 256 unique colors, else Wu as
  * usual, warned): palette = the unique cell colors. Every entry's RGB8 is the cell's exact source RGB
  * when it is pure (`cells.rgb`), else its OKLab rounded once. Watermark-masked cells
  * (`cells.masked`) do not shape the palette; they snap to the nearest entry.
+ * `kernelRms`: the cell-deconvolution kernel residual of a smooth-upscale grid (null otherwise); below
+ * SPLIT_RMS_MAX the near-pair merge is gated (D48), so close true colours of clean upscales survive.
  */
-export function buildPalette(cells, { colors = 'auto', palette, exact = false } = {}) {
+export function buildPalette(cells, { colors = 'auto', palette, exact = false, kernelRms = null } = {}) {
   const { w, h, lab, alpha } = cells, n = w * h, masked = cells.masked, exactRgb = cells.rgb
   const index = new Int16Array(n).fill(-1), warnings = []
   const snap = (pal, keys) => {
@@ -169,6 +178,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false } 
   const alive = new Uint8Array(k).fill(1), parent = Int32Array.from({ length: k }, (_, q) => q)
   const d2 = (i, j) => { const dL = C[i * 3] - C[j * 3], da = C[i * 3 + 1] - C[j * 3 + 1], db = C[i * 3 + 2] - C[j * 3 + 2]; return dL * dL + da * da + db * db }
   let live = k
+  const split = kernelRms !== null && kernelRms < SPLIT_RMS_MAX ? splitGate(cells, cellU, assign, U, wt, C, N, nu, k) : null
   while (live > 1) {
     const prot = new Uint8Array(k)
     for (let i = 0; i < k; i++) {
@@ -185,6 +195,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false } 
           if (!alive[j] || (!allowProt && prot[j])) continue
           const dd = d2(i, j)
           if (needClose && dd >= TAU_MERGE * TAU_MERGE) continue
+          if (needClose && split && !split.mergeable(i, j, dd)) continue
           const cost = allowProt ? dd : (N[i] * N[j]) / (N[i] + N[j]) * dd // user cap over protection: plain distance spares far glints longest
           if (cost < bc) { bc = cost; bi = i; bj = j }
         }
@@ -194,6 +205,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false } 
     const pair = pick(true, false) || (live > maxK ? pick(false, false) || pick(false, true) : null)
     if (!pair) break
     const [i, j] = pair, s = N[i] + N[j]
+    if (split) split.fold(i, j) // before the centroid update: verdicts are cleared, members and edges moved
     for (let a = 0; a < 3; a++) C[i * 3 + a] = (N[i] * C[i * 3 + a] + N[j] * C[j * 3 + a]) / s
     N[i] = s; alive[j] = 0; parent[j] = i; live--
   }
@@ -214,4 +226,53 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false } 
   for (let s = 0; s < K; s++) { keys.push(klist[med[s]]); for (let a = 0; a < 3; a++) pal[s * 3 + a] = Ulist[med[s] * 3 + a] }
   for (let c = 0; c < n; c++) if (cellU[c] >= 0) index[c] = uCluster[cellU[c]]
   return snap(pal, keys) // masked opaque cells (index still -1) snap to the nearest entry
+}
+
+/**
+ * D48 gate state over the Lloyd clusters (indices < k): member unique colours per cluster, 4-neighbour
+ * edge counts between clusters on the cell grid, and a verdict cache cleared for both clusters of a merge.
+ * mergeable(i, j, dd) reads the live centroids C and weights N (cells per cluster) of buildPalette.
+ */
+function splitGate(cells, cellU, assign, U, wt, C, N, nu, k) {
+  const { w, h } = cells, E = new Float64Array(k * k), verdict = new Int8Array(k * k).fill(-1)
+  const mem = Array.from({ length: k }, () => [])
+  for (let u = 0; u < nu; u++) mem[assign[u]].push(u)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const u = cellU[y * w + x]
+    if (u < 0) continue
+    const a = assign[u]
+    for (const v of [x + 1 < w ? cellU[y * w + x + 1] : -1, y + 1 < h ? cellU[(y + 1) * w + x] : -1]) {
+      if (v < 0 || assign[v] === a) continue
+      E[a * k + assign[v]]++; E[assign[v] * k + a]++
+    }
+  }
+  const midShare = (i, j) => {
+    const ax = C[j * 3] - C[i * 3], ay = C[j * 3 + 1] - C[i * 3 + 1], az = C[j * 3 + 2] - C[i * 3 + 2], L2 = ax * ax + ay * ay + az * az
+    let mid = 0, tot = 0
+    for (const list of [mem[i], mem[j]]) for (const u of list) {
+      const t = ((U[u * 3] - C[i * 3]) * ax + (U[u * 3 + 1] - C[i * 3 + 1]) * ay + (U[u * 3 + 2] - C[i * 3 + 2]) * az) / L2
+      tot += wt[u]
+      if (t > MID_BAND && t < 1 - MID_BAND) mid += wt[u]
+    }
+    return mid / tot
+  }
+  return {
+    mergeable(i, j, dd) {
+      if (dd < TAU_FLOOR * TAU_FLOOR) return true
+      const key = i * k + j
+      if (verdict[key] < 0) {
+        const sliver = dd < TAU_DUP * TAU_DUP && E[key] > 0 && Math.min(N[i], N[j]) < SPLIT_MIN_CELLS
+        verdict[key] = sliver || midShare(i, j) >= MID_SHARE ? 1 : 0
+      }
+      return verdict[key] === 1
+    },
+    fold(i, j) { // j merges into i
+      for (const u of mem[j]) mem[i].push(u)
+      mem[j] = []
+      for (let x = 0; x < k; x++) {
+        if (x !== i && x !== j) { E[i * k + x] += E[j * k + x]; E[x * k + i] = E[i * k + x] }
+        verdict[i * k + x] = verdict[x * k + i] = verdict[j * k + x] = verdict[x * k + j] = -1
+      }
+    },
+  }
 }

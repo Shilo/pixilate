@@ -21,6 +21,25 @@ function cells(w, h, colors, pick, noise = 0.01, seed = 1) {
 const count = (ix) => ix.palette.length / 3
 
 describe('buildPalette', () => {
+  // D48: deconvolved smooth-upscale cells (kernelRms < 1) keep separable close colours apart
+  it('kernelRms: two tight regions 0.025 apart stay separate (merged without it, or with a poor kernel)', () => {
+    const c = cells(16, 16, [[0.6, 0, 0], [0.6, 0.025, 0]], (i) => ((i % 16) < 8 ? 0 : 1), 0.002)
+    expect(count(buildPalette(c))).toBe(1)
+    expect(count(buildPalette(c, { kernelRms: 2 }))).toBe(1)
+    const ix = buildPalette(c, { kernelRms: 0.3 })
+    expect(count(ix)).toBe(2)
+    expect(ix.index[0]).not.toBe(ix.index[15])
+  })
+
+  it('kernelRms: a touching sliver (< 10 cells) within 0.03 and a split continuum still merge', () => {
+    const sliver = cells(16, 16, [[0.6, 0, 0], [0.6, 0.02, 0]], (i) => (i === 120 || i === 121 || i === 122 ? 1 : 0), 0.002)
+    expect(count(buildPalette(sliver, { kernelRms: 0.3 }))).toBe(1)
+    const ramp = cells(16, 16, [[0.6, 0, 0]], () => 0, 0)
+    const r = rng(7)
+    for (let i = 0; i < 256; i++) ramp.lab[i * 3 + 1] = r() * 0.04 // one colour smeared along a: no gap
+    expect(count(buildPalette(ramp, { kernelRms: 0.3 }))).toBe(1)
+  })
+
   it('auto K finds 12 ± 1 colors in a noisy 12-color sprite', () => {
     const c = cells(32, 32, LAB, (i, r) => (r() * 12) | 0)
     const ix = buildPalette(c, { colors: 'auto' })
