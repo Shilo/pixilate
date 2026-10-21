@@ -1,6 +1,6 @@
 # Pixilate app (MVP)
 
-The first designed app for Pixilate (owner decision OWN-007): one screen that turns an image into true pixel art at the size you choose. It only downscales and converts; the colour count is its single colour control. Everything runs on your device: decoding and conversion happen in a Web Worker that calls the prototype engine in place (`../prototype/src/lib`, imported through the `$engine` alias), so the saved PNG is byte-for-byte the engine's output for the shown settings. There are no runtime network requests beyond the app's own files, and only system fonts are used.
+The first designed app for Pixilate (owner decision OWN-007): one screen that turns an image into true pixel art at the size you choose. It only downscales and converts; the colour count is its single colour control. Everything runs on your device: decoding and conversion happen in a Web Worker that calls the prototype engine in place (`../prototype/src/lib`, imported through the `$engine` alias), so the saved PNG is byte-for-byte the engine's output for the shown settings. There are no runtime network requests beyond the app's own files, and only system fonts are used. The production build enforces this with a Content Security Policy `<meta>` (FR-021) added by a small plugin in `vite.config.js`: same-origin scripts, styles, fetches and workers only, `blob:`/`data:` images, and the inline theme script allowed by a sha256 computed at build time. The dev server has no policy, because Vite injects `<style>` elements and an HMR socket there. Component markup must not use static `style="..."` attributes (the policy blocks them); dynamic `style:` directives are fine.
 
 Svelte 5 + Vite (not SvelteKit), JavaScript, styled with GlassKit.
 
@@ -45,3 +45,7 @@ Icons are path data from Lucide (ISC). The worker bundles fast-png, iobuffer, ff
 - Not yet checked on real devices: iPhone Safari (safe areas, keyboard, Share, Copy), Android Chrome, Windows at DPR 1.25, VoiceOver and NVDA, reduced transparency, contrast and forced colours. Performance budgets (spec §12) are not measured on a phone.
 - Section expand and refit are instant (no 200 ms animation); `data-density="compact"` is not used.
 - Stack sections open inside the dock, not as a draggable sheet with a grabber (kept simple).
+- At 320 × 568 with Size open the stage gets small.
+- Only Save and Share are byte-exact; Copy re-encodes through the clipboard. A plain-HTTP LAN address has no `crypto.subtle` or clipboard, so Details shows no fingerprint (see Commands).
+- Quality at small targets (32 px and below) is an engine limit, not an app one.
+- On ultra-wide windows the top bar and view bar span the full width (no max content width); nothing overlaps.

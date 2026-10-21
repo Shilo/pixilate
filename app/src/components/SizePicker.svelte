@@ -75,7 +75,7 @@
     {#each [['w', T.width, dw], ['h', T.height, dh]] as [f, lab, val]}
       <div class="glass-input-group field">
         <label class="glass-label" for="size-{f}">{lab}</label>
-        <div class="glass-input-wrap glass-input-wrap--suffix" style="--gl-input-suffix-size: 22px">
+        <div class="glass-input-wrap glass-input-wrap--suffix suffix-22">
           <input
             id="size-{f}" class="glass-input num" class:glass-input--error={errors[f]}
             type="number" inputmode="numeric" min="1" max="1024" step="1" value={val}
@@ -112,6 +112,7 @@
   .heading { font-weight: 600; font-size: 16px; }
   .fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: start; }
   .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .suffix-22 { --gl-input-suffix-size: 22px; }
   .field input { font-size: 16px; } /* 16 px: no iOS zoom on focus */
   .keep {
     align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px 0 10px;

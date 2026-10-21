@@ -504,8 +504,8 @@
       />
     {:else}
       <div class="glass-skeleton" aria-busy="true" aria-label={T.analysing}>
-        <div class="glass-skeleton__line glass-skeleton__line--title" style="width:45%"></div>
-        <div class="glass-skeleton__line" style="width:80%"></div>
+        <div class="glass-skeleton__line glass-skeleton__line--title sk-45"></div>
+        <div class="glass-skeleton__line sk-80"></div>
       </div>
     {/if}
   {/snippet}
@@ -646,9 +646,10 @@
   @media (pointer: coarse) { .reason { min-height: 44px; } }
   .reason b { color: var(--ring); }
   /* the first result's style row and two-line reason plus one note, so the dock doesn't grow when it lands */
+  .sk-45 { width: 45%; }
+  .sk-80 { width: 80%; }
   .style-slot { min-height: 56px; }
   .reason-slot { min-height: 66px; }
-  .alert { display: flex; flex-direction: column; gap: 6px; }
   .buttons { margin-top: 10px; align-items: stretch; }
   .buttons .section-btn { width: 100%; height: 100%; }
   .export-row { margin-top: 8px; }
