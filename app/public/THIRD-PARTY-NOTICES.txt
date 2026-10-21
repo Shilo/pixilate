@@ -27,7 +27,7 @@ SOFTWARE.
 
 
 2. Lucide icons (lucide-static 0.460.0), https://lucide.dev
-   Bundled: path data of 12 icons, inlined.
+   Bundled: path data of 11 icons, inlined.
 
 ISC License
 

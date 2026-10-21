@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { convertCandidates } from '$engine/core/pipeline.js'
-import { beforeRect, exportScales, fitZoom, upscale } from '../src/lib/geometry.js'
+import { beforeRect, countColours, exportScales, fitZoom, upscale } from '../src/lib/geometry.js'
 
 // 16 x 16 cells at 8 px (128 x 128): a 2-colour cell checker in cells 4..11, transparent around it.
 function sprite() {
@@ -80,4 +80,8 @@ test('export scales stay within 4096', () => {
 test('upscale is nearest neighbour', () => {
   const px = Uint8ClampedArray.from([1, 2, 3, 4, 5, 6, 7, 8])
   expect(Array.from(upscale(px, 2, 1, 2))).toEqual([1, 2, 3, 4, 1, 2, 3, 4, 5, 6, 7, 8, 5, 6, 7, 8, 1, 2, 3, 4, 1, 2, 3, 4, 5, 6, 7, 8, 5, 6, 7, 8])
+})
+
+test('countColours counts distinct visible colours only', () => {
+  expect(countColours(Uint8ClampedArray.from([1, 2, 3, 255, 1, 2, 3, 255, 9, 9, 9, 0, 4, 5, 6, 255]))).toBe(2)
 })

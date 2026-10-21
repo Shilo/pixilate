@@ -33,9 +33,9 @@ export const T = {
   stopped: 'Stopped',
   wait: 'Wait for the new result',
   failedSave: 'Fix the problem above to save.',
-  saveFailed: "Couldn't make the PNG. Try a smaller file size.",
+  saveFailed: "Couldn't make the PNG. Try a smaller enlargement.",
   shareAgain: 'Ready to share. Tap Share again.',
-  fileSize: 'File size',
+  enlarge: 'Enlarge',
   square: 'Square',
   bgKept: "This background isn't one plain colour, so it was kept.",
   unavailable: 'unavailable (needs a secure page: HTTPS or localhost)',
@@ -65,7 +65,8 @@ export const T = {
   chooseSize: 'Choose a size',
   maybe: 'Maybe',
   alsoFits: 'Also fits',
-  matchSprite: 'Match sprite',
+  matchSprite: 'Match subject',
+  subject: 'Subject',
   presets: 'Common sizes (long side)',
   fitMode: 'Fill the size',
   fit: { contain: 'Fit', cover: 'Fill', stretch: 'Stretch' },
@@ -79,8 +80,8 @@ export const T = {
   tools: 'Tools',
   bgLabel: 'Remove background',
   bgHelp: 'Makes a plain background around the art see-through.',
-  trimLabel: 'Fit to sprite',
-  trimHelp: 'Sizes the sprite itself, not the empty space around it.',
+  trimLabel: 'Crop to subject',
+  trimHelp: 'Sizes the subject itself, not the empty space around it.',
   trimNeeds: 'Needs a see-through background. Turn on Remove background first.',
   colours: 'Colours',
   coloursHelp: 'Auto keeps the colours the art needs.',
@@ -164,7 +165,7 @@ const WARN = [
   ['detail reduced', "Smaller than the art's own pixels, so some detail is merged."],
   ['non-integer ratio', "Your size doesn't divide the art's pixels evenly, so a few pixels are approximate."],
   ['ambiguous exact grid', 'Several grid sizes fit this image. Try the "Also fits" sizes.'],
-  ["trim basis 'cells' found no", 'The sprite is very faint, so all its visible pixels were kept.'],
+  ["trim basis 'cells' found no", 'The subject is very faint, so all its visible pixels were kept.'],
   ['palette capped at', 'Up to 64 colours are supported.'],
   ['exact art quantized', 'This art has more than 256 colours, so some were merged.'],
   ['animated', 'Only the first frame is used.'],
@@ -213,10 +214,10 @@ export function trimCaption(report) {
   if (!t?.enabled || !t.box) return null
   const { width: W, height: H } = report.input
   const [x0, y0, x1, y1] = t.box
-  if (x0 === 0 && y0 === 0 && x1 === W && y1 === H) return 'Nothing to trim: the picture has no see-through edges.'
+  if (x0 === 0 && y0 === 0 && x1 === W && y1 === H) return 'Nothing to crop: the picture has no see-through edges.'
   const edge = t.fallback ? 'any visible pixel' : t.basis === 'cells' ? (report.route === 'grid' ? 'solid pixels' : 'pixels more than half visible') : 'any visible pixel'
   const [ox, oy] = report.fit.offset
-  return `Sprite area ${dims(x1 - x0, y1 - y0)} px at ${x0}, ${y0} · edge: ${edge} · padding ${ox}, ${oy} px`
+  return `Subject area ${dims(x1 - x0, y1 - y0)} px at ${x0}, ${y0} · edge: ${edge} · padding ${ox}, ${oy} px`
 }
 
 /** A file that couldn't be opened, named (shown in a dismissible banner over the stage). */
@@ -232,7 +233,7 @@ const ERR = {
   'decode-unsupported': ["Pixilate can't open this file. Try a PNG or JPEG.", 'choose', 'Choose another'],
   'decode-too-large': ['This image is too big (over 4096 × 4096). Try a smaller copy.', 'choose', 'Choose another'],
   'decode-damaged': ["This image looks damaged and couldn't be opened.", 'choose', 'Choose another'],
-  'empty-visible-region': ['Nothing is left to keep: the image became fully see-through.', 'trim-off', 'Turn off Fit to sprite'],
+  'empty-visible-region': ['Nothing is left to keep: the image became fully see-through.', 'trim-off', 'Turn off Crop to subject'],
   'algorithm-budget-exceeded': ['That needs more work than this device allows. Try a smaller size or fewer colours.', 'colours-16', 'Use 16 colours'],
   'invalid-input': ["That setting isn't valid.", 'reset-size', 'Reset size'],
   'internal-invariant': ['Something went wrong inside Pixilate. Your image is safe.', 'retry', 'Try again'],
@@ -244,7 +245,7 @@ export function errorCopy(code) {
 }
 
 // ---- Size: derivation sentence (§5.3), headings (§5.2), validation (§8.1) ----
-const n1 = (v) => String(Math.round(v * 10) / 10)
+const n1 = (v) => String(Math.round(v * 100) / 100) // the engine reports blocks to 0.01 px
 const per = ([px, py]) => (px === py ? n1(px) : `${n1(px)} × ${n1(py)}`)
 
 export function derivation(info) {
@@ -254,7 +255,7 @@ export function derivation(info) {
     if (g.period[0] === 1 && g.period[1] === 1) return `This already looks like pixel art at ${dims(s[0], s[1])}.`
     return `Found a ${dims(s[0], s[1])} pixel grid (blocks of ${per(g.period)} px) in this ${dims(W, H)} image.`
   }
-  if (g.class === 'grid' && s) return `Found a pixel grid of about ${per(g.period)} px blocks: ${W} ÷ ${n1(g.period[0])} ≈ ${s[0]} wide, ${s[1]} high.`
+  if (g.class === 'grid' && s) return `Found a pixel grid of about ${per(g.period)} px blocks, ${s[0]} wide and ${s[1]} high.`
   if (g.class === 'exact') return 'Several pixel grid sizes fit, so there is no detected size.'
   if (g.class === 'weak') return 'The grid is faint, so there is no detected size.'
   return 'No clear pixel grid found.'
@@ -289,5 +290,7 @@ export const sourceAlt = (w, h) => `Original image, ${srDims(w, h)} pixels`
 export const topDims = (name, w, h) => `${name} · ${dims(w, h)}`
 export const failedStyle = (id, code) => `${styleLabel(id)} couldn't be made: ${errorCopy(code).message}`
 export const metaClaim = (family) => `File metadata claims: ${family} (signature not checked).`
+export const subjectNote = (w, h) => `The subject's own pixels: ${dims(w, h)}.`
+export const moreLabel = (k) => `${T.saveOptions}, enlarge ${k} times`
 export const bestIs = (label, why) => `Best is ${label}: ${why}`
 export const styleName = (id, route, best) => `${styleLabel(id)}${best ? ', best match' : ''}. ${styleDesc(id, route)}`

@@ -79,3 +79,8 @@ test('British spelling and thin-spaced dimensions', () => {
   expect(C.dims(32, 16)).toBe('32 × 16')
   expect(C.srDims(32, 16)).toBe('32 by 16')
 })
+
+test('the grid sentence shows the real fractional block size and no rounded division', () => {
+  const s = C.derivation({ width: 1254, height: 1154, grid: { class: 'grid', suggestedSize: [126, 116], period: [9.95, 9.95] } })
+  expect(s).toBe('Found a pixel grid of about 9.95 px blocks, 126 wide and 116 high.')
+})

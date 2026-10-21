@@ -26,6 +26,13 @@ export const SCALES = [1, 2, 4, 8, 16]
 /** Export scales whose result stays within 4096 px on each side. */
 export const exportScales = (w, h) => SCALES.filter((s) => w * s <= 4096 && h * s <= 4096)
 
+/** Distinct visible colours of RGBA8 (for the Original style, which the engine does not palette-count). */
+export function countColours(rgba) {
+  const seen = new Set()
+  for (let p = 0; p < rgba.length; p += 4) if (rgba[p + 3]) seen.add((rgba[p] << 16) | (rgba[p + 1] << 8) | rgba[p + 2])
+  return seen.size
+}
+
 /** Nearest-neighbour integer upscale of RGBA8. */
 export function upscale(rgba, w, h, k) {
   if (k === 1) return rgba

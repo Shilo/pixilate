@@ -5,6 +5,7 @@
   import { ICONS } from '../lib/icons.js'
   import { T, dims, styleLabel, styleDesc, reason, warningSentences, bgLine, trimCaption, failedStyle, metaClaim, cleanLine, bestIs } from '../lib/copy.js'
   import { styleIdOf } from '../lib/opts.js'
+  import { countColours } from '../lib/geometry.js'
 
   let { open, onclose, variant, info, result, shown, onrecipe, oncopyhash } = $props()
 
@@ -48,7 +49,7 @@
         <dl>
           <dt>{T.style}</dt><dd>{label}{best ? ` · ${T.best}` : ''}</dd>
           <dt>{T.size}</dt><dd class="num">{dims(c.width, c.height)}</dd>
-          {#if r.output.colors != null}<dt>{T.coloursUsed}</dt><dd class="num">{r.output.colors}{r.output.colorsAllowed ? ` (${r.output.colorsAllowed} ${T.coloursAllowed})` : ''}</dd>{/if}
+          <dt>{T.coloursUsed}</dt><dd class="num">{r.output.colors ?? countColours(c.rgba)}{r.output.colorsAllowed ? ` (${r.output.colorsAllowed} ${T.coloursAllowed})` : ''}</dd>
           <dt>{T.seeThrough}</dt><dd>{r.output.transparent ? T.yes : T.no}</dd>
         </dl>
         {#if swatches.length}

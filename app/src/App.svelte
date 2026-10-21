@@ -13,20 +13,23 @@
   import { ICONS } from './lib/icons.js'
   import {
     T, dims, reason, styleLabel, styleDesc, cleanLine, warningLine, errorCopy, fileError, derivation, needsHeading,
-    readyStatus, bgLine, trimCaption, savedToast, copiedToast, toolsButton, sizeName, zoomTip, artLabel, topDims, STYLE_ORDER,
+    readyStatus, subjectNote, moreLabel, bgLine, trimCaption, savedToast, copiedToast, toolsButton, sizeName, zoomTip, artLabel, topDims, STYLE_ORDER,
   } from './lib/copy.js'
   import {
     DEFAULT_TOOLS, chips, prefill, needsCase, isValid, showsFit, toEngineOpts, baseName, fileName, recipe, deriveH, deriveW,
     clampScale, recoverJob, styleIdOf,
   } from './lib/opts.js'
+  import { countColours } from './lib/geometry.js'
 
   const SIDE_Q = '(min-width: 1024px) and (min-height: 560px), (min-width: 480px) and (max-height: 559px) and (min-aspect-ratio: 3/2)'
-  const coarse = matchMedia('(pointer: coarse)').matches
+  const COARSE_Q = '(pointer: coarse)'
   const canCopy = typeof ClipboardItem !== 'undefined' && !!navigator.clipboard?.write
-  const canShare = coarse && !!navigator.canShare?.({ files: [new File([new Uint8Array(1)], 'x.png', { type: 'image/png' })] })
+  const shareFiles = !!navigator.canShare?.({ files: [new File([new Uint8Array(1)], 'x.png', { type: 'image/png' })] })
   const blankSize = (lock = true) => ({ w: null, h: null, lock, fit: 'contain', source: null, chip: null, note: null, derived: null })
 
   let side = $state(matchMedia(SIDE_Q).matches)
+  let coarse = $state(matchMedia(COARSE_Q).matches) // follows a mouse/touch switch (convertibles, docked tablets)
+  const canShare = $derived(coarse && shareFiles)
   let status = $state('empty') // empty | analysing | needs | converting | result | failed
   let file = $state.raw(null) // { name, base, bytes, mime, url }
   let info = $state.raw(null) // analysis reply
@@ -91,14 +94,15 @@
   // panel warning line: the "Also fits" hint only when such a chip exists; the colour-metadata note lives in Details
   const warnLine = $derived(report ? warningLine(report.warnings.filter((w) => !w.startsWith('colour metadata') &&
     (!w.startsWith('ambiguous') || chips(info, prefilled).some((c) => c.key.startsWith('also-'))))) : null)
+  const colours = $derived(report ? report.output.colors ?? countColours(cand.rgba) : null) // Original: counted here
   const zoomText = $derived(zoom == null && fitz < 1 ? T.fitShrunk : `${Math.round(z)}×`)
-  const sizeCaption = $derived(size.source === 'detected' ? T.detected : isValid(size) ? T.yourSize : T.chooseSize)
+  const sizeCaption = $derived(size.source === 'detected' ? T.detected : size.source === 'sprite' ? T.subject : isValid(size) ? T.yourSize : T.chooseSize)
 
   // ---- layout and viewport ----
   $effect(() => {
-    const q = matchMedia(SIDE_Q), on = () => (side = q.matches)
-    q.addEventListener('change', on)
-    return () => q.removeEventListener('change', on)
+    const qs = [[matchMedia(SIDE_Q), (v) => (side = v)], [matchMedia(COARSE_Q), (v) => (coarse = v)]]
+    const ons = qs.map(([q, set]) => { const on = () => set(q.matches); q.addEventListener('change', on); return on })
+    return () => qs.forEach(([q], i) => q.removeEventListener('change', ons[i]))
   })
   $effect(() => {
     const vv = window.visualViewport
@@ -162,6 +166,11 @@
     if (pending.tools.background && !report.background.applied) {
       bgKept = true
       tools = { ...tools, background: false, trim: info.hasAlpha ? tools.trim : false }
+      return run() // announced with the next result
+    }
+    // Crop to subject on a detected size: switch to the subject's own detected size (a size the user picked stays)
+    if (pending.tools.trim && size.source === 'detected' && match && report.route === 'grid') {
+      size = { ...size, w: match[0], h: match[1], source: 'sprite', chip: 'sprite', auto: true, note: subjectNote(match[0], match[1]), derived: null }
       return run() // announced with the next result
     }
     const extra = [bgKept && T.bgKept, tools.background && bgLine(report.background), tools.trim && trimCaption(report)].filter(Boolean).join(' ')
@@ -236,11 +245,17 @@
   }
   // a user change dismisses an engine error only through its replacement job; a refusal note clears at once
   function setSize(s, fromChip) {
-    size = s
+    size = { ...s, auto: false } // any size the user sets stays put
     run()
     if (fromChip && !side && openSection === 'size') toggleSection('size')
   }
-  const setTools = (t) => { bgKept = false; tools = t; run() }
+  function setTools(t) {
+    bgKept = false
+    // the automatic subject size goes back to the detected size when Crop to subject is turned off
+    if (!t.trim && size.auto && prefilled) size = prefilled
+    tools = t
+    run()
+  }
 
   // ---- open ----
   async function openFile(f, name = f?.name ?? null) {
@@ -417,7 +432,7 @@
       source={{ url: file.url, width: info?.width ?? 0, height: info?.height ?? 0 }}
       {report} {gridReport} mode={viewMode} {showGrid} {zoom} bind:fitz bind:dpr
       dim={status === 'failed'} faded={status === 'analysing'}
-      label={cand ? artLabel(cand.width, cand.height, report.output.colors, shownStyle, z) : ''}
+      label={cand ? artLabel(cand.width, cand.height, colours, shownStyle, z) : ''}
       onpeek={(v) => (peek = v)} onzoom={zoomBy} onfit={() => (zoom = null)} onstyle={styleN}
       ontoggle={() => (mode = mode === 'after' ? 'before' : 'after')} ongrid={() => gridOk && (showGrid = !showGrid)}
     />
@@ -434,7 +449,15 @@
       {#if busy.slow}<p class="small slow">{T.slow}</p>{/if}
     </div>
   {/if}
-  {#if fileErr}
+  {#if error && status === 'failed'}
+    <div class="file-banner" role="alert">
+      <p>⚠ {errInfo.message}</p>
+      <div class="row">
+        <button class="glass-btn glass-btn--secondary glass-btn--sm glass-btn--auto" onclick={() => fix(errInfo.fix)}>{errInfo.label}</button>
+        {#if errInfo.fix === 'retry'}<button class="linkish" onclick={() => copyText(`${error.code}: ${error.message}`)}>{T.copyDetails}</button>{/if}
+      </div>
+    </div>
+  {:else if fileErr}
     <div class="file-banner" role="alert">
       <p>⚠ {fileError(fileErr.code, fileErr.name)}</p>
       <div class="row">
@@ -457,15 +480,6 @@
 
   {#snippet notes()}
     <div class="notes">
-      {#if error && status === 'failed'}
-        <div class="alert" role="alert">
-          <p class="err">⚠ {errInfo.message}</p>
-          <div class="row wrap">
-            <button class="glass-btn glass-btn--secondary glass-btn--sm glass-btn--auto" onclick={() => fix(errInfo.fix)}>{errInfo.label}</button>
-            {#if errInfo.fix === 'retry'}<button class="linkish" onclick={() => copyText(`${error.code}: ${error.message}`)}>{T.copyDetails}</button>{/if}
-          </div>
-        </div>
-      {/if}
       {#if stoppedFlash}<p class="muted">{T.stopped}</p>{/if}
       {#if result && status !== 'failed'}
         {#if overridden}
@@ -557,7 +571,7 @@
       </div>
       <div class="row buttons">
         <div class="grow">
-          <h2 class="sr-only">{T.size}</h2>
+          {#if openSection !== 'size'}<h2 class="sr-only">{T.size}</h2>{/if}
           <button class="section-btn" bind:this={btns.size} aria-expanded={openSection === 'size'} disabled={!info}
             aria-label={isValid(size) ? sizeName(size.w, size.h, sizeCaption) : T.chooseSize} onclick={() => toggleSection('size')}>
             <b class="num">{isValid(size) ? dims(size.w, size.h) : T.chooseSize}</b><span class="cap">{isValid(size) ? sizeCaption : T.size}</span>
@@ -565,7 +579,7 @@
         </div>
         {#if status !== 'needs' && info}
           <div>
-            <h2 class="sr-only">{T.tools}</h2>
+            {#if openSection !== 'tools'}<h2 class="sr-only">{T.tools}</h2>{/if}
             <button class="section-btn" bind:this={btns.tools} aria-expanded={openSection === 'tools'} onclick={() => toggleSection('tools')}>
               <b class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true">{@html ICONS['sliders-horizontal']}</svg>{toolsButton(toolCount)}</b>
             </button>
@@ -576,8 +590,9 @@
         <h2 class="sr-only">{T.save}</h2>
         <div class="grow"><Export part="save" w={cand?.width} h={cand?.height} {scale} disabled={saveWhy} onsave={save} /></div>
         {#if cand}
-          <button class="icon-btn more" bind:this={btns.export} aria-label={T.saveOptions} aria-expanded={openSection === 'export'} onclick={() => toggleSection('export')}>
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">{@html ICONS.ellipsis}</svg>
+          <!-- shows the enlargement in use, so the choice is visible without opening the section -->
+          <button class="icon-btn more num" bind:this={btns.export} aria-label={moreLabel(scale)} aria-expanded={openSection === 'export'} onclick={() => toggleSection('export')}>
+            {scale}×
           </button>
         {/if}
       </div>
@@ -630,13 +645,14 @@
   .reason { background: none; border: 0; padding: 0; text-align: start; cursor: pointer; line-height: 1.4; min-height: 24px; }
   @media (pointer: coarse) { .reason { min-height: 44px; } }
   .reason b { color: var(--ring); }
-  .style-slot { min-height: 52px; }
-  .reason-slot { min-height: 40px; }
+  /* the first result's style row and two-line reason plus one note, so the dock doesn't grow when it lands */
+  .style-slot { min-height: 56px; }
+  .reason-slot { min-height: 66px; }
   .alert { display: flex; flex-direction: column; gap: 6px; }
   .buttons { margin-top: 10px; align-items: stretch; }
   .buttons .section-btn { width: 100%; height: 100%; }
   .export-row { margin-top: 8px; }
-  .more { width: 52px; height: 52px; }
+  .more { width: 52px; height: 52px; font-weight: 600; }
   .toast {
     position: fixed; z-index: 1100; left: 50%; top: calc(env(safe-area-inset-top) + 64px); transform: translate(-50%, -8px);
     max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 14px; pointer-events: none; opacity: 0;

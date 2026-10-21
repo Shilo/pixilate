@@ -14,7 +14,7 @@
 
 {#if part === 'scale' && w}
   <div class="scale">
-    <span class="lab" id="scale-label">{T.fileSize}</span>
+    <span class="lab" id="scale-label">{T.enlarge}</span>
     <div class="glass-segmented glass-segmented--full" role="group" aria-labelledby="scale-label">
       {#each exportScales(w, h) as k}
         <button class="glass-segmented__item num" aria-pressed={scale === k} onclick={() => onscale(k)}>{k}×</button>
