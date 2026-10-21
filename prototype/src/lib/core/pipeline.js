@@ -15,7 +15,7 @@ import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.9.0', constants: 28 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.9.1', constants: 28 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -79,7 +79,7 @@ function recipeOf(o) {
   return {
     engine: ENGINE, profile: o.cleanup ? CLEAN_PROFILE : null, alphaPolicy: ALPHA_POLICY,
     options: {
-      targetW: o.targetW, targetH: o.targetH, trim: !o.trim ? false : o.trimBasis === 'cells' ? { basis: 'cells', tau: 127, comparison: '>' } : { tau: 0, comparison: '>' }, fit: o.fit, anchor: 'center',
+      targetW: o.targetW, targetH: o.targetH, trim: !o.trim ? false : o.trimBasis === 'cells' ? { basis: 'cells' } : { tau: 0, comparison: '>' }, fit: o.fit, anchor: 'center',
       route: o.route, cleanup: o.cleanup, background: o.background, halo: o.halo, colors: o.colors,
       palette: o.palette ? Array.from(o.palette) : null, manualPeriod: o.manualPeriod,
     },
@@ -257,7 +257,7 @@ function gridReport(grid, g, off) {
   const r2 = (v) => Math.round(v * 100) / 100
   return {
     class: grid.class, confidence: grid.confidence, native: [g.x.count, g.y.count], nativeFull: [grid.x.count, grid.y.count],
-    period: [r2(g.x.period), r2(g.y.period)], phase: [r2(g.x.phase), r2(g.y.phase)], elastic: [g.x.elastic, g.y.elastic],
+    period: [r2(g.x.period), r2(g.y.period)], phase: [r2(g.x.phase), r2(g.y.phase)], elastic: [g.x.elastic, g.y.elastic], countDP: [!!g.x.countDP, !!g.y.countDP],
     cuts: { x: Array.from(g.x.cuts, (c) => r2(c + off[0])), y: Array.from(g.y.cuts, (c) => r2(c + off[1])) }, // original source px
     evidence: g.evidence === grid.evidence ? grid.evidence : [...grid.evidence, ...g.evidence],
     candidates: grid.candidates ?? null, ambiguous: grid.ambiguous ?? null, alternatives: grid.alternatives ?? null, suggestedSize: suggestedSizeOf(grid),
@@ -325,7 +325,7 @@ function run(A, o) {
   if (B?.mode === 'key') { bgColors = new Float32Array(3); srgbToOklab(...B.key, bgColors, 0) }
   const estimate = bgColors ? Array.from({ length: bgColors.length / 3 }, (_, i) => { const t = new Uint8Array(3); oklabToSrgb(bgColors[i * 3], bgColors[i * 3 + 1], bgColors[i * 3 + 2], t, 0); return [...t] }) : null
   const bgReport = {
-    mode: B ? B.mode : false, estimate, applied: false, reason: !B ? 'off' : bgColors ? null : 'no background estimate', removed: 0, specks: 0,
+    mode: B ? B.mode : false, estimate, applied: false, reason: !B ? 'off' : bgColors ? null : A.bg.reason ?? 'no background estimate', removed: 0, specks: 0,
     connectivity: B ? B.connectivity : null, metric: B ? 'toe-OKLab dE' : null,
     tolerance: !B ? null : B.mode === 'key' ? B.tolerance : bgColors?.length === 6 ? 0.035 : 0.03, comparison: !B ? null : B.mode === 'key' ? '<=' : '<',
     halo: { enabled: o.halo, changed: 0 },
@@ -650,7 +650,8 @@ function recommend(A, cls, candidates, alias, original) {
 
 /**
  * convertCandidates(img, opts, bytes?) -> { candidates: [{ id, image, indexed, report }], recommended,
- * recommendation: { id, rule, evidence }, analysis: { grid, generator, suggestedSize }, failed: [{ id, code, message }] }.
+ * recommendation: { id, rule, evidence }, alias: { [specId]: surviving id }, analysis: { grid, generator, suggestedSize },
+ * failed: [{ id, code, message }] }. recommendation.id is the surviving id (= recommended).
  * Shared analysis once; opts as convert (route and cleanup are set per candidate):
  * original (identity, only when the noop rule holds), grid (grid route, cleanup off; grid found),
  * clean (Clean profile on the grid route, else the raster route), smooth (raster route, cleanup off).
@@ -682,7 +683,8 @@ export function convertCandidates(img, opts = {}, bytes = null) {
     candidates.push({ id, ...r })
   }
   if (!candidates.length) throw firstError
-  const rec = recommend(A, cls, candidates, alias, specs[0][0] === 'original')
+  const rule = recommend(A, cls, candidates, alias, specs[0][0] === 'original'), id = alias[rule.id] ?? candidates[0].id
+  const rec = id === rule.id ? rule : { ...rule, id, evidence: `${rule.evidence} (identical output: ${id})` }
   const { cuts, ...grid } = gridReport(A.grid, A.grid, [0, 0])
-  return { candidates, recommended: alias[rec.id] ?? candidates[0].id, recommendation: rec, analysis: { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }, failed }
+  return { candidates, recommended: id, recommendation: rec, alias, analysis: { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }, failed }
 }

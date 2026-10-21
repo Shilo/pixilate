@@ -494,7 +494,7 @@ describe('convert: soft-alpha sprites and gradient backdrops (D49, D50)', () => 
       expect(def.report.fit.basis[0]).toBeGreaterThan(b.width) // anti-aliased spill widens the alpha > 0 box by whole cells
       expect(cells.report.fit.basis).toEqual([b.width, b.height])
       expect(cells.report.trim.basis).toBe('cells')
-      expect(cells.report.recipe.options.trim).toEqual({ basis: 'cells', tau: 127, comparison: '>' })
+      expect(cells.report.recipe.options.trim).toEqual({ basis: 'cells' })
       expect(scoreCase(cells.image, b, {}).emSnap).toBeGreaterThanOrEqual(0.95)
     }
   })
@@ -646,6 +646,14 @@ describe('convertCandidates', () => {
       const r = run(img, { width: w, height: h })
       expect(rec(r)).toEqual(['grid', 'grid'])
       expect(r.recommendation.evidence).toMatch(/^recommended grid: Clean declined \(agreement [\d.]+ % < 97 %\)$/)
+    })
+
+    it('a rule id deduped into an earlier candidate resolves to the survivor (no-grid gradient seed 2)', () => {
+      const img = noGrid('gradient', 2)
+      const r = convertCandidates(img, { ...CANVAS_OPTS, background: false, targetW: 48, targetH: Math.max(1, Math.round((48 * img.height) / img.width)) })
+      expect(r.alias.smooth).toBe('clean')
+      expect([r.recommended, r.recommendation.id, r.recommendation.rule]).toEqual(['clean', 'clean', 'no-grid'])
+      expect(r.recommendation.evidence).toMatch(/^recommended smooth: grid class \w+ \(identical output: clean\)$/)
     })
 
     it('is deterministic on a repeat run', () => {

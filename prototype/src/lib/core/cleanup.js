@@ -33,12 +33,13 @@ function mode(vals, m) {
 const SURF_TERMS = 6, SURF_INLIER = 0.03, SURF_MIN_SHARE = 0.6, SURF_MAX_MED = 0.035, SURF_MIN_RANGE = 0.03
 const surfBasis = (u, v, f) => { f[0] = 1; f[1] = u; f[2] = v; f[3] = u * v; f[4] = u * u; f[5] = v * v }
 
-/** Solve the K x K system M x = r in place (partial pivoting); null when singular. */
+/** Solve the K x K normal equations M x = r in place (partial pivoting); null when (near-)singular. */
 function solve(M, r, K) {
+  const tol = 1e-9 * M[0] // relative pivot threshold: M[0] = point count, the Gram matrix's largest diagonal
   for (let c = 0; c < K; c++) {
     let piv = c
     for (let i = c + 1; i < K; i++) if (Math.abs(M[i * K + c]) > Math.abs(M[piv * K + c])) piv = i
-    if (Math.abs(M[piv * K + c]) < 1e-12) return null
+    if (Math.abs(M[piv * K + c]) < tol) return null
     if (piv !== c) {
       for (let j = 0; j < K; j++) { const t = M[c * K + j]; M[c * K + j] = M[piv * K + j]; M[piv * K + j] = t }
       const t = r[c]; r[c] = r[piv]; r[piv] = t
@@ -106,7 +107,8 @@ export function fitSurface(us, vs, L, m) {
  * checkerboard; its border-connected pixels form `mask` (1 = exclude from grid detection). Otherwise, with
  * >= 40% of the border opaque, a smooth gradient: `surface` = fitSurface on the means of B x B border blocks
  * (B = max(4, round(min(W, H) / 48)), blocks at least half opaque) when its inlier share >= 0.6, median
- * inlier residual < 0.035 and range >= 0.03; `bg` is then the surface colour at the canvas centre.
+ * inlier residual < 0.035 and range >= 0.03 (>= 3 distinct block rows and columns, else `reason`); `bg` is then
+ * the surface colour at the canvas centre.
  */
 export function analyzeBackground(img) {
   const W = img.width, H = img.height, d = img.data
@@ -147,6 +149,8 @@ export function analyzeBackground(img) {
     }
     for (let x = 0; x < W; x += B) { block(x, 0); block(x, Math.max(0, H - B)) }
     for (let y = B; y < H - B; y += B) { block(0, y); block(Math.max(0, W - B), y) }
+    // a quadratic needs >= 3 distinct block centres per axis (a thin strip has only 2 rows: v^2 undetermined)
+    if (new Set(us).size < 3 || new Set(vs).size < 3) return { ...none, reason: 'gradient surface refused: border blocks span < 3 distinct rows or columns' }
     const S = fitSurface(us, vs, Float64Array.from(L), us.length)
     if (!S || S.inliers < SURF_MIN_SHARE || S.med >= SURF_MAX_MED || S.range < SURF_MIN_RANGE) return none
     return { ...none, bg: Float32Array.from(surfaceAt(S, 0.5, 0.5, new Float64Array(3))), surface: { coef: S.coef } }

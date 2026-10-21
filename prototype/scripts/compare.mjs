@@ -11,7 +11,10 @@
 //           target and labelled "adapted" (adapter, never the tool's own target support).
 // Metrics: em = emSnapRec (snapped exact match on recoverable cells, alpha included; only on cases with no
 // baked-in background, since no reference removes backgrounds); emIn = the same with the truth alpha mask
-// imposed on the output (colour + placement inside the silhouette; background removal not scored), on all
+// imposed on the output (colour + placement inside the silhouette; background removal not scored, so ours is
+// scored on the background-off run of the SAME candidate id, deduped ids resolved through its alias map, since
+// over-removal would count and missed background would not; ours' emIn is that of the on-run recommended id,
+// and the two runs can recommend different ids in a few cases), on all
 // cases. Trim-subject and +cleanup cases are skipped (no reference can trim; cleanup changes only ours).
 // Palette modes (round 3): `native` = every method at its own documented palette cap (Pixel Snapper 16, unfake
 // 32, Retro Diffusion K 16, breakfastz 16, fast-pixelizer 32/256; ours, area, nearest, PixelOE, pixeldetector,
@@ -123,10 +126,11 @@ for (const [i, c] of MODE === 'cases' ? cases.entries() : []) {
   const { img, truth } = degrade(c.sprite, c.params, c.seed), T = truth.sprite, tw = T.width, th = T.height
   const bgFree = truth.opaque || truth.params.bgMode === 'keep-alpha'
   const KT = colourCount(T)
-  const score = (out) => {
+  const score = (out, outIn = out) => {
     const r = {}
     for (const [suf, K] of CAPS) {
-      const o = K ? capK(out, K === 'truth' ? KT : K) : out, s = scoreCase(o, T, { truth }), si = scoreCase(withAlpha(o, T), T, { truth })
+      const o = K ? capK(out, K === 'truth' ? KT : K) : out, oi = outIn === out ? o : K ? capK(outIn, K === 'truth' ? KT : K) : outIn
+      const s = scoreCase(o, T, { truth }), si = scoreCase(withAlpha(oi, T), T, { truth })
       r[`em${suf}`] = bgFree ? r4(s.emSnapRec ?? s.emSnap) : null; r[`emIn${suf}`] = r4(si.emSnapRec ?? si.emSnap)
       if (!K) Object.assign(r, { de: r4(s.deMean), f1: r4(s.f1T1), iou: r4(s.iou), colours: colourCount(out) })
     }
@@ -136,7 +140,15 @@ for (const [i, c] of MODE === 'cases' ? cases.entries() : []) {
   const imgs = {}
   try {
     const [cs, ms] = time(() => convertCandidates(img, { ...CANVAS_OPTS, targetW: tw, targetH: th }))
-    const sc = cs.candidates.map((k) => ({ id: k.id, image: k.image, ...score(k.image) }))
+    // emIn imposes the truth alpha, so background removal could only lose there: score emIn on a background-off run
+    const off = convertCandidates(img, { ...CANVAS_OPTS, background: false, targetW: tw, targetH: th })
+    const offImage = (k) => { // the same candidate id on the off run (its survivor when deduped)
+      const id = off.alias?.[k.id]
+      if (id) return off.candidates.find((c) => c.id === id).image
+      // no alias (an engine without the map, or the off run failed this id): rerun this candidate's route and cleanup
+      return convert(img, { ...CANVAS_OPTS, background: false, targetW: tw, targetH: th, route: k.report.route ?? 'auto', cleanup: k.report.cleanup.profile != null }).image
+    }
+    const sc = cs.candidates.map((k) => ({ id: k.id, image: k.image, ...score(k.image, offImage(k)) }))
     const recK = sc.find((k) => k.id === cs.recommended), sug = analyze(img, {}).suggestedSize // blind: no target prior
     const bestBy = (key) => sc.reduce((a, b) => ((b[key] ?? -1) > (a[key] ?? -1) ? b : a))
     const sizeExact = Boolean(sug) && sug[0] === tw && sug[1] === th

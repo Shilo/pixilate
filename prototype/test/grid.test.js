@@ -381,6 +381,7 @@ describe('D52 edge support, count refinement and count-constrained lock cuts', (
     expect([g.x.count, g.y.count]).toEqual([truth.cellsX, truth.cellsY])
     expect(Math.min(g.x.support, g.y.support)).toBeGreaterThanOrEqual(0.7)
     expect(support(g)).toBeDefined()
+    expect(g.evidence.some((e) => /^[xy]: admitted by edge support [\d.]+ \(>= 0\.7\) below the prominence gate \(D52\)$/.test(e))).toBe(true)
   })
 
   it('rejects a coarse lattice whose edges barely beat chance (no-grid shapes scene, seed 3)', () => {
@@ -402,7 +403,9 @@ describe('D52 edge support, count refinement and count-constrained lock cuts', (
     const { img, truth } = degrade(sp('proc-ui'), PRESETS['gemini-like'], 3)
     const g = lockGrid(img, truth.cellsX, truth.cellsY), c = g.x.cuts, p = img.width / truth.cellsX
     expect(g.x.count).toBe(truth.cellsX)
-    expect(g.x.elastic).toBe(true) // the elastic DP missed the count; the count-constrained DP did not
+    expect([g.x.elastic, g.x.countDP]).toEqual([false, true]) // the elastic DP missed the count; the count-constrained DP did not
+    expect(g.evidence).toContain(`x: count-constrained cuts (${truth.cellsX - 1} by DP; elastic missed the count)`)
+    expect(g.evidence.some((e) => /^x: .* elastic no, count-constrained DP/.test(e))).toBe(true)
     expect(c.length).toBe(truth.cellsX + 1)
     expect([c[0], c[c.length - 1]]).toEqual([0, img.width])
     for (let k = 1; k < c.length; k++) expect(c[k] - c[k - 1]).toBeGreaterThan(0.09 * p)

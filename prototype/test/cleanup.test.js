@@ -253,6 +253,13 @@ describe('analyzeBackground', () => {
     expect(analyzeBackground(image(128, 128, (x, y) => cols[((x >> 3) * 7 + (y >> 3) * 3) % 64])).surface).toBe(null)
     expect(analyzeBackground(image(128, 128, () => [120, 120, 120, 255])).surface).toBe(null)
   })
+  it('refuses a surface on a thin strip whose border blocks lie on only 2 rows (v^2 undetermined)', () => {
+    let h = 7
+    const rnd = () => (((h = (Math.imul(h, 1103515245) + 12345) >>> 0) >>> 16) % 5) - 2
+    const r = analyzeBackground(image(1024, 6, (x) => [60 + 0.15 * x, 90 + 0.08 * x, 220 - 0.12 * x].map((c) => Math.round(c + rnd())).concat(255)))
+    expect(r.surface).toBe(null) // was accepted with a corner miss of ~0.05 OKLab
+    expect(r.reason).toMatch(/< 3 distinct rows or columns/)
+  })
   it('surface removal: gradient cells go and the subject stays; a two-tone tile fails the solid gates', () => {
     const w = 12, h = 12, n = w * h, cells = { w, h, lab: new Float32Array(n * 3), alpha: new Uint8Array(n).fill(255), dominance: new Float32Array(n).fill(1) }
     const field = new Float32Array(n * 3)

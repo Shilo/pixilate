@@ -736,7 +736,8 @@ function classify(pr, X, Y, jpeg, ev, forced) {
   const ok = (a) => (a.prominence >= 5 && a.coherence >= thr(a) && a.agreement >= 0.5) || admitted(a)
   const { ratio: pur, step } = purity(pr, X.cuts, Y.cuts)
   for (const [n, a] of [['x', X], ['y', Y]]) {
-    ev.push(`${n}: period ${f2(a.period)} phase ${f2(a.phase)} count ${a.count} prominence ${f2(a.prominence)} coherence ${f2(a.coherence)} (min ${thr(a)}) agreement ${f2(a.agreement)} elastic ${a.elastic ? 'yes' : 'no'} (gain ${f2(a.gain)})`)
+    ev.push(`${n}: period ${f2(a.period)} phase ${f2(a.phase)} count ${a.count} prominence ${f2(a.prominence)} coherence ${f2(a.coherence)} (min ${thr(a)}) agreement ${f2(a.agreement)} elastic ${a.countDP ? 'no, count-constrained DP' : a.elastic ? 'yes' : 'no'} (gain ${f2(a.gain)})`)
+    if (!(a.prominence >= 5 && a.coherence >= thr(a) && a.agreement >= 0.5) && admitted(a)) ev.push(`${n}: admitted by edge support ${f2(a.support)} (>= 0.7) below the prominence gate (D52)`)
   }
   ev.push(`purity ratio ${f2(pur)} (grid < 0.5), cell step ratio ${f2(step)} (seamless >= 0.85)`)
   const sup = (a) => (a.support == null ? '-' : f2(a.support))
@@ -892,7 +893,10 @@ export function lockGrid(img, countX, countY, { mask, preset, profile = 'd1' } =
     // D52: elastic cuts rejected for their count, or regular cuts with the wrong count: count-constrained DP
     if (!A.d2 && p >= 4 && n >= 2 && (ax.count !== n || (!ax.elastic && ax.gain >= 1.5))) {
       const cc = countCuts(A.e, A.len, n, ax.phase)
-      if (cc) Object.assign(ax, { cuts: Float64Array.from(cc), count: n, elastic: true, coherence: coherence(A.x, cc), support: edgeSupport(A, cc, p) })
+      if (cc) {
+        Object.assign(ax, { cuts: Float64Array.from(cc), count: n, elastic: false, countDP: true, coherence: coherence(A.x, cc), support: edgeSupport(A, cc, p) })
+        ev.push(`${a ? 'y' : 'x'}: count-constrained cuts (${n - 1} by DP; elastic missed the count)`)
+      }
     }
     if (ax.count !== n) { // a numeric edge case: fall back to n regular cells
       let c = regularCuts(A.len, p, ax.phase)
