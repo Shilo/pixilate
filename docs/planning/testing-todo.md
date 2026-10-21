@@ -1,6 +1,6 @@
 # Algorithm testing to-do
 
-Last reviewed: 2026-10-20.
+Last reviewed: 2026-10-21.
 
 Purpose: one checklist for proving that the [prototype](../../prototype/README.md) turns any AI-generated "pixel art" into crisp, proper pixel art at the exact requested size: no mixels, unwanted artifacts, jagged lines, orphan pixels, poor shading or broken silhouettes. Items marked **[Human]** are for the owner, using live images from ChatGPT/GPT Image, Gemini, PixelLab and other generators. Items marked **[Agent]** are algorithm and tooling work for coding agents. Thresholds are PROVISIONAL until calibrated under the [benchmark methodology](../research-spikes/evaluation/benchmark-methodology.md); the metric definitions are in [pixel-art quality metrics](../research-spikes/evaluation/pixel-art-quality-metrics.md).
 
@@ -183,6 +183,19 @@ Each item is linked to the open questions in the [design](prototype-algorithm-de
 - [ ] [Human] Declare the licence (intended MIT).
 - [ ] [Human] Decide whether Trim `{ basis: 'cells' }` becomes the grid-route default (D50; PRD §9.2 fixes τ = 0).
 - [ ] [Human] Decide whether semi-transparent glow and shadow layers become an opaque ring or drop under `Binary(128)` (D51; `OWN-005`).
+
+## MVP app: what the owner should test
+
+The app's measured state and known gaps are in the [MVP app test results](../reviews/mvp-app-test-results.md). Live images and notes stay in `.local/` under opaque IDs, as above.
+
+- [ ] [Human] **Run it.** Run `cd prototype && npm install`, then `cd app && npm install && npm run dev`. On a phone, open it over HTTPS or on `localhost` (for example through a USB port forward). A plain-HTTP LAN address converts but cannot show the hash.
+- [ ] [Human] **Real phones and tablets,** in portrait and landscape. Check that Save stays reachable, the keyboard does not cover the size fields, and Share works.
+- [ ] [Human] **Your own AI images** from GPT Image, Gemini, Grok and PixelLab. Note when Best is not the style you would pick.
+- [ ] [Human] **The casual flow.** Drop an image, then Save, with no other step. Check whether the detected size is right.
+- [ ] [Human] **Crop to subject** on transparent sprites. Check that the crop is tight and nothing is cut.
+- [ ] [Human] **Small targets** (16–32 px). These are a known engine limit; record the failure modes.
+- [ ] [Human] **Dark and light** system themes.
+- [ ] [Human] **Screen-reader spot checks** (VoiceOver on iPhone, TalkBack or NVDA). Open an image, change the style and Save.
 
 ## Results log template
 

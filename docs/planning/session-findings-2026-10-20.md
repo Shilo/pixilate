@@ -2,9 +2,36 @@
 
 ## Purpose and scope
 
-This document records the state reached in the 2026-10-20 session, so work can resume without re-reading the history. It continues the [2026-10-19 session findings](session-findings-2026-10-19.md), whose owner decisions and background still apply. It is a dated summary and resume point. Where it states a number, the canonical source governs: the [prototype design](prototype-algorithm-design.md#deviations) rows D37–D55 and the [test results](../reviews/prototype-v1-test-results.md) sections [Round 3](../reviews/prototype-v1-test-results.md#round-3-2026-10-20) and [2026-10-20 round](../reviews/prototype-v1-test-results.md#2026-10-20-round). The [Round 3 update](#round-3-update-2026-10-20) below is the current state; the later sections record the earlier round of the same day. Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence). Numbers that include local samples are OBSERVED, local-only, not rights-cleared, and all of them are in-sample.
+This document records the state reached in the 2026-10-20 session, so work can resume without re-reading the history. It continues the [2026-10-19 session findings](session-findings-2026-10-19.md), whose owner decisions and background still apply. It is a dated summary and resume point. Where it states a number, the canonical source governs: the [prototype design](prototype-algorithm-design.md#deviations) rows D37–D55 and the [test results](../reviews/prototype-v1-test-results.md) sections [Round 3](../reviews/prototype-v1-test-results.md#round-3-2026-10-20) and [2026-10-20 round](../reviews/prototype-v1-test-results.md#2026-10-20-round). The [MVP app update](#mvp-app-2026-10-21) and the [Round 3 update](#round-3-update-2026-10-20) below are the current state; the later sections record the earlier round of the same day. Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence). Numbers that include local samples are OBSERVED, local-only, not rights-cleared, and all of them are in-sample.
 
 Product and company names may be trademarks of their respective owners; Pixilate is not affiliated with, endorsed by, or sponsored by them.
+
+## MVP app (2026-10-21)
+
+**Current state.** The first designed MVP app (`OWN-007`) is in [`app/`](../../app/README.md). It is a Vite + Svelte 5 single page on the prototype engine, imported in place, so its pixels are the engine's. It is themed with GlassKit 1.22.2 (pinned). Commits:
+- `40965e4`: first build.
+- `b240cc6`: verifier round 2 fixes.
+- `cdbcd82`: AGENTS.md commands.
+- `f83c379`: engine `0.10.1` (D56). Recipes replay, format sniffing uses signatures only, and an empty image reports no grid. No pixels changed on non-empty inputs.
+
+Nothing is pushed, and there is still no `LICENSE` file. The [Round 3 update](#round-3-update-2026-10-20) below remains the engine's state.
+
+**Results** (details in the [MVP app design and test results](../reviews/mvp-app-test-results.md)):
+- Five test passes found issues, which were fixed: layout over 20 viewports, UX critique, a WCAG 2.2 AA audit, functionality and output parity, and code review.
+- An independent re-verification passed all 25 checklist items, with clean layout invariants at 9 viewports in light and dark, and 84 app tests.
+- Saved PNGs and the ×4 and ×16 exports are byte-identical to the engine across 8 setting combinations (OBSERVED, procedural).
+- Performance and bundle (OBSERVED): a 4096² image converts in about 2 s on desktop. The gzip bundle is 41.3 KB JS, 16.1 KB CSS and a 59.4 KB worker.
+
+**Ranked next steps** (proposals, not decisions; these come before the [Round 3 list](#round-3-update-2026-10-20)):
+
+1. **Engine R4 experiments.**
+   - Smooth noisy upscales.
+   - A rule for when Clean applies to reductions.
+   - Clean deleting 1-px eyes (`EX-011`; the two open `it.fails` cases).
+2. **Real-device testing** (owner; [testing to-do](testing-todo.md#mvp-app-what-the-owner-should-test)): phones and tablets, the owner's own AI images, and screen-reader spot checks.
+3. **Owner decisions.**
+   - Carried over: the Trim basis default (D50), glow and shadow under `Binary(128)` (D51), the ambiguous-grid policy (`OD-004`), the licence, and pushing.
+   - New: whether recipe import (FR-013) is needed next.
 
 ## Round 3 update (2026-10-20)
 
