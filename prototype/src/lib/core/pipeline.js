@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.12.0', constants: 30 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.13.0', constants: 32 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -402,6 +402,7 @@ function run(A, o) {
     return c
   }
   const changed = {}
+  let reduce = null // D62: core reduction steps (reduceToTarget `steps`), never cleanup counts
   const add = (ch, prefix = '') => { for (const k in ch) { const key = prefix ? prefix + k[0].toUpperCase() + k.slice(1) : k; changed[key] = (changed[key] || 0) + ch[k] } }
   const clean = (cells) => {
     // D48: deconvolved smooth-upscale cells pass the kernel residual (the palette may keep close colours apart)
@@ -495,6 +496,7 @@ function run(A, o) {
       const shrink = (nat) => { // native -> target (Step 8), then the Clean profile's cleanup on the result
         const r = reduceToTarget(nat, fw, fh, { clean: o.cleanup })
         add(r.changed, 'reduce')
+        reduce = { changed: r.steps }
         lap('reduce')
         if (!o.cleanup) return r
         const c = cleanup(r, r)
@@ -580,6 +582,7 @@ function run(A, o) {
     fit: { mode: o.fit, anchor: 'center', basis, basisUnit: route === 'grid' ? 'cells' : 'px', crop: geo.crop, resized: [fw, fh], offset: [ox, oy] },
     background: bgReport,
     cleanup: { profile: o.cleanup ? CLEAN_PROFILE : null, changed },
+    reduce,
     alphaPolicy: ALPHA_POLICY,
     output: { width: Tx, height: Ty, colors, colorsAllowed: allowed, transparent: out.index.some((k) => k < 0) },
     recipe: recipeOf(o),

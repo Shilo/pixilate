@@ -205,15 +205,41 @@ describe('reduceToTarget', () => {
 })
 
 describe('reduceToTarget: cleanup gating and budget', () => {
-  it('clean: false skips bridge, orphan and outline passes (zero changes reported)', () => {
+  it('clean: false runs no Clean pass (zero cleanup changes); large-reduction continuity steps are core, in both modes (D62)', () => {
     const N = 48, ix = indexedRing(N, true), pal = Array.from(ix.palette), r = rng(5)
     pal.push(...lab(240, 200, 60), ...lab(60, 90, 200))
     for (let p = 0; p < N * N; p++) if (ix.index[p] === 1 && r() < 0.25) ix.index[p] = r() < 0.5 ? 3 : 4
     const src = { ...ix, palette: Float32Array.from(pal) }
+    const zero = { bridge: 0, orphan: 0, outline: 0 }, none = { bridge: 0, footprint: 0, gap: 0 }
+    // 48 -> 32 is a 1.5x reduction: bridging and the outline steps are core, counted in `steps` in both modes
     const off = reduceToTarget(src, 32, 32, { clean: false }), on = reduceToTarget(src, 32, 32)
-    expect(off.changed).toEqual({ bridge: 0, orphan: 0, outline: 0 })
-    expect(on.changed.orphan + on.changed.bridge + on.changed.outline).toBeGreaterThan(0)
+    expect(off.changed).toEqual(zero)
+    expect(on.steps).toEqual(off.steps)
+    expect(on.changed.bridge).toBe(0)
+    expect(on.changed.orphan + on.changed.outline).toBeGreaterThan(0)
     expect(orphans(off)).toBeGreaterThan(orphans(on))
+    // 48 -> 40 (1.2x): no core step; bridging is a Clean pass again
+    const offS = reduceToTarget(src, 40, 40, { clean: false }), onS = reduceToTarget(src, 40, 40)
+    expect(offS.changed).toEqual(zero)
+    expect(offS.steps).toEqual(none)
+    expect(onS.steps).toEqual(none)
+  })
+
+  it('large reductions keep a 1-px source outline closed on the output silhouette with cleanup off (D62)', () => {
+    const N = 72, index = new Int16Array(N * N), c = (N - 1) / 2, R = N * 0.36
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const d = Math.hypot(x - c, y - c); index[y * N + x] = d < R - 1 ? (x < c ? 1 : 2) : d < R ? 0 : -1 }
+    const ix = { w: N, h: N, index, palette: Float32Array.from([[20, 16, 30], [210, 120, 50], [230, 170, 90]].flatMap((v) => lab(...v))) }
+    const out = reduceToTarget(ix, 32, 32, { clean: false })
+    let sil = 0, ink = 0
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+      const v = out.index[y * 32 + x]
+      if (v < 0 || ![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => out.index[(y + dy) * 32 + x + dx] < 0 || x + dx < 0 || x + dx > 31 || y + dy < 0 || y + dy > 31)) continue
+      sil++; if (v === 0) ink++
+    }
+    expect(sil).toBeGreaterThan(0)
+    expect(ink).toBe(sil)
+    expect(out.steps.footprint + out.steps.gap).toBeGreaterThan(0)
+    expect(out.changed).toEqual({ bridge: 0, orphan: 0, outline: 0 })
   })
 
   /** Indexed non-integer NN upscale (factor f) of rows of palette digits ('.' = transparent). */

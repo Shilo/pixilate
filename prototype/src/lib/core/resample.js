@@ -219,6 +219,8 @@ const EXTREME = 9, EXTREME_FEAT = 0.15 // extreme ratio: source px per output ce
 const NEAR_NATIVE = 1.5 // below this many source px per output cell, busy-spot accents from small source features stay
 const TEXTURE = 4 // this many separate source pieces of a color near a cell make it texture, not an accent
 const ACCENT = 2 // source components under this many output cells of area are intentional accents
+const CONTINUITY = 1.5 // at >= this many source px per output side the outline-continuity steps run in both modes (D62)
+const OL_FOOT = 0.25 // a silhouette cell whose own footprint is at least this much source outline takes the outline group
 export const COVERAGE_BUDGET = 1 << 25 // max output cells x palette entries per coverage table (2 Float32 tables, 128 MiB each)
 
 /**
@@ -235,13 +237,17 @@ export const COVERAGE_BUDGET = 1 << 25 // max output cells x palette entries per
  * 4. outline: if most of the source silhouette is darker than inside, every output silhouette
  *    cell takes the dominant outline group near its footprint (closed 1 px outline).
  * Cleanup passes (gap bridging, step 3 and step 4) run only with `clean`; `changed` counts the
- * cells each one changed. tw x th x K above COVERAGE_BUDGET throws 'algorithm-budget-exceeded'.
+ * cells each one changed. Large reductions (>= CONTINUITY source px per output side) instead run
+ * gap bridging in both modes, then two core outline-continuity steps (D62): `footprint` (a silhouette
+ * cell whose own footprint is >= OL_FOOT source outline takes the outline group) and `gap` (a
+ * silhouette cell joining two separate pieces of the output outline takes it); `steps` counts these
+ * core changes, never `changed`. tw x th x K above COVERAGE_BUDGET throws 'algorithm-budget-exceeded'.
  * dominance (for cleanup) = 1 for feature/accent/outline picks, else the winner's coverage share.
  */
 export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
   const { w, h, index, palette } = indexed, K = palette.length / 3, n = tw * th
   if (n * K > COVERAGE_BUDGET) throw new PixilateError('algorithm-budget-exceeded', `coverage table ${tw}x${th} cells x ${K} colors exceeds ${COVERAGE_BUDGET}`)
-  const changed = { bridge: 0, orphan: 0, outline: 0 }
+  const changed = { bridge: 0, orphan: 0, outline: 0 }, steps = { bridge: 0, footprint: 0, gap: 0 }
   const P = toe(palette)
   // tone groups: entries within TAU_LO of a more frequent entry join it (greedy by source count)
   // (group distance doubles chroma: hue/chroma shifts are features, small lightness steps are shading)
@@ -261,7 +267,7 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
   const G = Int16Array.from(index, (v) => (v < 0 ? -1 : rep[v])) // source as tone groups
   // source features: 8-connected same-group components; big = area >= FEAT output cells
   const size = new Int32Array(w * h), root = new Int32Array(w * h), seen = new Uint8Array(w * h), queue = new Int32Array(w * h)
-  const cellArea = (w / tw) * (h / th)
+  const cellArea = (w / tw) * (h / th), large = cellArea >= CONTINUITY * CONTINUITY
   for (let s0 = 0; s0 < w * h; s0++) {
     if (G[s0] < 0 || seen[s0]) continue
     let head = 0, tail = 0
@@ -378,7 +384,8 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
   // than an output cell: at least two of them hold the same source feature component, and that
   // component crosses this cell with a run thinner than a cell side (a thick stroke cannot lose a
   // step to the reduction; dots, dither and separate strokes are not bridged into blobs).
-  if (clean) {
+  // A core step on large reductions (counted in `steps`), else a Clean pass.
+  if (clean || large) {
     const old = Int16Array.from(out), NB = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]]
     const nv = new Int16Array(8), cc = new Int8Array(8), side = Math.sqrt(cellArea)
     const run = new Int32Array(w * h) // min(horizontal, vertical) same-group run through each pixel
@@ -427,8 +434,56 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
         }
         if (pieces >= 2 && sameLine(X, Y, k, pieces)) pick = k
       }
-      if (pick >= 0) { out[c] = pick; dominance[c] = 1; changed.bridge++ }
+      if (pick >= 0) { out[c] = pick; dominance[c] = 1; if (large) steps.bridge++; else changed.bridge++ }
     }
+  }
+
+  // D62 outline continuity on large reductions (core, both modes): a 1-px source outline covers a
+  // fraction of a cell, so the vote breaks it. A silhouette cell that is not the outline group takes
+  // it when (footprint) its own footprint is >= OL_FOOT source outline pixels of that group, or (gap)
+  // it joins two separate 8-connected pieces of the output outline among its 8 neighbours and its
+  // footprint grown by one cell holds such a pixel. A salient pick of another colour (a light staff,
+  // an eye on the edge) keeps its colour. Each step decides all cells first, then applies.
+  if (large && gOut >= 0) {
+    const oat = (X, Y) => (X < 0 || Y < 0 || X >= tw || Y >= th ? -1 : out[Y * tw + X])
+    const sil = (X, Y) => oat(X, Y) >= 0 && N4.some(([dx, dy]) => oat(X + dx, Y + dy) < 0)
+    const keep = (c) => out[c] < 0 || out[c] === gOut || (picked[c] && D[out[c] * K + gOut] > TAU_HI)
+    let res = Int16Array.from(out)
+    for (let Y = 0; Y < th; Y++) for (let X = 0; X < tw; X++) {
+      const c = Y * tw + X
+      if (keep(c) || !sil(X, Y)) continue
+      let f = 0
+      for (let j = 0; j < ty.len[Y]; j++) {
+        const row = (ty.start[Y] + j) * w, wy = ty.w[ty.off[Y] + j]
+        for (let i = 0; i < tx.len[X]; i++) { const p = row + tx.start[X] + i; if (ol[p] && G[p] === gOut) f += wy * tx.w[tx.off[X] + i] }
+      }
+      if (f >= OL_FOOT) { res[c] = gOut; dominance[c] = 1; steps.footprint++ }
+    }
+    out.set(res)
+    res = Int16Array.from(out)
+    const NB = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]], ring = new Uint8Array(8), lab = new Int8Array(8)
+    const ry = Math.ceil(h / th), rx = Math.ceil(w / tw)
+    for (let Y = 0; Y < th; Y++) for (let X = 0; X < tw; X++) {
+      const c = Y * tw + X
+      if (keep(c) || !sil(X, Y)) continue
+      for (let i = 0; i < 8; i++) { const x = X + NB[i][0], y = Y + NB[i][1]; ring[i] = oat(x, y) === gOut && sil(x, y) ? 1 : 0 }
+      let pieces = 0
+      lab.fill(-1)
+      for (let i = 0; i < 8; i++) {
+        if (!ring[i] || lab[i] >= 0) continue
+        const stack = [i]; lab[i] = pieces
+        while (stack.length) {
+          const q = stack.pop()
+          for (let t = 0; t < 8; t++) if (ring[t] && lab[t] < 0 && Math.abs(NB[t][0] - NB[q][0]) <= 1 && Math.abs(NB[t][1] - NB[q][1]) <= 1) { lab[t] = pieces; stack.push(t) }
+        }
+        pieces++
+      }
+      if (pieces < 2) continue
+      let near = false
+      for (let y = Math.max(0, ty.start[Y] - ry); y < Math.min(h, ty.start[Y] + ty.len[Y] + ry) && !near; y++) for (let x = Math.max(0, tx.start[X] - rx); x < Math.min(w, tx.start[X] + tx.len[X] + rx); x++) if (ol[y * w + x] && G[y * w + x] === gOut) { near = true; break }
+      if (near) { res[c] = gOut; dominance[c] = 1; steps.gap++ }
+    }
+    out.set(res)
   }
 
   // orphans (no same-group 8-neighbor) survive only as accents: distinct (> TAU_HI) from every
@@ -512,7 +567,7 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
     for (let dy = -1; dy <= 1 && alone; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && X + dx >= 0 && Y + dy >= 0 && X + dx < tw && Y + dy < th && out[(Y + dy) * tw + X + dx] >= 0) { alone = false; break }
     if (alone) dominance[c] = 1
   }
-  return { w: tw, h: th, index: out, palette, rgb: indexed.rgb, dominance, changed }
+  return { w: tw, h: th, index: out, palette, rgb: indexed.rgb, dominance, changed, steps }
 }
 
 /** Nearest-neighbor integer upscale. */
