@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-10-20.
 
-Purpose: record how the exploratory prototype in [`prototype/`](../../prototype/) (`OWN-002`) was tested, what it measured, where it still fails, and how to reproduce the numbers. Read it with the [algorithm design](../planning/prototype-algorithm-design.md), whose [Deviations](../planning/prototype-algorithm-design.md#deviations) table (D1–D46) holds the per-change evidence. The newest measurements are in [2026-10-20 round](#2026-10-20-round).
+Purpose: record how the exploratory prototype in [`prototype/`](../../prototype/) (`OWN-002`) was tested, what it measured, where it still fails, and how to reproduce the numbers. Read it with the [algorithm design](../planning/prototype-algorithm-design.md), whose [Deviations](../planning/prototype-algorithm-design.md#deviations) table (D1–D55) holds the per-change evidence. The newest measurements are in [Round 3 (2026-10-20)](#round-3-2026-10-20); the earlier round of the same day is in [2026-10-20 round](#2026-10-20-round).
 
 Product and company names may be trademarks of their respective owners; Pixilate is not affiliated with, endorsed by, or sponsored by them.
 
@@ -15,14 +15,15 @@ Product and company names may be trademarks of their respective owners; Pixilate
 | Blinded human panel | None |
 | Confidence intervals | None (medians and p10 only; cases within a source family are not independent) |
 | Decisions closed | None: no `OD-*` or `EX-*` item, no gate, no production default |
-| Code revision | 2026-10-19 sections: working tree of 2026-10-19. [2026-10-20 round](#2026-10-20-round): commits `3896d49` (engine `0.5.0`, constants 25) and `0939adc` (baseline); for later commits, see `git log` |
-| Toolchain | Node 25.0.0, Vitest 4.1.12, synthetic fixture version `pixilate-synth/3` since 2026-10-20 (`pixilate-synth/2` for the 2026-10-19 bench) |
+| Code revision | 2026-10-19 sections: working tree of 2026-10-19. [2026-10-20 round](#2026-10-20-round): commits `3896d49` (engine `0.5.0`, constants 25) and `0939adc` (baseline). [Round 3](#round-3-2026-10-20): bench at `93efc52` (engine `0.9.2`); comparison and real-sample timing at `fed010a` (engine `0.10.0`, constants 28) |
+| Toolchain | Node 25.0.0, Vitest 4.1.12, synthetic fixture version `pixilate-synth/4` for round 3, `pixilate-synth/3` for the earlier 2026-10-20 round, `pixilate-synth/2` for the 2026-10-19 bench |
 | Labels | VERIFIED, CODE-DERIVED, OBSERVED, INFERRED, UNKNOWN as in the [research index](../research-spikes/README.md#how-to-read-the-evidence) |
 
 Committed tests and the procedural benchmark rows are **OBSERVED** and reproducible from the repository. Every number that includes the gitignored showcase crops, private sprites or private AI samples is **OBSERVED, local-only, not rights-cleared**: it cannot be reproduced from the repository and backs no public claim. Nothing here is benchmark evidence under the [benchmark methodology](../research-spikes/evaluation/benchmark-methodology.md).
 
 ## Summary
 
+- **Round 3 (2026-10-20; OBSERVED, local-only, not rights-cleared, in-sample).** Three-seed bench: stratum I median 0.909 → 0.965, recommended equal to best 54 → 72 %, and on I the engine now edges the nearest baseline on the same cases (0.948 against 0.945); false grids 2 → 1 of 12. In the comparison at a common palette cap, ours leads overall (0.976) and on I and B, while the Real-PixelArt fixed-size reference leads on M (0.872 against 0.835). See [Round 3](#round-3-2026-10-20).
 - **Committed tests (2026-10-20).** 267 Vitest tests pass and 2 are expected failures (`it.fails`, marked `[open]`). A fresh copy of the tracked files without `.local/` passes 243, skips 24 local-only tests and has the same 2 expected failures, with 0 failures (OBSERVED). On 2026-10-19 the counts were 238, and 214 plus 24 skipped.
 - **Smoothly upscaled pixel art (2026-10-20; OBSERVED, local-only, not rights-cleared).** Bilinear ×8 and ×8.37 round trips of 4 local PixelLab sprites now find the lattice in 8 of 8 cases (1 of 8 before), with a median 97.3 % of opaque pixels within 12/255. Raw AI images are unaffected: the new fallback is inert on them. See [2026-10-20 round](#2026-10-20-round).
 - **Exact and interpolated grids (OBSERVED, procedural).** Clean integer nearest-neighbour upscales are 100 % exact (gate G-EXACT). Procedural non-integer nearest-neighbour and bilinear upscales have a median snapped match of 1.0.
@@ -43,6 +44,151 @@ Committed tests and the procedural benchmark rows are **OBSERVED** and reproduci
 | Visual review | The authors inspected (unblinded) contact sheets of the private samples at native size and at 64/48/32/16 px before the D23 revision | Gitignored `.local/` sheets |
 | Browser | Dev server in one Chromium build: one private sample loaded through the file input; report and download checked; no console errors; output hash equal to the Node run (OBSERVED, local-only) | Manual, 2026-10-19 |
 | Internal review | Design and code review findings, applied with regression tests | [Algorithm design](../planning/prototype-algorithm-design.md#deviations) |
+
+## Round 3 (2026-10-20)
+
+Commits `1051a8d` to `fed010a` (engine `0.6.0` to `0.10.0`, constants 28, synthetic fixture version `pixilate-synth/4`). The design rows are D47–D55. Numbers that include the showcase crops, private sprites or private AI samples are **OBSERVED, local-only, not rights-cleared**; every number here is in-sample and exploratory. Most round-3 thresholds were tuned on the cases that measured them, with no hold-out (exceptions: the D48 family hold-out, D52's held-out no-grid seeds 11–40, and D55's noise-share family hold-out).
+
+### What changed
+
+| Change | Design row | Effect in one line |
+|---|---|---|
+| Evidence-based candidate recommendation | D47 | Recommended equal to best rises; no pixel changes |
+| Smooth-upscale palette split gate (`kernelRms`) | D48 | True near colours of clean smooth upscales survive the merge |
+| Gradient-background surface | D49 | Gradient backdrops can be removed |
+| Trim basis `{ basis: 'cells' }` | D50 | Soft alpha no longer widens the Trim box by a cell |
+| Soft-alpha stratum A and gradient presets | D51 | The bench can see soft model alpha and gradient backdrops |
+| Chance-corrected edge support, admit and reject rules, count refinement, count-constrained `lockGrid` DP | D52 | More native sizes exact, fewer false grids |
+| Review fixes (honest count-DP report, thin-strip surface refusal, deduped ids) | D53 | Report truthfulness; output changes only on thin strips |
+| Shared analysis memo and edge-profile cache | D54 | About 2.2 × faster `convertCandidates`, byte-identical output |
+| Noisy-grid Clean recommendation; Trim-cells fallback | D55 | Fewer speckles in the recommended real-sample outputs; one bench throw fixed |
+| Rejected: τ_merge 0.03 with boundary snap, neighbour smoothing (`n3`) and orphan reassignment | — | Fails the committed and showcase ratchets; real palettes +37 to +85 % ([open question 5](../planning/prototype-algorithm-design.md#open-questions-and-next-experiments)) |
+
+### Bench, three seeds, round 3
+
+`npm run bench -- --seeds 3` at `93efc52` (engine `0.9.2`, before D55, which changes only recommendations and fixes the one throw below), `pixilate-synth/4`: 1,446 synthetic cases from 28 families (the same matrix as the [earlier 2026-10-20 run](#bench-three-seeds)), the bench-only soft-alpha and gradient groups, and 12 no-grid scenes. "Before" is the earlier 2026-10-20 three-seed run on engine `0.5.0`.
+
+| Stratum | Cases | Median | p10 | Recommended | Best | Rec. = best | Baseline cases | Engine | Area | Nearest |
+|---|---|---|---|---|---|---|---|---|---|---|
+| G exact grid | 288 | 1.000 | 1.000 | 1.000 | 1.000 | 100 % | 288 | 1.000 | 1.000 | 1.000 |
+| I interpolated grid | 648 | 0.909 → **0.965** | 0.216 → 0.216 | 0.900 → 0.960 | 0.915 → 0.965 | 44 → 77 % | 396 | 0.902 → **0.948** | 0.663 | 0.945 |
+| M mixel (incl. 60 Trim cases) | 420 | 0.815 → 0.815 | 0.443 → 0.443 | 0.794 → 0.794 | 0.803 → 0.805 | 39 → 51 % | 120 | 0.715 → 0.715 | 0.673 | **0.760** |
+| B background | 90 | 0.700 → 0.700 | 0.307 → 0.307 | 0.654 → 0.649 | 0.703 → 0.703 | 42 → 49 % | 30 | **0.812** | 0.665 | 0.687 |
+
+All 1,446 synthetic cases: median 0.948 → 0.974, p10 0.417 → 0.424, recommended 0.922 → 0.953, best 0.935 → 0.960, recommended equal to best 54 → 72 %, 0 errors. On stratum I the engine now edges the nearest baseline on the same baseline cases (0.948 against 0.945); it still trails it on M.
+
+| Group (90 cases) | Median before → after | Recommended | Nearest |
+|---|---|---|---|
+| `bilinear-x8` | 0.885 → 0.944 | 0.860 → 0.939 | 0.914 |
+| `bilinear-x8.37` | 0.871 → 0.951 | 0.860 → 0.951 | **0.978** |
+| `bicubic-x8-clean` | 0.768 → 0.777 | 0.745 → 0.777 | **0.961** |
+| `bicubic-x8` (noisy) | 0.117 → 0.117 | 0.120 → 0.119 | **0.530** |
+| `gemini-like` | 0.818 → 0.818 | 0.815 → 0.815 | **0.930** |
+| `jpeg-heavy` | 0.845 → 0.845 | 0.852 → 0.852 | **0.949** |
+
+**Extra groups (new; bench-only, reported apart from the strata).** Gradient backdrops (90 cases each): `gpt-gradient` median 0.844 (engine on baseline cases 0.782, nearest 0.721), `gemini-gradient` 0.835 (0.884, nearest 0.888). Soft alpha, full canvas (60 cases each): `soft-ref` 0.824, `soft-alpha` 0.824, `-premul` 0.785, `-webp` 0.799, `-erode` 0.752, `-matte` 0.744, `-glow` 0.733; nearest 0.698–0.756. With Trim, scored by `emSnap`: `+trim-cells` 0.712–0.768 (glow 0.610) against `+trim` 0.333–0.364 (glow 0.170). One case (`proc-sparks/soft-alpha+trim-cells/s2`) threw `empty-visible-region` at `93efc52`; D55 (2) fixes it.
+
+**No-grid scenes (OBSERVED, procedural).** False grids 2 of 12 → 1 of 12 (one `shapes` seed `weak`); a grid candidate recommended 1 of 12 → 0 of 12. Too few cases for a rate claim.
+
+### Comparison with reference re-implementations, round 3
+
+`node scripts/compare.mjs --seeds 1` at `fed010a` (engine `0.10.0`), 450 synthetic cases, 0 errors for every method, run as 24 shards and merged. Five references were added, each a clean-room re-implementation in `test/reference-tools.js` of an MIT project at its pin: Real-PixelArt `17ce4875` (auto, and fixed-size `targetAxis`), proper-pixel-art `4de0dda5`, fast-pixelizer `5c041fce` (`snap`, 32 colours), breakfastz-pixel-truth `a1a3961c` (auto with 16 colours, and manual width = W) and PixelRefiner `c32659f3` (phase-aware grid search). Every reference is "a reference re-implementation of the tool at a pinned revision, not the tool itself", so results describe the algorithm as Pixilate's spikes read it and support no claim about any product. **OBSERVED, local-only, not rights-cleared** (the matrix includes local-only crops and sprites), in-sample, not a methodology §12 comparison.
+
+Harness caveats, in addition to those of the [earlier 2026-10-20 comparison](#exploratory-comparison-with-reference-re-implementations):
+
+- **Common cap.** `_kT` and `_k16` re-quantize every output, ours and the oracle included, with one shared deterministic k-means (`kmeansRGB`: k-means++ in RGB, seed 42, 15 iterations; skipped when the output already has ≤ K colours) to K = the truth palette size or 16, so palette caps stop deciding the ranking.
+- **Mask before cap (`fed010a`).** `emIn` now imposes the truth alpha mask *before* the common cap, so a baked-in background can no longer take a k-means cluster. The previous run (`474f8a6`, engine `0.9.2`, cap before mask) gave lower capped scores for every method: at `_kT` (all / I / M / B), ours 0.955 / 0.909 / 0.835 / 0.787, Real-PixelArt fixed-size 0.930 / 0.902 / 0.852 / 0.782, nearest 0.905 / 0.891 / 0.761 / 0.649. Native-cap `emIn` is not affected.
+- **Background off.** Ours' `emIn` is scored on a background-off run of the same candidate id, since over-removal would count and missed background would not; `emInOn` is the default background-on run. Median `emInOn` at `_kT` (all / I / M / B): 0.970 / 0.956 / 0.818 / 0.798 (native cap: 0.964 / 0.948 / 0.818 / 0.804).
+- `oursBest` is an oracle (truth-selected candidate). Times per case are not comparable with earlier runs, because 24 shards shared one machine.
+
+**Target mode, common cap K = truth palette size (`_kT`): median `emIn` at the true W×H.** Bold: best non-oracle method per stratum (ties at 1.000 on G are not marked).
+
+| Method | all | G | I | M | B |
+|---|---|---|---|---|---|
+| Ours (recommended) | **0.976** | 1.000 | **0.956** | 0.835 | **0.856** |
+| Ours best (oracle) | 0.984 | 1.000 | 0.967 | 0.854 | 0.860 |
+| Real-PixelArt fixed-size ref | 0.963 | 1.000 | 0.929 | **0.872** | 0.830 |
+| Nearest | 0.916 | 1.000 | 0.904 | 0.782 | 0.756 |
+| Retro Diffusion ref | 0.838 | 1.000 | 0.788 | 0.703 | 0.634 |
+| pixeldetector ref | 0.834 | 1.000 | 0.762 | 0.783 | 0.738 |
+| PixelOE ref | 0.824 | 1.000 | 0.800 | 0.630 | 0.710 |
+| fast-pixelizer ref | 0.812 | 1.000 | 0.725 | 0.752 | 0.561 |
+| Real-PixelArt auto ref | 0.811 | 1.000 | 0.769 | 0.640 | 0.536 |
+| PixelRefiner ref | 0.750 | 0.777 | 0.759 | 0.725 | 0.546 |
+| breakfastz ref | 0.675 | 0.988 | 0.643 | 0.570 | 0.557 |
+| proper-pixel-art ref | 0.674 | 0.887 | 0.633 | 0.621 | 0.537 |
+| breakfastz manual-width ref | 0.668 | 0.912 | 0.636 | 0.573 | 0.578 |
+| unfake ref | 0.664 | 1.000 | 0.569 | 0.605 | 0.587 |
+| Area | 0.658 | 1.000 | 0.530 | 0.504 | 0.529 |
+| Pixel Snapper ref | 0.569 | 0.783 | 0.530 | 0.519 | 0.526 |
+
+**Native cap and K = 16** (median `emIn`, all / G / I / M / B).
+
+| Method | Native cap | `_k16` |
+|---|---|---|
+| Ours (recommended) | **0.976** / 1.000 / **0.948** / 0.835 / 0.826 | **0.887** / 0.992 / **0.860** / 0.833 / 0.826 |
+| Ours best (oracle) | 0.982 / 1.000 / 0.958 / 0.854 / 0.831 | 0.899 / 0.992 / 0.868 / 0.852 / 0.831 |
+| Real-PixelArt fixed-size ref | 0.959 / 1.000 / 0.934 / **0.900** / **0.854** | 0.871 / 0.992 / 0.828 / **0.854** / **0.852** |
+| Nearest | 0.929 / 1.000 / 0.938 / 0.792 / 0.781 | 0.818 / 0.992 / 0.806 / 0.714 / 0.768 |
+| Retro Diffusion ref | 0.846 / 1.000 / 0.808 / 0.734 / 0.642 | 0.743 / 0.976 / 0.695 / 0.666 / 0.596 |
+| pixeldetector ref | 0.844 / 1.000 / 0.793 / 0.775 / 0.764 | 0.760 / 0.992 / 0.665 / 0.731 / 0.740 |
+| PixelOE ref | 0.846 / 1.000 / 0.844 / 0.622 / 0.722 | 0.745 / 0.992 / 0.743 / 0.603 / 0.681 |
+| fast-pixelizer ref | 0.818 / 1.000 / 0.740 / 0.750 / 0.623 | 0.736 / 0.992 / 0.656 / 0.711 / 0.565 |
+| Real-PixelArt auto ref | 0.831 / 1.000 / 0.792 / 0.664 / 0.564 | 0.713 / 0.992 / 0.696 / 0.604 / 0.483 |
+| PixelRefiner ref | 0.768 / 0.778 / 0.793 / 0.745 / 0.614 | 0.699 / 0.775 / 0.698 / 0.677 / 0.546 |
+| breakfastz ref | 0.680 / 0.988 / 0.649 / 0.564 / 0.557 | 0.680 / 0.988 / 0.649 / 0.564 / 0.557 |
+| proper-pixel-art ref | 0.679 / 0.887 / 0.637 / 0.627 / 0.528 | 0.606 / 0.868 / 0.578 / 0.592 / 0.462 |
+| breakfastz manual-width ref | 0.671 / 0.914 / 0.636 / 0.572 / 0.578 | 0.671 / 0.914 / 0.636 / 0.572 / 0.578 |
+| unfake ref | 0.668 / 1.000 / 0.558 / 0.595 / 0.587 | 0.610 / 0.976 / 0.499 / 0.565 / 0.584 |
+| Area | 0.667 / 1.000 / 0.606 / 0.530 / 0.607 | 0.605 / 0.992 / 0.487 / 0.468 / 0.567 |
+| Pixel Snapper ref | 0.567 / 0.783 / 0.534 / 0.514 / 0.526 | 0.567 / 0.783 / 0.534 / 0.514 / 0.526 |
+
+**Native mode: size-exact rate** (all / G / I / M / B). Ours 0.780 / 1.000 / 0.743 / 0.733 / 0.567 (earlier 2026-10-20 run: 0.736 / 1.000 / 0.710 / 0.625 / 0.567), within one cell 0.856. References: breakfastz 0.416 / 1.000 / 0.381 / 0.142 / 0.000; Real-PixelArt auto 0.324 / 1.000 / 0.209 / 0.100 / 0.000; fast-pixelizer 0.311 / 1.000 / 0.071 / 0.267 / 0.100; pixeldetector 0.267; proper-pixel-art 0.244; Retro Diffusion 0.233; unfake 0.200; Pixel Snapper 0.100; PixelRefiner 0.069 (all cases). **No-grid scenes** (4, one seed): a lattice was asserted by ours 0, Real-PixelArt auto 0.5, Retro Diffusion 0.75 and every other reference 1.0.
+
+**Where a method beats ours at `_kT`** (cases won / lost by more than 0.02 `emIn`). Over all 450 cases only Real-PixelArt fixed-size wins more than it loses (135 / 88; on M 60 / 21). Nearest is 116 / 137, and every other reference loses more. Per preset (30 cases each; medians in brackets):
+
+| Preset | Ours | Methods with more wins than losses |
+|---|---|---|
+| `gpt-image-like` | 0.788 | Real-PixelArt fixed-size 14 / 7 (0.861) |
+| `gemini-like` | 0.873 | Real-PixelArt fixed-size 17 / 2 (0.939); pixeldetector 16 / 10 (0.870); nearest 14 / 8 (0.845) |
+| `drift-heavy` | 0.848 | Real-PixelArt fixed-size 16 / 5 (0.825) |
+| `mixel-detail` | 0.843 | Real-PixelArt fixed-size 13 / 7 (0.845) |
+| `jpeg-heavy` | 0.883 | Real-PixelArt fixed-size 15 / 4 (0.962); pixeldetector 13 / 11; PixelOE 11 / 9; nearest 12 / 10 (0.898) |
+| `fake-alpha` | 0.856 | Real-PixelArt fixed-size 12 / 8 (0.830) |
+| `bicubic-x8` (noisy) | 0.369 | Real-PixelArt fixed-size 17 / 7 (0.396); nearest 16 / 9 (0.387); the Retro Diffusion, Real-PixelArt auto, fast-pixelizer, pixeldetector and PixelRefiner refs (0.344–0.390) |
+| `bilinear-x8.37` | 0.951 | nearest 11 / 8 (0.959) |
+| `bicubic-x8-clean` | 0.777 | Real-PixelArt fixed-size 18 / 4 (0.933); nearest 17 / 4 (0.923); Real-PixelArt auto 15 / 5 (0.923); PixelRefiner 14 / 5; Retro Diffusion 13 / 10 |
+
+On `nonint-nn`, Real-PixelArt fixed-size is 3 / 2 with both medians at 1.000.
+
+**Private AI samples at the pitch-estimate target** (OBSERVED, local-only, not rights-cleared): colours / noise orphans (`score.mjs`) of our recommended output against the Real-PixelArt fixed-size reference, which does no palette reduction.
+
+| Sample | Target | Ours | Real-PixelArt fixed-size ref |
+|---|---|---|---|
+| `gpt-oni` | 126×117 | `clean` 27 / 72 | 2,628 / 394 |
+| `gemini-mage` | 146×144 | `clean` 43 / 497 | 5,189 / 1,566 |
+| `gpt-forest` | 250×143 | `clean` 36 / 306 | 24,186 / 3,611 |
+| `unk-dungeon` | 241×178 | `clean` 19 / 365 | 6,455 / 1,471 |
+| `unk-coat` | 61×64 | `clean` 22 / 58 | 519 / 269 |
+| `ai-wizard` (no-grid control) | 64×64 | `smooth` 37 / 300 | 3,034 / 478 |
+
+Native sizes of the older references are unchanged from the [earlier table](#exploratory-comparison-with-reference-re-implementations). Real-PixelArt auto gave 120×118, 145×144, 250×142, 244×183 and 61×63 on the gridded samples and 1024×1024 on `ai-wizard`.
+
+### Real-sample timing and noise after D54–D55
+
+OBSERVED, local-only, not rights-cleared; Node on one machine; `convertCandidates` at the pitch-estimate target; warm median of 3 runs after one cold run. Engine `0.10.0` against engine `0.5.0` (the earlier 2026-10-20 round): `gpt-oni` 857 → 409 ms, `gemini-mage` 1,658 → 666, `gpt-forest` 1,300 → 753, `unk-dungeon` 1,036 → 526, `unk-coat` 349 → 167, `ai-wizard` 236 → 160 (median 2.0 ×). D54 alone measured about 2.2 × in its row (for example `gpt-oni` 937 → 420 ms, `gemini-mage` 1,782 → 795 ms); D52 added a little analysis time.
+
+Noise orphans of the recommended output at the same target, before D55 (`474f8a6`) → after: `gemini-mage` 733 (`grid`) → 497 (`clean`), `gpt-forest` 1,470 (`grid`) → 306 (`clean`), `unk-coat` 82 (`grid`) → 58 (`clean`). `gpt-oni` (72), `unk-dungeon` (365) and `ai-wizard` (300) were already `clean` or `smooth` and are unchanged. Engine `0.5.0` gave 62, 359, 306, 219, 58 and 300 on the same settings (`gpt-oni`, `gemini-mage`, `gpt-forest`, `unk-dungeon`, `unk-coat`, `ai-wizard`), so `gpt-oni`, `gemini-mage` and, at this target, `unk-dungeon` are still noisier than before round 3. D55's own measurement at the suggested sizes is in its row.
+
+### Limitations found in round 3
+
+1. **The Real-PixelArt fixed-size reference still leads on stratum M** in every palette mode (`_kT` 0.872 against 0.835, 60 wins and 21 losses of 120) and on B at native cap and K = 16. Its count-constrained DP was adopted only as a fallback (D52); as the full lock lattice it measured 22 cases worse and 42 better.
+2. **Nearest leads on `bilinear-x8.37` and `bicubic-x8-clean`** (bench 0.978 and 0.961 against 0.951 and 0.777; `_kT` 0.959 and 0.923 against 0.951 and 0.777), where it is given the true size and a clean upscale.
+3. **The `gemini-mage` and `gpt-oni` Clean candidates are noisier than before D52** (noise orphans 497 against 359, and 72 against 62, on engine `0.5.0`). INFERRED cause: the D52 count-DP fallback shifts parts of their lattices by about one cell.
+4. **White-on-white sprites need an explicit key.** The suspected background leak was investigated and is not a bug: background `'auto'` removes subject cells whose colour is within its tolerance of the background, such as near-white sparks on white (OBSERVED, procedural).
+5. **`proc-icon/fake-alpha` keeps a checker patch** after background removal (OBSERVED, procedural).
+6. **Noisy `bicubic-x8` is unchanged** at 0.117 (nearest 0.530).
+7. **In-sample tuning.** Most round-3 thresholds have no hold-out; the exceptions are named at the top of this section.
 
 ## 2026-10-20 round
 
@@ -386,7 +532,7 @@ Each row was found by a test, a review, or visual inspection, and each fix has a
 9. **Mixed-scale images** (subject and background on different grids) get one grid.
 10. **WebP, AVIF and GIF** decode through the browser canvas, which is not guaranteed deterministic, and they do not work in Node.
 11. **Inputs are capped at 16.7 MP and targets at 1024 px per side.**
-12. **Limitations found on 2026-10-20** (palette collapse on smooth upscales, blurred art, bilinear ×3, soft alpha and others) are listed in [limitations found this round](#limitations-found-this-round).
+12. **Limitations found on 2026-10-20** (palette collapse on smooth upscales, blurred art, bilinear ×3, soft alpha and others) are listed in [limitations found this round](#limitations-found-this-round); round-3 limitations are in [Limitations found in round 3](#limitations-found-in-round-3).
 
 ## Reproduce
 
@@ -400,7 +546,7 @@ cd prototype && npm run bench -- --seeds 1
 
 The bench writes `results.json`, per-case images and `index.html` to the gitignored `.local/pixel-downscaler-bench/`. Rows that use showcase crops, private sprites or private AI samples run only when those gitignored files are present; without them the bench runs the procedural families only.
 
-The three-seed run in the [2026-10-20 round](#2026-10-20-round) is `npm run bench -- --seeds 3`. The exploratory comparison is `cd prototype && node scripts/compare.mjs`, which writes to the gitignored `.local/compare/`.
+The three-seed runs are `npm run bench -- --seeds 3`. The exploratory comparison is `cd prototype && node scripts/compare.mjs`, which writes to the gitignored `.local/compare/`; it can run as shards (`--shard k/n --budget s`, cached per case) and then merge (`--merge`), and `--real-only --filter <id>` runs one private sample.
 
 After an intended behaviour change, rewrite the committed baseline, commit it on its own, and add a row to the [golden-change record](#golden-change-record):
 

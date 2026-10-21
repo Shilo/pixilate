@@ -60,6 +60,8 @@ Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseli
 
 [prototype/src/lib/core/detect.js](prototype/src/lib/core/detect.js): report-only provenance and generator signals.
 
+[prototype/src/lib/core/orphans.js](prototype/src/lib/core/orphans.js): orphan-pixel classification shared by metrics, score.mjs and the recommendation.
+
 [prototype/src/lib/decode.js](prototype/src/lib/decode.js): deterministic PNG/JPEG decode.
 
 [prototype/src/lib/core/canonical.js](prototype/src/lib/core/canonical.js): typed errors and canonical RGBA hash.

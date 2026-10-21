@@ -719,3 +719,22 @@ VERIFIED (commit metadata, 2026-10-20): Pixel Snapper `e6d81463` (README only), 
 - **pixelfit licence:** the 2026-10-19 "mixed or no licence, draft-reported" row is superseded for pixelfit. The GitHub API and README state MIT (VERIFIED 2026-10-20).
 
 **Pixilate implication (INFERRED).** None of these projects changes the reuse matrix. Real-PixelArt is the only new MIT, client-side, fixed-W×H grid fitter, so it joins PixelRefiner as a benchmark target. Algorithm ideas are ranked in [state of the art, 2026-10-20 refresh](../algorithms/state-of-the-art.md#2026-10-20-refresh).
+
+## Addendum — 2026-10-20 round 3: measured comparison of clean-room references
+
+**Snapshot:** 2026-10-20. Five MIT projects pinned above were re-implemented clean-room, from this spike's source readings, in [`prototype/test/reference-tools.js`](../../../prototype/test/reference-tools.js): Real-PixelArt `17ce4875` (auto and fixed-size `targetAxis`), proper-pixel-art `4de0dda5`, fast-pixelizer `5c041fce` (`snap`), breakfastz-pixel-truth `a1a3961c` (auto, and manual width) and PixelRefiner `c32659f3` (phase-aware grid search). No third-party code was downloaded, run or copied. Each is a reference re-implementation at its pin, not the tool itself, so the numbers describe the algorithm as read here and support no claim about any product.
+
+Measured with `prototype/scripts/compare.mjs` on the in-sample development matrix (450 synthetic cases, one seed, engine `0.10.0`). **OBSERVED, local-only, not rights-cleared** (the matrix includes local-only crops and sprites); not a methodology §12 comparison. Median `emIn` at the true W×H after one shared palette cap (K = truth palette size), all / I / M:
+
+| Method | all | I | M | Native size-exact |
+|---|---|---|---|---|
+| Pixilate prototype (recommended) | 0.976 | 0.956 | 0.835 | 0.780 |
+| Real-PixelArt fixed-size ref | 0.963 | 0.929 | 0.872 | n/a (takes W×H) |
+| Nearest baseline | 0.916 | 0.904 | 0.782 | n/a |
+| fast-pixelizer ref | 0.812 | 0.725 | 0.752 | 0.311 |
+| Real-PixelArt auto ref | 0.811 | 0.769 | 0.640 | 0.324 |
+| PixelRefiner ref | 0.750 | 0.759 | 0.725 | 0.069 |
+| breakfastz ref | 0.675 | 0.643 | 0.570 | 0.416 |
+| proper-pixel-art ref | 0.674 | 0.633 | 0.621 | 0.244 |
+
+**Reading (INFERRED).** The fixed-size Real-PixelArt lattice is the strongest reference here and leads the prototype on the mixel stratum M; its count-constrained DP and chance-corrected edge support were adopted in the prototype as D52. The discovered-size references rarely recover the exact native size on non-integer and mixel inputs, and on the four no-grid scenes every new reference except Real-PixelArt auto (2 of 4) asserted a lattice. Full tables, caveats and the older references are in the [prototype test results, Round 3](../../reviews/prototype-v1-test-results.md#round-3-2026-10-20). The reuse matrix is unchanged.

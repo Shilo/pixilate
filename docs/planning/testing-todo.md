@@ -141,25 +141,26 @@ PixelLab outputs true pixel art at a chosen size, so it can serve as known-good 
 
 ## 8. Algorithm work
 
-Each item is linked to the open questions in the [design](prototype-algorithm-design.md#open-questions-and-next-experiments) and the [session findings](session-findings-2026-10-20.md#ranked-next-steps). For every behaviour change, add a Deviations row with evidence.
+Each item is linked to the open questions in the [design](prototype-algorithm-design.md#open-questions-and-next-experiments) and the [session findings](session-findings-2026-10-20.md#round-3-update-2026-10-20). For every behaviour change, add a Deviations row with evidence.
 
 - [x] [Agent] `scripts/score.mjs <output.png> [--target WxH] [--colors N] [--json]` (2026-10-20). It prints the hard checks (size, binary alpha, mixels via Q13, palette cap) and the intrinsic metrics from `test/metrics.js` (colours, near-duplicates, orphans by class, L-corner doubles, islands, pinholes). Thresholds are the provisional defaults. The noise-orphan flag fires on most real native outputs, so calibrate it against the live rubric scores. Not done: source-referenced faithfulness and showing the numbers in the UI.
 - [x] [Agent] `scripts/live-batch.mjs` (2026-10-20). It covers §3 in one command, including the determinism check (3 local samples × 2 modes × 5 sizes in about 26 s).
 - [ ] [Agent] **Calibrate the automatic flags** once the first live batch has rubric scores: set the noise-orphan and L-corner ceilings from outputs the human rated 4 or higher.
 - [x] [Agent] **Smooth-upscale detection** (2026-10-20; design D37–D41). Committed smooth-upscale fixtures and gate G-SMOOTH, a second-difference fallback, and cell deconvolution on its lattices. Local PixelLab bilinear round trips: lattice found in 8 of 8 (was 1 of 8), and after deconvolution a median 97.3 % of opaque pixels within 12/255. See [test results](../reviews/prototype-v1-test-results.md#2026-10-20-round).
 - [x] [Agent] **Mixel stratum: find the cause** (2026-10-20; D46). Forcing true lattices left M unchanged, and centre-weighted colour estimators scored lower, so the gap to the nearest baseline is palette merging, not the cell estimate. The fix is the palette item below.
-- [ ] [Agent] **Palette fidelity (top priority).** The Ward merge (τ_merge 0.045) collapses true colours: `local-tileset` 38 → 7 colours after a smooth upscale, and the palette stage costs 0.12–0.17 on clean smooth presets. Every τ_merge change failed the defect ratchet (speckle, near-duplicate doubles) even though colour match rose (D46).
-  - Ideas: emit the observed or medoid source RGB for non-pure cells; merge only spatially intermixed pairs; a two-sided gate.
-  - Accept only if stratum M closes the gap to nearest, the defect ratchet holds, and real native palettes stay within +20 %.
+- [x] [Agent] **Palette fidelity on clean smooth upscales** (2026-10-20; D48). The `kernelRms` split gate keeps true near colours: stratum I median 0.909 → 0.957 on one seed. τ_merge 0.03 with boundary snap, neighbour smoothing and orphan reassignment was tried in round 3 and rejected (ratchets fail, real palettes +37 to +85 %), and oracle cell colours lift M by only +0.004.
+- [ ] [Agent] **Stratum M gap (top priority).** The Real-PixelArt fixed-size reference leads on M at every palette cap (`_kT` 0.872 against 0.835; [test results, round 3](../reviews/prototype-v1-test-results.md#round-3-2026-10-20)). Neither the merge nor the cell estimate is the limit, so look at lattice placement: when to use the count-constrained lattice instead of the elastic one (as the full lattice it was 22 worse, 42 better in D52).
+  - Accept only if M improves, the defect ratchet holds, and real native palettes stay within +20 %.
+- [ ] [Agent] **Real-sample Clean noise since D52.** The `gemini-mage` and `gpt-oni` Clean candidates have more noise orphans than on engine `0.5.0` (497 against 359, 72 against 62). Bisect, and check whether the count-DP lattice shift is the cause.
+- [ ] [Agent] **Hold-out split.** Most round-3 thresholds are tuned in-sample; set a family or seed hold-out before tuning further.
 - [ ] [Agent] **Blurred-art recommendation discriminator.** On heavily blurred pixel art (NN ×8, edge blur σ 3) the fallback fires and the recommendation flips from smooth to clean: 14 of 39 cases worse (means −0.01 to −0.04). Hypothesis: use the kernel-fit residual from `fitcells.js` to choose smooth versus clean.
 - [ ] [Agent] **Bilinear ×3 scale floor.** The fallback regresses at ×3 (`local-portrait` within-12 94.4 → 85.5 %). Find the floor (by period or ramp share) below which the fallback must not fire.
 - [ ] [Agent] **Wrong first-difference lattice on `proc-ui` ×4.** It blocks the fallback (the D39 replacement rule does not trigger).
 - [ ] [Agent] **Seamless veto on gradient art.** Check whether the D8 step-ratio veto rejects smoothly upscaled gradient-shaded pixel art before the fallback can help.
 - [ ] [Agent] **Second-difference profile for `manualPeriod`.** A user-given period currently always locks on first differences.
-- [ ] [Agent] **Soft-alpha stratum** for GPT Image transparent output: add a synthetic preset with soft model alpha and test `Binary(128)`, the background stage and Trim on it.
-- [ ] [Agent] **Count-constrained DP for `lockGrid`** (Real-PixelArt idea, MIT; [state of the art refresh](../research-spikes/algorithms/state-of-the-art.md#2026-10-20-refresh), idea 3): a DP over the interior cuts that cannot miss the fixed count, for the common `grid-locked` rows.
-- [ ] [Agent] **Chance-corrected edge support** as a grid-confidence feature (same refresh, idea 1), next to the D8 step ratio, measured on the remaining detection misses.
-- [ ] [Agent] **Other detection misses:** the noisy `bicubic-x8` preset (the fallback does not fire on it; the clean bicubic preset is now recovered), the non-integer 1-bit case, and a fractional nearest-neighbour upscale of a local building sprite all fall to the raster route.
+- [x] [Agent] **Soft-alpha stratum** (2026-10-20; D50, D51): synthetic soft-alpha presets, the Trim cell basis, and a gradient-background surface (D49). Still open: real soft model alpha from a live batch.
+- [x] [Agent] **Count-constrained `lockGrid` DP and chance-corrected edge support** (2026-10-20; D52, Real-PixelArt ideas, MIT, clean-room). Native size-exact 0.739 → 0.782, false grids on no-grid seeds 1–10 5 → 1 of 40.
+- [ ] [Agent] **Other detection misses:** the noisy `bicubic-x8` preset (the fallback does not fire on it; the clean bicubic preset is now recovered) still falls to the raster route. The non-integer 1-bit case and the fractional nearest-neighbour upscale of the local building sprite are found since D52.
   - Try a calibrated grid / mixel / no-grid confidence (a-contrario test, run-length cross-check).
   - Make `route: 'auto'` agree with the candidate recommendation for weak grids.
 - [ ] [Agent] **Recommendation on large reductions.** On real samples, Smooth beat the recommended Clean for scenes at strong reductions (`unk-dungeon` 64×48 flattened the floor texture; `gpt-forest` 96×54 broke the title text), while Clean was best for `gemini-mage` at 32×32. Decide the recommendation from evidence (ratio, texture, subject) instead of grid class alone.
@@ -169,8 +170,8 @@ Each item is linked to the open questions in the [design](prototype-algorithm-de
 - [ ] [Agent] **Large reductions (3× or more, e.g. to 16 px):** evaluate PixelOE-style outline expansion and DPID-style weighting on the reduction path.
   - Pass criterion: live 16 px pass rate improves without regressing 32 px and above.
 - [ ] [Agent] **Ambiguous exact grids:** implement the owner's decision on `OD-004`: refuse, require an instructed lattice, or offer the candidates.
-- [ ] [Agent] **Clean profile safety:** add a components and holes topology guard, and a diff overlay of the pixels Clean changed.
-- [ ] [Agent] **Painted checkerboards and white ink:** use the live failures from §4 to fix subject parts that share a checker colour.
+- [ ] [Agent] **Clean profile safety:** a diff overlay of the pixels Clean changed. A components-and-holes topology guard was measured in D55 and not added: it never differed on 422 grid recommendations.
+- [ ] [Agent] **Painted checkerboards and white ink:** use the live failures from §4 to fix subject parts that share a checker colour. White-on-white sprites need an explicit key colour (round 3: background `'auto'` removes subject cells within its tolerance by design), and `proc-icon/fake-alpha` keeps a checker patch.
 - [ ] [Agent] **Sprite sheets:** detect multiple objects with different grids, and either convert them per object or warn.
 - [ ] [Agent] **Typed decode errors and colour profiles:** typed codes for decode failures; decide on ICC conversion versus "assumed sRGB".
 - [ ] [Agent] **Turn recurring live failures into committed procedural fixtures** that reproduce the failure mode, never the private image itself, so each fix is guarded by a test.
@@ -180,6 +181,8 @@ Each item is linked to the open questions in the [design](prototype-algorithm-de
 - [ ] [Human] Allow agents to download public, licensed sample images for the corpus: see the [sourcing plan](../research-spikes/evaluation/ai-artifact-characterization.md#4-real-sample-sourcing-plan-do-not-download-until-approved).
 - [ ] [Human] Decide the ambiguous-grid policy (`OD-004`).
 - [ ] [Human] Declare the licence (intended MIT).
+- [ ] [Human] Decide whether Trim `{ basis: 'cells' }` becomes the grid-route default (D50; PRD §9.2 fixes τ = 0).
+- [ ] [Human] Decide whether semi-transparent glow and shadow layers become an opaque ring or drop under `Binary(128)` (D51; `OWN-005`).
 
 ## Results log template
 
