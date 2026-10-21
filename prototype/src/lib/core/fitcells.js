@@ -1,7 +1,7 @@
 // Smooth-upscale cell colours (second-difference grids only): a bilinear/bicubic upscale blurs each
-// cell into its neighbours, so the pixel nearest a cell centre is a mix of the cell and its 3x3
-// neighbourhood. Fit one separable 2-weight kernel per image by grid-search least squares on the
-// image's own pixels, then deconvolve the cell colours with it. Premultiplied RGBA floats; only
+// cell into its neighbours, so the pixel nearest a cell centre is a mix of the cell and its
+// neighbourhood. Fit one separable kernel per image by grid-search least squares on the image's own
+// pixels (a 2-weight 3-tap kernel, or a 5-tap Keys cubic, D60), then deconvolve the cell colours with it. Premultiplied RGBA floats; only
 // sqrt/round; fixed loop orders; no module state.
 import { srgbToOklab } from './color.js'
 
@@ -11,6 +11,7 @@ const MIN_FIT = 8 // fewer fit cells -> no kernel
 const EARLY_RMS = 1 // the box-free kernel (a, b) = (1, 0) is accepted below this residual
 const MAX_RMS = 12 // a best residual above this -> no kernel
 const SNAP = 3 // keep an observed opaque RGB within this max-channel distance of the estimate
+const KEYS_A = [-0.5, -0.6, -0.75] // D60: Keys cubic parameters tried after the (a, b) search; adopted below EARLY_RMS only
 const RADIUS = 2 // during the search only cells within this Chebyshev distance of a fit cell are solved
 
 /** Per axis: nearest pixel j and its signed offset del (cell units) per cell; cell and offset dp per pixel. */
@@ -30,11 +31,28 @@ function axisInfo(a, len) {
   return { n, j, del, cell, dp }
 }
 
-/** 1-D weights on (prev, centre, next) at signed offset d: the d side gets a|d|, the opposite b|d|. */
-function w1(d, a, b, out) {
-  const t = d < 0 ? -d : d
-  out[1] = 1 - (a + b) * t
-  if (d >= 0) { out[2] = a * t; out[0] = b * t } else { out[0] = a * t; out[2] = b * t }
+
+/** Keys cubic (parameter A < 0) at distance t >= 0; polynomial only. */
+function keys(t, A) {
+  if (t < 1) return ((A + 2) * t - (A + 3)) * t * t + 1
+  if (t < 2) return ((A * t - 5 * A) * t + 8 * A) * t - 4 * A
+  return 0
+}
+
+/**
+ * 1-D weights on cells -2..+2 at signed offset d. Kernel { a, b }: 3-tap, the d side gets a|d|, the
+ * opposite b|d| (cells -2 and +2 get 0). Kernel { keys: A }: Keys cubic at each cell centre, normalized.
+ */
+function w5(d, k, out) {
+  if (k.keys == null) {
+    const t = d < 0 ? -d : d
+    out[0] = 0; out[4] = 0; out[2] = 1 - (k.a + k.b) * t
+    if (d >= 0) { out[3] = k.a * t; out[1] = k.b * t } else { out[1] = k.a * t; out[3] = k.b * t }
+    return
+  }
+  let s = 0
+  for (let m = -2; m <= 2; m++) { const t = d - m; s += out[m + 2] = keys(t < 0 ? -t : t, k.keys) }
+  for (let m = 0; m < 5; m++) out[m] /= s
 }
 
 /** Shared state of one image + grid: observations (nearest pixel per cell) and the solver. */
@@ -48,38 +66,39 @@ function setup(img, g) {
     for (let k = 0; k < 4; k++) obs[(cy * w + cx) * 4 + k] = pre(p, k)
   }
   const cl = (i, m) => (i < 0 ? 0 : i >= m ? m - 1 : i)
-  const wx = new Float64Array(3), wy = new Float64Array(3)
+  const wx = new Float64Array(5), wy = new Float64Array(5)
   // v = obs, then ITERS Jacobi sweeps v_c = (obs_c - sum of non-centre w * v_nb) / w_c, clamped to
   // [0, 255]; `list` (cell ids) limits the updated cells, the rest keep their observation.
-  const solve = (a, b, list) => {
+  const solve = (k, list) => {
     let v = Float64Array.from(obs)
     for (let it = 0; it < ITERS; it++) {
       const nv = Float64Array.from(obs)
       for (let q = 0, L = list ? list.length : n; q < L; q++) {
         const c = list ? list[q] : q, cx = c % w, cy = (c - cx) / w
-        w1(X.del[cx], a, b, wx); w1(Y.del[cy], a, b, wy)
-        const wc = wx[1] * wy[1]
-        for (let k = 0; k < 4; k++) {
-          let s = obs[c * 4 + k]
-          for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) if (i !== 1 || j !== 1) s -= wx[i] * wy[j] * v[(cl(cy + j - 1, h) * w + cl(cx + i - 1, w)) * 4 + k]
+        w5(X.del[cx], k, wx); w5(Y.del[cy], k, wy)
+        const wc = wx[2] * wy[2]
+        for (let ch = 0; ch < 4; ch++) {
+          let s = obs[c * 4 + ch]
+          for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) if ((i !== 2 || j !== 2) && wx[i] !== 0 && wy[j] !== 0) s -= wx[i] * wy[j] * v[(cl(cy + j - 2, h) * w + cl(cx + i - 2, w)) * 4 + ch]
           const r = s / wc
-          nv[c * 4 + k] = r < 0 ? 0 : r > 255 ? 255 : r
+          nv[c * 4 + ch] = r < 0 ? 0 : r > 255 ? 255 : r
         }
       }
       v = nv
     }
     return v
   }
-  return { W, H, d, X, Y, w, h, n, pre, obs, solve, wx, wy }
+  return { W, H, d, X, Y, w, h, n, pre, obs, solve, wx, wy, cl }
 }
 
 /**
- * fitKernel(img, g, cells) -> { a, b, rms }: per-image kernel weights (a, b) and their residual
- * (RMS over premultiplied RGB of the fit cells' pixels); a = b = null when there are fewer than 8
- * fit cells (rms null) or the best residual exceeds 12.
+ * fitKernel(img, g, cells) -> { a, b, rms } or { a: A, b: null, keys: A, rms }: per-image kernel
+ * weights (a, b), or a Keys cubic parameter A (D60), and their residual (RMS over premultiplied RGB of
+ * the fit cells' pixels); a = b = null when there are fewer than 8 fit cells (rms null) or the best
+ * residual exceeds 12.
  */
 export function fitKernel(img, g, cells) {
-  const S = setup(img, g), { W, H, X, Y, w, h, n, pre, obs, solve, wx, wy } = S
+  const S = setup(img, g), { W, H, X, Y, w, h, n, pre, obs, solve, wx, wy, cl } = S
   // fit cells: interior, opaque, not pure, the 3x3 neighbourhood's observations fully opaque
   const fit = []
   for (let cy = 1; cy < h - 1; cy++) for (let cx = 1; cx < w - 1; cx++) {
@@ -110,14 +129,14 @@ export function fitKernel(img, g, cells) {
       for (let x = Math.max(0, Math.ceil(g.x.cuts[cx] - 0.5)); x < g.x.cuts[cx + 1] - 0.5 && x < W; x++) if (X.cell[x] === cx) px.push(cx, cy, x, y)
     }
   }
-  const sse = (a, b, v) => {
+  const sse = (kk, v) => {
     let e = 0
     for (let q = 0; q < px.length; q += 4) {
       const cx = px[q], cy = px[q + 1], x = px[q + 2], y = px[q + 3], p = (y * W + x) * 4
-      w1(X.dp[x], a, b, wx); w1(Y.dp[y], a, b, wy)
+      w5(X.dp[x], kk, wx); w5(Y.dp[y], kk, wy)
       for (let k = 0; k < 3; k++) {
         let pr = 0
-        for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) pr += wx[i] * wy[j] * v[((cy + j - 1) * w + cx + i - 1) * 4 + k]
+        for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) if (wx[i] !== 0 && wy[j] !== 0) pr += wx[i] * wy[j] * v[(cl(cy + j - 2, h) * w + cl(cx + i - 2, w)) * 4 + k]
         const dv = pre(p, k) - pr
         e += dv * dv
       }
@@ -125,16 +144,22 @@ export function fitKernel(img, g, cells) {
     return e
   }
   let best = null
-  const tryAB = (a, b) => { const e = sse(a, b, solve(a, b, region)); if (!best || e < best.e) best = { a, b, e } }
+  const tryAB = (a, b) => { const kk = { a, b }, e = sse(kk, solve(kk, region)); if (!best || e < best.e) best = { a, b, e } }
+  let bestK = null
+  const tryKeys = (A) => { const kk = { keys: A }, e = sse(kk, solve(kk, region)); if (!bestK || e < bestK.e) bestK = { a: A, b: null, keys: A, e } }
   const rms = () => Math.sqrt(best.e / ((px.length / 4) * 3))
   tryAB(1, 0)
   if (rms() >= EARLY_RMS) {
     for (let ia = 0; ia <= 6; ia++) for (let ib = -3; ib <= 1; ib++) if (ia !== 5 || ib !== 0) tryAB(ia / 5, ib / 5)
     const a0 = best.a, b0 = best.b, steps = [-0.1, -0.05, 0, 0.05, 0.1]
     for (const da of steps) for (const db of steps) if (da || db) tryAB(Math.round((a0 + da) * 100) / 100, Math.round((b0 + db) * 100) / 100)
+    for (const A of KEYS_A) tryKeys(A)
+    // D60: a Keys cubic replaces the (a, b) kernel only when it fits better and explains the image as a
+    // clean upscale (residual < EARLY_RMS); on noisy upscales its sharper inverse amplifies the noise
+    if (bestK && bestK.e < best.e && Math.sqrt(bestK.e / ((px.length / 4) * 3)) < EARLY_RMS) best = bestK
   }
   const r = rms()
-  return r > MAX_RMS ? { a: null, b: null, rms: r } : { a: best.a, b: best.b, rms: r }
+  return r > MAX_RMS ? { a: null, b: null, rms: r } : best.keys != null ? { a: best.a, b: null, keys: best.keys, rms: r } : { a: best.a, b: best.b, rms: r }
 }
 
 /**
@@ -145,7 +170,7 @@ export function fitKernel(img, g, cells) {
 export function deconvolveCells(img, g, cells, kernel) {
   if (kernel?.a == null) return cells
   const { W, H, d, X, Y, w, n, solve } = setup(img, g)
-  const v = solve(kernel.a, kernel.b, null), t = new Float64Array(3)
+  const v = solve(kernel, null), t = new Float64Array(3)
   for (let c = 0; c < n; c++) {
     if (!cells.alpha[c] || cells.pure[c]) continue
     const al = v[c * 4 + 3] / 255

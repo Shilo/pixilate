@@ -607,6 +607,40 @@ describe('convert: smooth-upscale fallback (second-difference lattice)', () => {
     }
   })
 
+  const deconv = (r) => r.report.grid.evidence.find((e) => e.startsWith('cell deconvolution'))
+  const sprite = (id) => proceduralSprites(1).find((s) => s.id === id).img
+
+  it('a Keys-bicubic x8 upscale adopts the Keys cubic kernel below residual 1 and keeps the true colours (D60)', () => {
+    for (const id of ['proc-tile', 'proc-1bit', 'proc-ui']) {
+      const { img, truth } = degrade(sprite(id), 'bicubic-x8-clean', 1)
+      const r = convert(img, { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY })
+      const m = deconv(r).match(/^cell deconvolution: Keys cubic A -0\.5 \(residual RMS ([\d.]+)\)$/)
+      expect(m, `${id}: ${deconv(r)}`).not.toBeNull()
+      expect(Number(m[1]), id).toBeLessThan(1)
+      expect(within12(r.image, truth.sprite), id).toBeGreaterThanOrEqual(0.99)
+      // no ringing split of 1-bit art (an over-split (a, b) or split-gated palette gave black two shades)
+      if (id === 'proc-1bit') expect(indexImage(r.image).lab.length).toBe(2)
+    }
+  })
+
+  it('bilinear upscales stay on the (a, b) kernel with byte-identical output (D60)', async () => {
+    for (const [id, p, want] of [['proc-tile', 'bilinear-x8.37', 'e3e8ab88e3e050bf91c36ed2b68a36cadc04ea448bc04204f4b44494fb6bf8a9'],
+      ['proc-ui', 'bilinear-x8', '41f12fb9df0df53b083bd60b25758d4f6356aaf1a19330a4a0f72cd6c546efed']]) {
+      const { img, truth } = degrade(sprite(id), p, 1)
+      const r = convert(img, { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY })
+      expect(deconv(r), id).toMatch(/^cell deconvolution: kernel a 1 b 0 /)
+      expect(await canonicalHash(r.image), id).toBe(want) // engine 0.11.0 output
+    }
+  })
+
+  it('a noisy bicubic upscale does not adopt the Keys kernel (residual >= 1) (D60)', () => {
+    for (const id of ['proc-blob', 'proc-tile', 'proc-1bit']) {
+      const { img, truth } = degrade(sprite(id), 'smooth-noisy-bicubic', 1)
+      const r = convert(img, { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY })
+      expect(deconv(r), id).toMatch(/^cell deconvolution: kernel a /)
+    }
+  })
+
   it('a smooth no-grid texture keeps its verdict (second differences find no pure grid); NN upscales skip the fallback', () => {
     const tex = noGrid('texture', 1)
     expect(rampShare(tex)).toBeGreaterThanOrEqual(0.15)

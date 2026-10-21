@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.11.0', constants: 29 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.12.0', constants: 30 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -310,7 +310,7 @@ function kernelEvidence(rep, k) {
   if (!k) return rep
   const r2 = (v) => Math.round(v * 100) / 100
   rep.evidence = [...rep.evidence, k.rms == null ? 'cell deconvolution: off (fewer than 8 fit cells)'
-    : `cell deconvolution: kernel a ${k.a ?? '-'} b ${k.b ?? '-'} (residual RMS ${r2(k.rms)}${k.a == null ? ' > 12: off' : ''})`]
+    : `cell deconvolution: ${k.keys != null ? `Keys cubic A ${k.keys}` : `kernel a ${k.a ?? '-'} b ${k.b ?? '-'}`} (residual RMS ${r2(k.rms)}${k.a == null ? ' > 12: off' : ''})`]
   return rep
 }
 
