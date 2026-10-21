@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.13.0', constants: 32 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.0', constants: 33 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -644,6 +644,7 @@ const REC_COV = 0.03 // Clean may lower outline coverage by at most this
 // D55: a grid output whose noise orphans (orphans.js Q4 NOISE, as scripts/score.mjs) are >= this share of its
 // opaque pixels is AI mixel noise; Clean may then change more, down to REC_AGREE_NOISY % agreement
 const REC_NOISE = 0.04
+const REC_NOISE_MIN = 12 // D63: and at least this many noise-orphan pixels (on tiny sprites one pixel decides)
 const REC_AGREE_NOISY = 90
 
 /** Union-opaque pixels (alpha >= 128 in either) n, and those opaque in both with OKLab distance < 0.05. */
@@ -712,11 +713,12 @@ function recommend(A, cls, candidates, alias, original) {
     const pct = n ? (100 * same) / n : 100, outline = cg === null ? 'n/a' : `kept ${r2(ccv)} vs ${r2(cg)}`
     if (agreeOk && covOk)
       return { id: 'clean', rule: 'light-touch-clean', evidence: `recommended clean: light touch (agreement ${r1(pct)} % >= ${REC_AGREE} %, outline ${outline})` }
-    let noise = null // the grid output's noise-orphan share, only where it can decide
-    if (covOk && same * 100 >= REC_AGREE_NOISY * n) { const ix = indexImage(gc.image); noise = ix.opaque ? q4(ix).noise / ix.opaque : 0 }
-    if (noise >= REC_NOISE) // null (not measured) never passes
-      return { id: 'clean', rule: 'noisy-grid-clean', evidence: `recommended clean: noisy grid (noise orphans ${r1(100 * noise)} % of opaque >= ${100 * REC_NOISE} %, agreement ${r1(pct)} % >= ${REC_AGREE_NOISY} %, outline ${outline})` }
-    return { id: 'grid', rule: 'grid', evidence: `recommended grid: Clean declined (${!agreeOk ? `agreement ${r1(pct)} % < ${REC_AGREE} %` : `outline coverage ${r2(ccv)} < ${r2(cg)} - ${REC_COV}`}${noise === null ? '' : `; noise orphans ${r1(100 * noise)} % < ${100 * REC_NOISE} %`})` }
+    let noise = null, noisePx = 0 // the grid output's noise-orphan share and count, only where it can decide
+    if (covOk && same * 100 >= REC_AGREE_NOISY * n) { const ix = indexImage(gc.image); noisePx = ix.opaque ? q4(ix).noise : 0; noise = ix.opaque ? noisePx / ix.opaque : 0 }
+    if (noise >= REC_NOISE && noisePx >= REC_NOISE_MIN) // null (not measured) never passes
+      return { id: 'clean', rule: 'noisy-grid-clean', evidence: `recommended clean: noisy grid (noise orphans ${r1(100 * noise)} % of opaque >= ${100 * REC_NOISE} %, ${noisePx} px >= ${REC_NOISE_MIN}, agreement ${r1(pct)} % >= ${REC_AGREE_NOISY} %, outline ${outline})` }
+    const why = noise === null ? '' : noise >= REC_NOISE ? `; noise orphans ${r1(100 * noise)} % but ${noisePx} px < ${REC_NOISE_MIN}` : `; noise orphans ${r1(100 * noise)} % < ${100 * REC_NOISE} %`
+    return { id: 'grid', rule: 'grid', evidence: `recommended grid: Clean declined (${!agreeOk ? `agreement ${r1(pct)} % < ${REC_AGREE} %` : `outline coverage ${r2(ccv)} < ${r2(cg)} - ${REC_COV}`}${why})` }
   }
   return { id: 'grid', rule: 'grid', evidence: `recommended grid: ${d2 ? 'smooth-upscale lattice (d2)' : red >= REC_REDUCE ? `reduction ${r2(red)}x >= ${REC_REDUCE}` : 'Clean identical to grid'}` }
 }

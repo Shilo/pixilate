@@ -5,7 +5,7 @@
 import { dist2 as d2, srgbToOklab, toe, toeL } from './color.js'
 
 const NB8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
-const ACCENT_L = 0.15 // D58: toe-L contrast of a protected 1-px accent against each 4-neighbour
+const ACCENT_L = 0.1125 // D58, D63: toe-L contrast of a protected 1-px accent against each 4-neighbour
 const SPECK_AREA = 0.005, SPECK_DE = 0.09 // background-speck rule: share of opaque cells, ΔE to a bg color
 
 /** Squared distance from point P[p..] to segment A[a..]-B[b..] in OKLab. */

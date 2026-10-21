@@ -45,6 +45,34 @@ Committed tests and the procedural benchmark rows are **OBSERVED** and reproduci
 | Browser | Dev server in one Chromium build: one private sample loaded through the file input; report and download checked; no console errors; output hash equal to the Node run (OBSERVED, local-only) | Manual, 2026-10-19 |
 | Internal review | Design and code review findings, applied with regression tests | [Algorithm design](../planning/prototype-algorithm-design.md#deviations) |
 
+## Held-out validation (2026-10-21)
+
+Most round-3 and round-4 thresholds were tuned on bench seeds 1–2 (`k` 0–1). Each rule D47–D58 was re-measured on data never used for tuning, with the engine and the same engine without the rule: the commit before it (`git archive`) for D47 and D52, a one-constant toggle of `73a8f72` (engine `0.11.0`) for the others. Held-out data: bench matrix seeds `k` 7–9 (`matrixCases` seed base `1000 + 10000k`, extra groups included; 1,446 synthetic and 1,620 extra cases per engine), no-grid scenes 41–80, smooth-noisy presets at seeds 5–8 and the eye set (`proc-blob` 1-px eyes) at seeds 11–70. A case is worse when `emSnap` drops by more than 0.03 and it is also worse on ΔE, within-12 or G8. **OBSERVED, held-out synthetic, procedural and local-only, not rights-cleared**; the real samples were used for tuning and stay in-sample.
+
+| Rule | In-sample gain (design row) | Held-out gain | Worse / better (synthetic; extra) | Verdict |
+|---|---|---|---|---|
+| D47 recommendation | rec median 0.922 → 0.928, rec = best 52 → 70 % | 0.922 → 0.929, 53.9 → 71.5 % (I 46 → 79, M 36 → 46, B 48 → 47 %); no-grid grid recs 10 → 1 of 160 | 6 / 58; 14 / 67 | holds |
+| D48 near-pair gate | I 0.909 → 0.957 | I 0.922 → 0.971 | 0 / 93; 0 / 0 | holds |
+| D49 gradient surface | `gpt-gradient` 0.162 → 0.878, `gemini-gradient` 0.186 → 0.824 | transparent sprites 0.160 → 0.749 and 0.171 → 0.878; 0 false removals on 582 opaque-truth cases | 0 / 1; 0 / 106 | holds |
+| D52 geometry | native size-exact 73.9 → 78.2 %, I 0.957 → 0.967 | 73.9 → 77.3 % (45 gained, 0 lost), I 0.960 → 0.971, M 0.794 → 0.795; no-grid false grids 13 → 6 of 160 | 2 / 14; 10 / 22 | holds (per-case losses appear) |
+| D55 noise gate | rec = best −0.2 pp, 0 worse | rec = best 72.8 → 72.1 %, I 0.965 → 0.963, M 0.792 → 0.789 | 1 / 0; 14 / 0 | weaker |
+| D57 noisy ramp gate | bilinear lattices 0 → 52 of 60, bicubic 42 → 46 of 60 | 0 → 103 of 120, 85 → 92 of 120, 0 wrong `d2` adoptions; bench synthetic unchanged | 4 / 126 (smooth-noisy set); 10 / 91 | holds |
+| D58 accent keep | raster eyes lost 37 → 1 of 46 | raster 235 → 33 of 296, auto 99 → 5 of 749; Clean noise +1.5 % | 1 / 0 (Clean); 0 / 0 | weaker |
+
+The D52 losses come from count refinement (one integer-locked axis moved 42 → 40 cells for +0.02 coherence; one refinement tipped the cell-step ratio into "seamless") and from the coarse-lattice `none` rule. All D57 bench losses are `d2` replacing a same-count `d1` grid, which is still net positive (26 better, 10 worse). All D55 losses are sprites with at most 100 opaque pixels and at most 11 noise orphans; all 33 lost D58 eyes are 0.10–0.13 lighter in OKLab L than a neighbour. The adjustments for these were then checked once on a fresh split (bench `k` 10–12, eyes 71–130, no-grid 81–120): see D63 in the [design deviations](../planning/prototype-algorithm-design.md#deviations). The D55 floor and the D58 threshold were adopted; skipping refinement on locked axes was rejected (fresh native size-exact 77.3 → 77.1 %).
+
+HEAD `73a8f72`, the same engine on the in-sample seeds (`k` 0–2, which reproduce the [round-3 table](#bench-three-seeds-round-3) within about 1 pp) and on the held-out seeds (`k` 7–9). Median as in `bench.mjs` (Trim cases excluded):
+
+| Stratum | Median | Recommended | Best | Rec. = best |
+|---|---|---|---|---|
+| G | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 | 100 → 100 % |
+| I | 0.965 → 0.971 | 0.960 → 0.963 | 0.965 → 0.971 | 77.8 → 79.8 % |
+| M | 0.815 → 0.806 | 0.794 → 0.789 | 0.805 → 0.801 | 50.0 → 46.4 % |
+| B | 0.700 → 0.646 | 0.649 → 0.643 | 0.703 → 0.646 | 46.7 → 46.7 % |
+| All synthetic | 0.974 → 0.973 | 0.953 → 0.955 | 0.960 → 0.960 | 72.2 → 72.1 % |
+
+Native size-exact is 78.0 → 77.3 %; no-grid false grids on the held-out scenes are 6 of 160, with 1 grid recommendation. `gpt-gradient` falls 0.844 → 0.724, its opaque scenes as well, where D49 does nothing, so this is seed variance of the preset. I holds or improves held-out; M and B are lower.
+
 ## Round 3 (2026-10-20)
 
 Commits `1051a8d` to `fed010a` (engine `0.6.0` to `0.10.0`, constants 28, synthetic fixture version `pixilate-synth/4`). The design rows are D47–D55. Numbers that include the showcase crops, private sprites or private AI samples are **OBSERVED, local-only, not rights-cleared**; every number here is in-sample and exploratory. Most round-3 thresholds were tuned on the cases that measured them, with no hold-out (exceptions: the D48 family hold-out, D52's held-out no-grid seeds 11–40, and D55's noise-share family hold-out).

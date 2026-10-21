@@ -724,11 +724,20 @@ describe('convertCandidates', () => {
       expect(em(r, 'clean', truth.sprite, truth)).toBeGreaterThanOrEqual(em(r, 'grid', truth.sprite, truth) - 0.03)
     })
 
+    it('a sprite with fewer than 12 noise-orphan pixels keeps grid although their share is >= 4 % (D63)', () => {
+      // proc-sparks jpeg-heavy: 11 of 17 opaque pixels are noise orphans, but grid is exact and Clean loses a spark
+      const { img, truth } = degrade(sprite('proc-sparks'), PRESETS['jpeg-heavy'], 10)
+      const r = run(img, truth.sprite)
+      expect(rec(r)).toEqual(['grid', 'grid'])
+      expect(r.recommendation.evidence).toMatch(/; noise orphans 64\.7 % but 11 px < 12\)$/)
+      expect(em(r, 'grid', truth.sprite, truth)).toBeGreaterThan(em(r, 'clean', truth.sprite, truth))
+    })
+
     it('a noisy AI-like grid output recommends Clean below 97 % agreement (D55)', () => {
-      const { img, truth } = degrade(sprite('proc-icon'), PRESETS['fake-alpha'], 2)
+      const { img, truth } = degrade(sprite('proc-icon'), PRESETS['fake-alpha'], 10)
       const r = run(img, truth.sprite)
       expect(rec(r)).toEqual(['clean', 'noisy-grid-clean'])
-      expect(r.recommendation.evidence).toBe('recommended clean: noisy grid (noise orphans 13.5 % of opaque >= 4 %, agreement 90.5 % >= 90 %, outline kept 0.19 vs 0.21)')
+      expect(r.recommendation.evidence).toBe('recommended clean: noisy grid (noise orphans 28.3 % of opaque >= 4 %, 17 px >= 12, agreement 95 % >= 90 %, outline kept 0.18 vs 0.17)')
       const noise = (id) => q4(indexImage(r.candidates.find((c) => c.id === id).image)).noise
       expect(noise('clean')).toBeLessThan(noise('grid'))
       expect(em(r, 'clean', truth.sprite, truth)).toBeGreaterThanOrEqual(em(r, 'grid', truth.sprite, truth) - 0.03)
@@ -829,8 +838,9 @@ describe('Clean accent keep (D58)', () => {
   const L = (im, x, y) => { const o = (y * im.width + x) * 4; if (im.data[o + 3] < 128) return null; srgbToOklab(im.data[o], im.data[o + 1], im.data[o + 2], t, 0); return t[0] }
   // visible eye: opaque and >= 0.1 lighter (OKLab L) than each opaque 4-neighbour
   const eye = (im, x, y) => { const v = L(im, x, y); return v != null && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => { const u = L(im, x + dx, y + dy); return u == null || u <= v - 0.1 }) }
-  // proc-blob 1-px left eye at sprite (9, 14); cases where cleanup off shows it and engine 0.10.1 Clean removed it
-  for (const [seed, preset] of [[1, 'gemini-like'], [2, 'gpt-image-like'], [5, 'smooth-noisy-bilinear']]) {
+  // proc-blob 1-px left eye at sprite (9, 14); cases where cleanup off shows it and engine 0.10.1 Clean removed it,
+  // then low-contrast eyes (OKLab L 0.10-0.15 above each neighbour) that ACCENT_L 0.15 still removed (D63)
+  for (const [seed, preset] of [[1, 'gemini-like'], [2, 'gpt-image-like'], [5, 'smooth-noisy-bilinear'], [36, 'gemini-like'], [15, 'drift-heavy'], [17, 'mixel-detail']]) {
     it(`a 1-px eye inside the sprite survives Clean on the raster route (proc-blob seed ${seed}, ${preset})`, () => {
       const { img, truth } = degrade(proceduralSprites(seed)[0].img, preset, seed), { x: mx, y: my } = truth.spriteRect
       const o = { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY, route: 'raster' }
