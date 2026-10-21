@@ -272,6 +272,21 @@ The 2026-10-20 rewrite (`0939adc`, after `3896d49`) only **added** three groups 
 
 `emOpaque` (exact RGB on opaque cells) stays low because `emSnap` allows a 0.05 snap; the gap is mostly the palette merge (INFERRED; see [limitations found this round](#limitations-found-this-round)).
 
+The round-3 rewrite (2026-10-20, after `59471c1`–`8b03499`, D47–D54) changed these committed group medians. D47, D53 and D54 change no pixel; D48–D51 left the committed groups unchanged; every change below is D52 unless noted (OBSERVED, procedural, in-sample):
+
+| Group | Metric | Before | After | Explanation |
+|---|---|---|---|---|
+| `nonint-nn` | `passT2` / `passT3` | 0.833 / 0.833 | 1 / 1 | `proc-1bit` admitted by edge support |
+| `nonint-bilinear` | `passT2` / `passT3` | 0.667 / 0.667 | 0.833 / 0.833 | count refinement |
+| `jpeg-heavy` | mean ΔE / `passT2` / `passT3` | 0.00374 / 0.833 / 0.833 | 0.00307 / 1 / 1 | count refinement |
+| `fake-alpha` | `noiseDelta` | 0.5 | 4.5 | **attributed regression**: `proc-sparks` none → weak (admit rule); its `emSnap` 0.096 → 0.300, G8 0.294 → 0.706, doubles 10 → 0, noise −1 → 8 |
+| `fake-alpha` | seam p95 / scale error / `phaseShifted` | 0.265 / 0.00118 / 0 | 0.232 / 0.00106 / 1 | same case |
+| `bicubic-x8` | `emSnap` / IoU / mean ΔE | 0.197 / 0.328 / 0.721 | 0.344 / 0.412 / 0.613 | D49 gradient surface (1 case) and D52 |
+| `nonint-nn+cleanup` | `emSnap` / `passT3` / seam p95 | 0.985 / 0.667 / 0.040 | 1 / 1 / 0.053 | the D35 detection miss (`proc-1bit` seed 52) is now found; seam p95 rises with the recovered lattice |
+| `no-grid/shapes` | `falseGrid` | 0.667 | 0.333 | D52 reject rule |
+
+The local showcase baseline (gitignored) moved 23 values: `bilinear-x8` and `bilinear-x8.37` improved (D48: `emSnap` 0.841 → 0.918 and 0.841 → 0.877, G8 0.981 → 1), and `trim-subject` `emSnap` 0.492 → 0.479 is the attributed D52 count-DP move on `pip` (noise 14 → −4, doubles 0.48 → −0.32).
+
 ## Private AI samples
 
 These are local, gitignored files referenced only by opaque ID; they are not in the repository. The measured pitch comes from [AI artifact characterization §1.1](../research-spikes/evaluation/ai-artifact-characterization.md#11-measured-local-real-samples-local-measured). Generator labels are file metadata claims (signature not checked). All values are OBSERVED, local-only, not rights-cleared, and in-sample. Run: `analyze`, then `convert` at the suggested size with background `'auto'`, in one bench run on one machine (Node).

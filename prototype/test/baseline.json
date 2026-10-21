@@ -32,8 +32,8 @@
   "emSnapRec": 1,
   "ambFrac": 0,
   "phaseShifted": 0,
-  "passT2": 0.833,
-  "passT3": 0.833
+  "passT2": 1,
+  "passT3": 1
  },
  "nonint-bilinear": {
   "n": 6,
@@ -50,8 +50,8 @@
   "emSnapRec": 1,
   "ambFrac": 0,
   "phaseShifted": 0,
-  "passT2": 0.667,
-  "passT3": 0.667
+  "passT2": 0.833,
+  "passT3": 0.833
  },
  "gpt-image-like": {
   "n": 6,
@@ -132,7 +132,7 @@
   "f1T1": 1,
   "iou": 1,
   "g8Recall": 1,
-  "deMean": 0.00374,
+  "deMean": 0.00307,
   "noiseDelta": 0,
   "doublesDelta": 0,
   "scaleErr": 0.00198,
@@ -140,8 +140,8 @@
   "emSnapRec": 1,
   "ambFrac": 0,
   "phaseShifted": 0,
-  "passT2": 0.833,
-  "passT3": 0.833
+  "passT2": 1,
+  "passT3": 1
  },
  "fake-alpha": {
   "n": 6,
@@ -151,29 +151,29 @@
   "iou": 0.815,
   "g8Recall": 0.94497,
   "deMean": 0.20717,
-  "noiseDelta": 0.5,
+  "noiseDelta": 4.5,
   "doublesDelta": 0,
-  "scaleErr": 0.00118,
-  "seamP95": 0.26534,
+  "scaleErr": 0.00106,
+  "seamP95": 0.23167,
   "emSnapRec": 0.76442,
   "ambFrac": 0,
-  "phaseShifted": 0,
+  "phaseShifted": 1,
   "passT2": 0,
   "passT3": 0.333
  },
  "bicubic-x8": {
   "n": 6,
-  "emSnap": 0.19696,
+  "emSnap": 0.34426,
   "emOpaque": 0,
   "f1T1": 0.32849,
-  "iou": 0.3278,
+  "iou": 0.4117,
   "g8Recall": 0.30605,
-  "deMean": 0.72089,
+  "deMean": 0.6125,
   "noiseDelta": 9.5,
   "doublesDelta": 3.26531,
   "scaleErr": 0.67605,
   "seamP95": 0.36229,
-  "emSnapRec": 0.19696,
+  "emSnapRec": 0.34426,
   "ambFrac": 0,
   "phaseShifted": 0,
   "passT2": 0,
@@ -213,21 +213,21 @@
  },
  "nonint-nn+cleanup": {
   "n": 3,
-  "emSnap": 0.98501,
-  "emOpaque": 0.98501,
-  "f1T1": 0.96833,
+  "emSnap": 1,
+  "emOpaque": 1,
+  "f1T1": 1,
   "iou": 1,
   "g8Recall": 1,
-  "deMean": 0.01499,
+  "deMean": 0,
   "noiseDelta": 0,
   "doublesDelta": 0,
   "scaleErr": 0.0013,
-  "seamP95": 0.03997,
-  "emSnapRec": 0.98501,
+  "seamP95": 0.05268,
+  "emSnapRec": 1,
   "ambFrac": 0,
   "phaseShifted": 0,
-  "passT2": 0.333,
-  "passT3": 0.667
+  "passT2": 1,
+  "passT3": 1
  },
  "bilinear-x8": {
   "n": 3,
@@ -285,7 +285,7 @@
  },
  "no-grid/shapes": {
   "n": 3,
-  "falseGrid": 0.66667,
+  "falseGrid": 0.33333,
   "phaseShifted": 0,
   "passT2": 0,
   "passT3": 0
