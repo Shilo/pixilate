@@ -50,15 +50,15 @@ Parity and layout checks used procedural, seeded inputs from `prototype/test` an
 
 ## Test passes
 
-The first build went through five independent passes. The table gives each pass's scope. Round 1 findings were fixed before the first commit (`40965e4`), so they are not listed separately. Round 2 fixes are in `b240cc6`, and the engine findings in `f83c379` (D56).
+The first build went through five independent passes. Their findings were fixed before the first commit (`40965e4`). Round 2 fixes are in `b240cc6`, and the engine findings in `f83c379` (D56).
 
-| Pass | What it checked |
-|---|---|
-| Layout | 20 viewports from phone to ultra-wide, in portrait and landscape, using a scripted check of the layout invariants: no horizontal scroll, controls never overlap the stage, Save is visible, targets are at least 24 px (44 px on coarse pointers), and no text is clipped or off-screen |
-| UX critique | First-time flow, wording and controls |
-| WCAG 2.2 AA audit | WCAG 2.2 AA success criteria, including contrast, focus, keyboard paths, target size and headings |
-| Functionality and output parity | Every state and control. App downloads and recipes compared with the engine in Node (see [Output parity](#output-parity)). |
-| Code review | The `app/` source |
+| Pass | What it checked | Main findings, all fixed in `40965e4` unless noted |
+|---|---|---|
+| Layout | 20 viewports from phone to ultra-wide, in portrait and landscape, using a scripted check of the layout invariants: no horizontal scroll, controls never overlap the stage, Save is visible, targets are at least 24 px (44 px on coarse pointers), and no text is clipped or off-screen | 14 of 20 viewports passed. The empty card was clipped at short heights; the Colours row spilled out of narrow panels; the phone-landscape Save area took up to 54 % of the height; toggles were 32 px on touch; an opened section landed below the fold; the "Best" badge overflowed at 320 px; the notch inset missed the stage |
+| UX critique | First-time flow, wording and controls, played as three users (phone casual, desktop icon, pixel artist) | The no-grid notice was repeated three times; the style name contradicted its reason after dedupe; a square size from a non-square image took trial and error; the phone dock jumped; the view didn't return to After; progress was easy to miss; a refused Remove background stayed on; Save showed the enlarged size; noisy Details; a weak empty state |
+| WCAG 2.2 AA audit | WCAG 2.2 AA success criteria, including contrast, focus, keyboard paths, target size and headings | Muted text in the dark Details dialog measured 3.9–4.3:1; the selected style description 3.94:1; the toast overlapped Save; the empty state was unreachable at 400 % zoom; Colours was clipped; status messages were missed; there were no headings; focus was lost after opening a file; forced colours had no selected-style mark |
+| Functionality and output parity | Every state and control. App downloads and recipes compared with the engine in Node (see [Output parity](#output-parity)). | Ctrl+S ignored the 4096 cap (4800 × 4800 saved); a stale live status after errors; a needless re-convert when a tool was toggled back; four engine issues (below) |
+| Code review | The `app/` source | A decode error during analysis left the app stuck; the export scale was unclamped on shortcuts; no hash without `crypto.subtle`; Ctrl+wheel re-centred; a hidden Fit setting reached the engine; a 150 ms Dialog reopen race; overlapping media queries; dead code |
 
 **App fixes in `b240cc6`:**
 - Engine errors show as a banner on the stage.
