@@ -66,7 +66,7 @@ const SCORE_DEF = 'emSnapRec (snapped exact match on recoverable cells); emSnap 
 // ---- synthetic matrix + no-grid scenes ----
 const sprites = [...proceduralSprites(1), ...showcaseSprites(), ...localSprites()]
 const cases = []
-for (let k = 0; k < SEEDS; k++) cases.push(...matrixCases(sprites, { seedBase: 1000 + 10000 * k }).map((c) => ({ ...c, id: `${c.id}/s${k}` })))
+for (let k = 0; k < SEEDS; k++) cases.push(...matrixCases(sprites, { seedBase: 1000 + 10000 * k, extra: true }).map((c) => ({ ...c, id: `${c.id}/s${k}` })))
 cases.push(...noGridCases(Array.from({ length: SEEDS }, (_, k) => k + 1)))
 const todo = cases.filter((c) => c.id.includes(FILTER))
 const recs = []
@@ -74,7 +74,7 @@ const t0 = performance.now()
 for (const [i, c] of todo.entries()) {
   const scene = c.scene !== undefined
   const r = (scene ? runScene : runCase)(convert, { ...c, repeat: false })
-  const rec = { ...r.rec, group: c.group, preset: c.preset ?? null, stratum: c.stratum, family: c.family, spriteId: c.spriteId ?? null, seed: c.seed }
+  const rec = { ...r.rec, extra: c.extra ?? false, group: c.group, preset: c.preset ?? null, stratum: c.stratum, family: c.family, spriteId: c.spriteId ?? null, seed: c.seed }
   rec.inputSha256 = await canonicalHash(r.img)
   rec.outputSha256 = r.out ? await canonicalHash(r.out) : null
   if (!rec.error) {
@@ -162,15 +162,18 @@ const block = (rs) => {
   }
 }
 const by = (rs, key) => Object.fromEntries([...new Set(rs.map((r) => r[key]))].map((g) => [g, rs.filter((r) => r[key] === g)]))
-const syn = recs.filter((r) => !r.group.startsWith('no-grid/')), ng = recs.filter((r) => r.group.startsWith('no-grid/'))
-const groups = Object.fromEntries(Object.entries(by(syn, 'group')).map(([g, rs]) => [g, block(rs)]))
+// extra (gradient-backdrop, soft-alpha) groups are reported apart so strata and the headline stay comparable
+const all = recs.filter((r) => !r.group.startsWith('no-grid/')), syn = all.filter((r) => !r.extra), ext = all.filter((r) => r.extra), ng = recs.filter((r) => r.group.startsWith('no-grid/'))
+const groups = Object.fromEntries(Object.entries(by(all, 'group')).map(([g, rs]) => [g, block(rs)]))
+const extraGroups = Object.fromEntries(Object.entries(by(ext, 'group')).map(([g, rs]) => [g, block(rs)]))
 const strata = Object.fromEntries(Object.entries(by(syn, 'stratum')).map(([g, rs]) => [g, block(rs)]))
 const noGrid = Object.fromEntries(Object.entries(by(ng, 'group')).map(([g, rs]) => [g, { n: rs.length, stratum: rs[0].stratum, falseGrid: rate(rs, (r) => r.falseGrid), falseGridRec: rate(rs, (r) => r.falseGridRec), classes: Object.entries(by(rs, 'class')).map(([k, v]) => `${k}:${v.length}`).join(' ') }]))
 const headline = { scoreDefinition: SCORE_DEF, synthetic: block(syn), falseGridRate: rate(ng, (r) => r.falseGrid), falseGridRecRate: rate(ng, (r) => r.falseGridRec), nNoGrid: ng.length }
 console.log(`\nScore = ${SCORE_DEF}. Development split, in-sample, exploratory. Groups:`)
 console.table(groups)
-console.log('By primary stratum:')
+console.log('By primary stratum (extra groups excluded):')
 console.table(strata)
+if (ext.length) { console.log('Extra groups (gradient backdrops, soft alpha A):'); console.table(extraGroups) }
 console.log("No-grid scenes (falseGrid = grid class != 'none'; falseGridRec = a grid-route candidate is recommended):")
 console.table(noGrid)
 console.log('Headline:', JSON.stringify(headline))
@@ -185,7 +188,7 @@ if (errs.length) console.log(`\n${errs.length} errors, first: ${errs[0].id}: ${(
 writeFileSync(OUT + 'results.json', JSON.stringify({
   date: new Date().toISOString(), commit: git('rev-parse HEAD'), dirty: Boolean(git('status --porcelain')), node: process.version, synthVersion: SYNTH_VERSION,
   hash: 'pixilate/canonical-rgba/v1 SHA-256', evidence: 'exploratory, development split, in-sample; local-only fixtures are not corpus-admitted',
-  seeds: SEEDS, filter: FILTER, headline, groups, strata, noGrid, real, cases: recs,
+  seeds: SEEDS, filter: FILTER, headline, groups, strata, extraGroups, noGrid, real, cases: recs,
 }, null, 1))
 
 // ---- contact sheet ----

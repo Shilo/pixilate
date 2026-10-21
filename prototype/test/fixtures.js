@@ -219,6 +219,7 @@ export function proceduralSprites(seed = 1) {
 // the subject case trims to alpha bounds after background removal. cleanup: true = the Clean profile.
 export const CANVAS_OPTS = { trim: false, fit: 'stretch', route: 'auto', cleanup: false, background: 'auto', colors: 'auto' }
 export const TRIM_OPTS = { ...CANVAS_OPTS, trim: true, fit: 'contain' }
+export const CELL_TRIM_OPTS = { ...TRIM_OPTS, trim: { basis: 'cells' } }
 export const NO_GRID_OPTS = { ...CANVAS_OPTS, background: false }
 
 // Seed-free smooth-upscale presets (stratum I): appended after the seeded cases so existing case seeds stay put.
@@ -226,20 +227,28 @@ export const SMOOTH_PRESETS = ['bilinear-x8', 'bilinear-x8.37', 'bicubic-x8-clea
 // Committed smooth upscales: procedural cases that failed before the second-difference fallback, except
 // proc-blob/bicubic-x8-clean (a non-regression guard: it passed before too); proc-ui/bilinear-x8 and
 // proc-blob/bilinear-x8.37 failed before d2 could replace a first-difference 'grid' lattice.
+// Gradient-backdrop and soft-alpha presets (D49, D51): bench-only groups, appended after every other case
+// so existing case seeds stay put (not in the committed ratchet until a baseline rewrite adds them).
+export const GRADIENT_PRESETS = ['gpt-gradient', 'gemini-gradient']
+export const SOFT_PRESETS = ['soft-ref', 'soft-alpha', 'soft-alpha-premul', 'soft-alpha-matte', 'soft-alpha-glow', 'soft-alpha-webp', 'soft-alpha-erode']
+const NEW_PRESETS = [...GRADIENT_PRESETS, ...SOFT_PRESETS]
 export const SMOOTH_FIXTURES = [['proc-blob', 'bilinear-x8'], ['proc-blob', 'bicubic-x8-clean'], ['proc-tile', 'bilinear-x8'], ['proc-tile', 'bilinear-x8.37'], ['proc-1bit', 'bilinear-x8.37'],
   ['proc-ui', 'bilinear-x8'], ['proc-blob', 'bilinear-x8.37']]
 
 /**
  * Synthetic cases: every preset per sprite (`fewPresets` ids: 3 presets, runtime), clean k=4/16, cleanup variants for traps,
  * subject trim, then the smooth presets (`smooth`: [spriteId, preset] pairs to keep; default every non-`fewPresets` sprite).
+ * `extra`: then the gradient presets on every sprite (opaque sprites become scenes: the background must stay) and the
+ * soft-alpha presets on transparent sprites: full canvas, `+trim` (TRIM_OPTS) and `+trim-cells` (trim basis 'cells'), margin 0.3;
+ * seeds from seedBase + 50000, one seed per sprite shared by its soft variants (paired comparison).
  */
-export function matrixCases(sprites, { fewPresets = [], seedBase = 1, smooth = null } = {}) {
+export function matrixCases(sprites, { fewPresets = [], seedBase = 1, smooth = null, extra = false } = {}) {
   const cases = []
   let seed = seedBase
   for (const s of sprites) {
     const add = (preset, params, opts, group = preset, tag = group) =>
       cases.push({ id: `${s.id}/${tag}`, group, preset, stratum: PRESET_STRATUM[preset] ?? 'M', family: s.family, spriteId: s.id, sprite: s.img, params, opts, seed: seed++ })
-    const presets = fewPresets.includes(s.id) ? ['clean-nn-integer', 'nonint-nn', 'gpt-image-like'] : Object.keys(PRESETS).filter((p) => !SMOOTH_PRESETS.includes(p))
+    const presets = fewPresets.includes(s.id) ? ['clean-nn-integer', 'nonint-nn', 'gpt-image-like'] : Object.keys(PRESETS).filter((p) => !SMOOTH_PRESETS.includes(p) && !NEW_PRESETS.includes(p))
     for (const p of presets) add(p, PRESETS[p], CANVAS_OPTS)
     for (const k of [4, 16]) add('clean-nn-integer', { ...PRESETS['clean-nn-integer'], cellSize: k }, CANVAS_OPTS, 'clean-nn-integer', `clean-k${k}`)
     if ([...TRAPS, ...SHOWCASE_TRAPS].includes(s.id)) for (const p of ['clean-nn-integer', 'nonint-nn']) add(p, PRESETS[p], { ...CANVAS_OPTS, cleanup: true }, `${p}+cleanup`)
@@ -249,6 +258,18 @@ export function matrixCases(sprites, { fewPresets = [], seedBase = 1, smooth = n
   for (const s of sprites) for (const p of SMOOTH_PRESETS) {
     if (smooth ? !smooth.some(([id, q]) => id === s.id && q === p) : fewPresets.includes(s.id)) continue
     cases.push({ id: `${s.id}/${p}`, group: p, preset: p, stratum: PRESET_STRATUM[p], family: s.family, spriteId: s.id, sprite: s.img, params: PRESETS[p], opts: CANVAS_OPTS, seed: seedBase })
+  }
+  if (extra) {
+    let seed = seedBase + 50000
+    const add = (s, p, params, opts, tag, sd) => cases.push({ id: `${s.id}/${p}${tag}`, group: p + tag, preset: p, stratum: PRESET_STRATUM[p], family: s.family, spriteId: s.id, sprite: s.img, params, opts, seed: sd, extra: true })
+    for (const s of sprites) for (const p of GRADIENT_PRESETS) add(s, p, PRESETS[p], CANVAS_OPTS, '', seed++)
+    for (const s of sprites) {
+      if (!s.img.data.some((v, i) => i % 4 === 3 && v === 0)) continue
+      const sd = seed++
+      for (const p of SOFT_PRESETS) add(s, p, PRESETS[p], CANVAS_OPTS, '', sd)
+      for (const p of SOFT_PRESETS) add(s, p, { ...PRESETS[p], marginFrac: 0.3 }, TRIM_OPTS, '+trim', sd)
+      for (const p of SOFT_PRESETS) add(s, p, { ...PRESETS[p], marginFrac: 0.3 }, CELL_TRIM_OPTS, '+trim-cells', sd)
+    }
   }
   return cases
 }

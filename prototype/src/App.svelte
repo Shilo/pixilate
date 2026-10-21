@@ -12,6 +12,7 @@
   let lock = $state(true)
   // Custom (engine defaults: everything off)
   let trim = $state(false)
+  let trimCells = $state(false) // trim basis 'cells' (explicit engine option, D50)
   let fit = $state('contain')
   let route = $state('candidates') // 'candidates' = convertCandidates; otherwise one convert() with route/cleanup
   let cleanup = $state(false)
@@ -49,7 +50,7 @@
     const rgb = [1, 3, 5].map((i) => parseInt(key.slice(i, i + 2), 16))
     return {
       targetW: W ?? null, targetH: H ?? null, // the engine validates and throws invalid-input
-      trim, fit, halo,
+      trim: trim && trimCells ? { basis: 'cells' } : trim, fit, halo,
       background: bg === 'off' ? false : bg === 'auto' ? 'auto' : { key: rgb, tolerance, connectivity },
       colors: colors ?? 'auto',
       ...(manual ? { manualPeriod: [px, py] } : {}),
@@ -181,8 +182,8 @@
     </span>
     <p>
       <!-- Shortcut for the common sprite case; only sets the two explicit Custom options (engine defaults stay off, AUTO-007). -->
-      <label><input type="checkbox" checked={bg === 'auto' && trim} onchange={(e) => { const on = e.currentTarget.checked; bg = on ? 'auto' : 'off'; trim = on }} />
-        sprite on a plain background (remove background + trim to the sprite)</label>
+      <label><input type="checkbox" checked={bg === 'auto' && trim && trimCells} onchange={(e) => { const on = e.currentTarget.checked; bg = on ? 'auto' : 'off'; trim = on; trimCells = on }} />
+        sprite on a plain background (remove background + trim to the sprite's opaque cells)</label>
     </p>
     <p>
       {#if !file}Load an image to see a detected size.
@@ -201,6 +202,7 @@
       <legend>Options (defaults off)</legend>
       <p>
         <label><input type="checkbox" bind:checked={trim} /> trim (alpha &gt; 0 bounds)</label>
+        <label><input type="checkbox" bind:checked={trimCells} disabled={!trim} /> to opaque cells (grid route; raster: alpha &gt; 127)</label>
         <label>Fit <select bind:value={fit}><option>contain</option><option>stretch</option><option>cover</option></select></label>
         <label>Colours <input type="number" min="1" max="256" placeholder="auto" bind:value={colors} /></label>
       </p>
@@ -336,7 +338,7 @@
         <dt>Fit</dt>
         <dd>{fmt(report.fit)}</dd>
         <dt>Trim</dt>
-        <dd>{report.trim?.enabled ? `box ${fmt(report.trim.box)} (alpha ${report.trim.comparison} ${report.trim.tau})` : 'off'}</dd>
+        <dd>{report.trim?.enabled ? `box ${fmt(report.trim.box)} (alpha ${report.trim.comparison} ${report.trim.tau}${report.trim.basis ? `, basis ${report.trim.basis}` : ''})` : 'off'}</dd>
         <dt>Background</dt>
         <dd>
           mode {fmt(report.background?.mode)}, applied {fmt(report.background?.applied)}, reason {fmt(report.background?.reason)},

@@ -61,6 +61,7 @@ describe('convert: input validation (typed invalid-input before allocation)', ()
     ['background true', { targetW: 8, targetH: 8, background: true }], ['key out of range', { targetW: 8, targetH: 8, background: { key: [0, 0, 300] } }],
     ['connectivity 6', { targetW: 8, targetH: 8, background: { key: [0, 0, 0], connectivity: 6 } }], ['colors 0', { targetW: 8, targetH: 8, colors: 0 }],
     ['palette byte 256', { targetW: 8, targetH: 8, palette: [[256, 0, 0]] }],
+    ['trim basis bogus', { targetW: 8, targetH: 8, trim: { basis: 'alpha' } }], ['trim extra key', { targetW: 8, targetH: 8, trim: { basis: 'cells', tau: 9 } }],
   ]) it(name, () => expect(code(() => convert(img, opts))).toBe('invalid-input'))
 
   it('malformed image', () => {
@@ -477,6 +478,47 @@ describe('convert: Trim after the background stage (degraded sprites with margin
     const [x0, y0, x1, y1] = report.trim.box
     expect(report.background.applied).toBe(true)
     for (const [v, want] of [[x0, 190], [y0, 60], [x1, 310], [y1, 180]]) expect(Math.abs(v - want)).toBeLessThanOrEqual(8)
+  })
+})
+
+describe('convert: soft-alpha sprites and gradient backdrops (D49, D50)', () => {
+  const ICON = proceduralSprites(1)[2].img
+
+  it("trim basis 'cells': a feathered alpha edge adds no cell row; the default alpha > 0 basis stays and does", () => {
+    for (const [sprite, seed] of [[BLOB, 3], [ICON, 4]]) {
+      const { img } = degrade(sprite, { ...PRESETS['soft-alpha'], marginFrac: 0.3 }, seed), b = bboxCrop(sprite)
+      const def = convert(img, { trim: true, targetW: b.width, targetH: b.height })
+      const cells = convert(img, { trim: { basis: 'cells' }, targetW: b.width, targetH: b.height })
+      expect(def.report.trim.tau).toBe(0)
+      expect(def.report.recipe.options.trim).toEqual({ tau: 0, comparison: '>' })
+      expect(def.report.fit.basis[0]).toBeGreaterThan(b.width) // anti-aliased spill widens the alpha > 0 box by whole cells
+      expect(cells.report.fit.basis).toEqual([b.width, b.height])
+      expect(cells.report.trim.basis).toBe('cells')
+      expect(cells.report.recipe.options.trim).toEqual({ basis: 'cells', tau: 127, comparison: '>' })
+      expect(scoreCase(cells.image, b, {}).emSnap).toBeGreaterThanOrEqual(0.95)
+    }
+  })
+
+  it("trim basis 'cells' on the raster route uses alpha > 127", () => {
+    const { img } = degrade(BLOB, { ...PRESETS['soft-alpha'], marginFrac: 0.3 }, 3)
+    const { report } = convert(img, { trim: { basis: 'cells' }, route: 'raster', targetW: 16, targetH: 16 })
+    expect(report.trim.tau).toBe(127)
+  })
+
+  it("gradient backdrop: 'auto' removes it as a surface (model reported); off by default", () => {
+    const { img, truth } = degrade(BLOB, 'gpt-gradient', 3), o = { fit: 'stretch', targetW: truth.cellsX, targetH: truth.cellsY }
+    const r = convert(img, { ...o, background: 'auto' })
+    expect(r.report.background.model).toBe('surface')
+    expect(r.report.background.applied).toBe(true)
+    expect(scoreCase(r.image, truth.sprite, {}).iou).toBeGreaterThanOrEqual(0.99)
+    expect(convert(img, o).report.background.applied).toBe(false)
+  })
+
+  it('gradient-preset scene (opaque tile): the surface estimate is refused, output unchanged', () => {
+    const tile = proceduralSprites(1)[1].img, { img, truth } = degrade(tile, 'gpt-gradient', 3), o = { fit: 'stretch', targetW: truth.cellsX, targetH: truth.cellsY }
+    const r = convert(img, { ...o, background: 'auto' })
+    expect(r.report.background.applied).toBe(false)
+    expect(same(r.image, convert(img, o).image)).toBe(true)
   })
 })
 

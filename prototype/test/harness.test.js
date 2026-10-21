@@ -42,13 +42,25 @@ describe('fixtures', () => {
 })
 
 describe('synth', () => {
+  it('soft-alpha presets (D51): one seed gives every variant the same lattice; feather adds partial alpha; deterministic', () => {
+    const soft = Object.keys(PRESETS).filter((p) => p.startsWith('soft-'))
+    expect(soft.length).toBe(7)
+    const ref = degrade(sprite, 'soft-ref', 9), partial = (im) => im.data.filter((v, i) => i % 4 === 3 && v > 0 && v < 255).length
+    for (const p of soft) {
+      const a = degrade(sprite, p, 9), b = degrade(sprite, p, 9)
+      expect(same(a.img.data, b.img.data), p).toBe(true)
+      expect([a.img.width, a.img.height, a.truth.cellsX, a.truth.cellsY, a.truth.cellW]).toEqual([ref.img.width, ref.img.height, ref.truth.cellsX, ref.truth.cellsY, ref.truth.cellW])
+      expect(PRESET_STRATUM[p]).toBe('A')
+    }
+    expect(partial(degrade(sprite, 'soft-alpha', 9).img)).toBeGreaterThan(1.5 * partial(ref.img))
+  }, 60_000)
   it('is deterministic per seed and varies across seeds', () => {
     for (const name of Object.keys(PRESETS)) {
       const a = degrade(sprite, name, 5), b = degrade(sprite, name, 5)
       expect(same(a.img.data, b.img.data), name).toBe(true)
     }
     expect(same(degrade(sprite, 'gpt-image-like', 5).img.data, degrade(sprite, 'gpt-image-like', 6).img.data)).toBe(false)
-  })
+  }, 60_000) // every preset twice (soft-alpha and gradient presets included)
 
   it('clean-nn-integer reproduces exact k x k blocks of the truth', () => {
     for (const k of [4, 6, 8, 10, 12, 16]) {
@@ -73,7 +85,7 @@ describe('synth', () => {
         expect(Math.abs(cuts[n] - cuts[0] - len), name).toBeLessThan(cell * 1.5)
       }
     }
-  })
+  }, 60_000)
 
   it('backgrounds render as specified (corner pixel) and AI presets explode the palette', () => {
     for (const [name, lo, hi] of [['gpt-image-like', 245, 255], ['gemini-like', 240, 255], ['nonint-nn', 105, 145], ['fake-alpha', 190, 255]]) {

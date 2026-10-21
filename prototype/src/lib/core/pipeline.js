@@ -5,7 +5,7 @@
 import { detectGrid, lockGrid } from './grid.js'
 import { sampleCells } from './sample.js'
 import { buildPalette } from './palette.js'
-import { analyzeBackground, cleanup, removeBackground } from './cleanup.js'
+import { analyzeBackground, cleanup, removeBackground, surfaceAt } from './cleanup.js'
 import { areaCells, resampleToTarget, reduceToTarget, upscaleInteger } from './resample.js'
 import { detectGenerator } from './detect.js'
 import { deconvolveCells, fitKernel } from './fitcells.js'
@@ -15,7 +15,7 @@ import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.7.0', constants: 26 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.8.0', constants: 27 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -41,7 +41,12 @@ function normalize(opts, requireTarget = true) {
   const bad = (m) => { throw new PixilateError('invalid-input', m) }
   const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi
   for (const k of ['targetW', 'targetH']) if ((requireTarget || o[k] != null) && !int(o[k], 1, MAX_TARGET)) bad(`${k} must be an integer in 1..${MAX_TARGET} (got ${o[k]})`)
-  for (const k of ['trim', 'cleanup', 'halo']) if (typeof o[k] !== 'boolean') bad(`${k} must be a boolean`)
+  if (o.trim && typeof o.trim === 'object') { // D50: { basis: 'pixels' (alpha > 0, the default) | 'cells' }
+    const { basis = 'pixels', ...rest } = o.trim
+    if (!['pixels', 'cells'].includes(basis) || Object.keys(rest).length) bad(`trim must be a boolean or { basis: 'pixels' | 'cells' }`)
+    o.trimBasis = basis; o.trim = true
+  } else o.trimBasis = 'pixels'
+  for (const k of ['trim', 'cleanup', 'halo']) if (typeof o[k] !== 'boolean') bad(`${k} must be a boolean or (trim) { basis }`)
   if (!['stretch', 'contain', 'cover'].includes(o.fit)) bad(`fit must be 'stretch', 'contain' or 'cover' (got ${o.fit})`)
   if (!['auto', 'grid', 'raster'].includes(o.route)) bad(`route must be 'auto', 'grid' or 'raster' (got ${o.route})`)
   const B = o.background
@@ -74,7 +79,7 @@ function recipeOf(o) {
   return {
     engine: ENGINE, profile: o.cleanup ? CLEAN_PROFILE : null, alphaPolicy: ALPHA_POLICY,
     options: {
-      targetW: o.targetW, targetH: o.targetH, trim: o.trim ? { tau: 0, comparison: '>' } : false, fit: o.fit, anchor: 'center',
+      targetW: o.targetW, targetH: o.targetH, trim: !o.trim ? false : o.trimBasis === 'cells' ? { basis: 'cells', tau: 127, comparison: '>' } : { tau: 0, comparison: '>' }, fit: o.fit, anchor: 'center',
       route: o.route, cleanup: o.cleanup, background: o.background, halo: o.halo, colors: o.colors,
       palette: o.palette ? Array.from(o.palette) : null, manualPeriod: o.manualPeriod,
     },
@@ -325,9 +330,21 @@ function run(A, o) {
     halo: { enabled: o.halo, changed: 0 },
   }
   let bgMode = B && bgColors ? (B.mode === 'key' ? 'key' : 'auto') : null
-  const dropBg = (cells) => {
+  // D49: a gradient surface compares each cell with the surface at its source centre; ux(i) / vy(j) give the
+  // normalized source centre of cell column i / row j
+  const surface = B && B.mode !== 'key' ? A.bg.surface : null
+  if (surface) bgReport.model = 'surface'
+  const fieldOf = (cells, [ux, vy]) => {
+    if (!surface) return null
+    const f = new Float32Array(cells.w * cells.h * 3)
+    for (let j = 0; j < cells.h; j++) for (let i = 0; i < cells.w; i++) surfaceAt(surface, ux(i), vy(j), f, (j * cells.w + i) * 3)
+    return f
+  }
+  const gridUV = (g) => [(i) => ((g.x.cuts[i] + g.x.cuts[i + 1]) / 2 + off[0]) / W, (j) => ((g.y.cuts[j] + g.y.cuts[j + 1]) / 2 + off[1]) / H]
+  const boxUV = (bx, cw, ch) => [(i) => (bx[0] + ((i + 0.5) * (bx[2] - bx[0])) / cw) / W, (j) => (bx[1] + ((j + 0.5) * (bx[3] - bx[1])) / ch) / H]
+  const dropBg = (cells, uv) => {
     if (!bgMode) return cells
-    const c = removeBackground(cells, bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity, halo: o.halo })
+    const c = removeBackground(cells, bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity, halo: o.halo, field: fieldOf(cells, uv) })
     Object.assign(bgReport, { applied: c.background.applied, reason: c.background.reason, removed: c.background.removed, specks: c.background.specks })
     bgReport.halo.changed = c.background.haloChanged
     return c
@@ -339,7 +356,7 @@ function run(A, o) {
       A.kernel ??= fitKernel(src, g, c)
       c = deconvolveCells(src, g, c, A.kernel)
     }
-    c = dropBg(c)
+    c = dropBg(c, gridUV(g))
     lap('sample')
     return c
   }
@@ -354,11 +371,14 @@ function run(A, o) {
     if (o.cleanup && !exact) { ix = cleanup(ix, cells); add(ix.changed); lap('cleanup') }
     return ix
   }
-  const trim = { enabled: o.trim, tau: 0, comparison: '>', box: null }
-  const visibleBox = (visible) => { // smallest half-open box of alpha > 0 source pixels
+  // D50: basis 'cells' (explicit option) = opaque cells on the grid route, alpha > 127 on the raster route
+  const cellBasis = o.trim && o.trimBasis === 'cells'
+  const trim = { enabled: o.trim, tau: cellBasis && route !== 'grid' ? 127 : 0, comparison: '>', box: null }
+  if (cellBasis) trim.basis = 'cells'
+  const visibleBox = (visible) => { // smallest half-open box of alpha > tau source pixels
     let x0 = W, y0 = H, x1 = -1, y1 = -1
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 0 && visible(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
-    if (x1 < 0) throw new PixilateError('empty-visible-region', 'Trim found no pixel with alpha > 0')
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > trim.tau && visible(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
+    if (x1 < 0) throw new PixilateError('empty-visible-region', `Trim found no ${cellBasis && route === 'grid' ? 'opaque cell' : `pixel with alpha > ${trim.tau}`}`)
     trim.box = [x0, y0, x1 + 1, y1 + 1]
     return trim.box
   }
@@ -369,7 +389,8 @@ function run(A, o) {
     let box = [0, 0, N0, M0] // cell box
     if (o.trim) { // pixels in background-removed cells are not visible
       const col = cellIndex(grid.x, W), row = cellIndex(grid.y, H), gone = native.removed
-      const [x0, y0, x1, y1] = visibleBox(gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true)
+      // basis 'cells': only cells left opaque by sampling (Binary(128) majority) and background removal
+      const [x0, y0, x1, y1] = visibleBox(cellBasis ? (x, y) => native.alpha[row[y] * N0 + col[x]] > 0 : gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true)
       box = [col[x0], row[y0], col[x1 - 1] + 1, row[y1 - 1] + 1]
     }
     basis = [box[2] - box[0], box[3] - box[1]]
@@ -459,7 +480,8 @@ function run(A, o) {
       let visible = () => true
       if (bgMode) { // background before Trim: removal on the 4 x target working lattice of the full canvas
         const sw = Math.min(W, 4 * Tx), sh = Math.min(H, 4 * Ty)
-        const c = removeBackground(areaCells(img, sw, sh), bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity })
+        const ac = areaCells(img, sw, sh)
+        const c = removeBackground(ac, bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity, field: fieldOf(ac, boxUV([0, 0, W, H], sw, sh)) })
         if (c.background.applied) {
           const gone = c.removed
           visible = (x, y) => !gone[Math.floor(((2 * y + 1) * sh) / (2 * H)) * sw + Math.floor(((2 * x + 1) * sw) / (2 * W))]
@@ -474,7 +496,7 @@ function run(A, o) {
     if (geo.crop) box = [box[0] + geo.crop[0], box[1] + geo.crop[1], box[0] + geo.crop[2], box[1] + geo.crop[3]]
     const src = box[0] || box[1] || box[2] < W || box[3] < H ? cropImage(img, ...box) : img
     fw = geo.fw; fh = geo.fh
-    const cells = dropBg(resampleToTarget(src, fw, fh))
+    const cells = dropBg(resampleToTarget(src, fw, fh), boxUV(box, fw, fh))
     lap('sample')
     out = clean(cells)
   }

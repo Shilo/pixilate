@@ -28,11 +28,85 @@ function mode(vals, m) {
   return best
 }
 
+// Smooth-gradient background (D49): a per-channel quadratic surface in OKLab over normalized canvas
+// coordinates u = x / W, v = y / H, fitted to border-block means by trimmed least squares.
+const SURF_TERMS = 6, SURF_INLIER = 0.03, SURF_MIN_SHARE = 0.6, SURF_MAX_MED = 0.035, SURF_MIN_RANGE = 0.03
+const surfBasis = (u, v, f) => { f[0] = 1; f[1] = u; f[2] = v; f[3] = u * v; f[4] = u * u; f[5] = v * v }
+
+/** Solve the K x K system M x = r in place (partial pivoting); null when singular. */
+function solve(M, r, K) {
+  for (let c = 0; c < K; c++) {
+    let piv = c
+    for (let i = c + 1; i < K; i++) if (Math.abs(M[i * K + c]) > Math.abs(M[piv * K + c])) piv = i
+    if (Math.abs(M[piv * K + c]) < 1e-12) return null
+    if (piv !== c) {
+      for (let j = 0; j < K; j++) { const t = M[c * K + j]; M[c * K + j] = M[piv * K + j]; M[piv * K + j] = t }
+      const t = r[c]; r[c] = r[piv]; r[piv] = t
+    }
+    for (let i = c + 1; i < K; i++) {
+      const f = M[i * K + c] / M[c * K + c]
+      for (let j = c; j < K; j++) M[i * K + j] -= f * M[c * K + j]
+      r[i] -= f * r[c]
+    }
+  }
+  const x = new Float64Array(K)
+  for (let i = K - 1; i >= 0; i--) { let t = r[i]; for (let j = i + 1; j < K; j++) t -= M[i * K + j] * x[j]; x[i] = t / M[i * K + i] }
+  return x
+}
+
+/** surfaceAt(surface, u, v, out, o): true OKLab of a background surface at normalized (u, v), into out[o..o+2]. */
+export function surfaceAt(S, u, v, out, o = 0) {
+  const f = new Float64Array(SURF_TERMS)
+  surfBasis(u, v, f)
+  for (let k = 0; k < 3; k++) { let t = 0; for (let j = 0; j < SURF_TERMS; j++) t += S.coef[k * SURF_TERMS + j] * f[j]; out[o + k] = t }
+  return out
+}
+
+const toeDist = (a, b) => { const dL = toeL(a[0]) - toeL(b[0]), da = a[1] - b[1], db = a[2] - b[2]; return Math.sqrt(dL * dL + da * da + db * db) }
+
 /**
- * analyzeBackground(img) -> { bg, checkerboard, mask }.
+ * fitSurface(us, vs, L, m) -> { coef, inliers, med, range } | null for m points (u, v, true OKLab). Three
+ * rounds of least squares, each on the previous round's inliers (first: all); inlier = toe-ΔE to the surface
+ * < max(SURF_INLIER, 2.5 x median residual). med = median inlier residual; range = largest toe-ΔE from the
+ * canvas centre to its corners and edge midpoints.
+ */
+export function fitSurface(us, vs, L, m) {
+  const K = SURF_TERMS, f = new Float64Array(K), inl = new Uint8Array(m).fill(1), res = new Float64Array(m), q = new Float64Array(3)
+  let S = null
+  for (let it = 0; it < 3; it++) {
+    const M = new Float64Array(K * K), R = [new Float64Array(K), new Float64Array(K), new Float64Array(K)]
+    let n = 0
+    for (let i = 0; i < m; i++) {
+      if (!inl[i]) continue
+      n++
+      surfBasis(us[i], vs[i], f)
+      for (let a = 0; a < K; a++) { for (let b = 0; b < K; b++) M[a * K + b] += f[a] * f[b]; for (let k = 0; k < 3; k++) R[k][a] += f[a] * L[i * 3 + k] }
+    }
+    if (n < 4 * K) return null
+    const coef = new Float64Array(3 * K)
+    for (let k = 0; k < 3; k++) { const x = solve(Float64Array.from(M), R[k], K); if (!x) return null; coef.set(x, k * K) }
+    S = { coef }
+    for (let i = 0; i < m; i++) res[i] = toeDist(L.subarray(i * 3, i * 3 + 3), surfaceAt(S, us[i], vs[i], q))
+    const sorted = Float64Array.from(res).sort(), thr = Math.max(SURF_INLIER, 2.5 * sorted[m >> 1])
+    for (let i = 0; i < m; i++) inl[i] = res[i] < thr ? 1 : 0
+  }
+  const r = []
+  for (let i = 0; i < m; i++) if (inl[i]) r.push(res[i])
+  r.sort((a, b) => a - b)
+  const ref = surfaceAt(S, 0.5, 0.5, new Float64Array(3))
+  let range = 0
+  for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0], [0.5, 1], [0, 0.5], [1, 0.5]]) range = Math.max(range, toeDist(surfaceAt(S, u, v, q), ref))
+  return { coef: S.coef, inliers: r.length / m, med: r.length ? r[r.length >> 1] : Infinity, range }
+}
+
+/**
+ * analyzeBackground(img) -> { bg, checkerboard, mask, surface }.
  * Border pixels are leader-clustered in OKLab (ΔE 0.04). One cluster ≥ 60% of the border = solid
  * background. Two light clusters ≥ 60% that alternate with a stable run length = painted
- * checkerboard; its border-connected pixels form `mask` (1 = exclude from grid detection).
+ * checkerboard; its border-connected pixels form `mask` (1 = exclude from grid detection). Otherwise, with
+ * >= 40% of the border opaque, a smooth gradient: `surface` = fitSurface on the means of B x B border blocks
+ * (B = max(4, round(min(W, H) / 48)), blocks at least half opaque) when its inlier share >= 0.6, median
+ * inlier residual < 0.035 and range >= 0.03; `bg` is then the surface colour at the canvas centre.
  */
 export function analyzeBackground(img) {
   const W = img.width, H = img.height, d = img.data
@@ -41,7 +115,7 @@ export function analyzeBackground(img) {
   for (let y = 1; y < H; y++) ring.push(y * W + W - 1)
   for (let x = W - 2; x >= 0 && H > 1; x--) ring.push((H - 1) * W + x)
   for (let y = H - 2; y > 0 && W > 1; y--) ring.push(y * W)
-  const none = { bg: null, checkerboard: null, mask: null }
+  const none = { bg: null, checkerboard: null, mask: null, surface: null }
   const lab = new Float64Array(ring.length * 3), label = new Int32Array(ring.length).fill(-1)
   const leads = [], counts = [], sums = [], tt = new Float64Array(3)
   let opaque = 0
@@ -58,13 +132,32 @@ export function analyzeBackground(img) {
     for (let k = 0; k < 3; k++) sums[best][k] += tt[k]
   }
   if (opaque < ring.length * 0.4) return none // border mostly transparent already
+  const surf = () => { // no solid colour or checkerboard: a smooth gradient over the border-block means?
+    const B = Math.max(4, Math.round(Math.min(W, H) / 48)), t = new Float64Array(3), us = [], vs = [], L = []
+    const block = (x0, y0) => {
+      const x1 = Math.min(W, x0 + B), y1 = Math.min(H, y0 + B)
+      let n = 0, l = 0, a = 0, b = 0
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+        const p = (y * W + x) * 4
+        if (d[p + 3] < 128) continue
+        srgbToOklab(d[p], d[p + 1], d[p + 2], t, 0); l += t[0]; a += t[1]; b += t[2]; n++
+      }
+      if (n * 2 < (x1 - x0) * (y1 - y0)) return
+      us.push((x0 + x1) / 2 / W); vs.push((y0 + y1) / 2 / H); L.push(l / n, a / n, b / n)
+    }
+    for (let x = 0; x < W; x += B) { block(x, 0); block(x, Math.max(0, H - B)) }
+    for (let y = B; y < H - B; y += B) { block(0, y); block(Math.max(0, W - B), y) }
+    const S = fitSurface(us, vs, Float64Array.from(L), us.length)
+    if (!S || S.inliers < SURF_MIN_SHARE || S.med >= SURF_MAX_MED || S.range < SURF_MIN_RANGE) return none
+    return { ...none, bg: Float32Array.from(surfaceAt(S, 0.5, 0.5, new Float64Array(3))), surface: { coef: S.coef } }
+  }
   const byCount = counts.map((_, q) => q).sort((a, b) => counts[b] - counts[a] || a - b)
   const mean = (q) => sums[q].map((s) => s / counts[q])
   const [c0, c1] = byCount
   if (counts[c0] >= 0.6 * opaque) return { ...none, bg: Float32Array.from(mean(c0)) }
-  if (c1 === undefined || counts[c0] + counts[c1] < 0.6 * opaque) return none
+  if (c1 === undefined || counts[c0] + counts[c1] < 0.6 * opaque) return surf()
   const m0 = mean(c0), m1 = mean(c1)
-  if (m0[0] < 0.6 || m1[0] < 0.6) return none
+  if (m0[0] < 0.6 || m1[0] < 0.6) return surf()
   // run lengths of the two colors along each side; interior runs only
   const runs = []
   const sides = [[0, W], [W, W + H - 1], [W + H - 1, 2 * W + H - 2], [2 * W + H - 2, ring.length]]
@@ -78,11 +171,11 @@ export function analyzeBackground(img) {
     }
     runs.push(...side.slice(1)) // drop the first (truncated) run; the last one was never pushed
   }
-  if (runs.length < 4) return none
+  if (runs.length < 4) return surf()
   runs.sort((a, b) => a - b)
   const period = runs[runs.length >> 1]
   const stable = runs.filter((v) => Math.abs(v - period) <= Math.max(1, 0.25 * period)).length
-  if (period < 2 || stable < 0.7 * runs.length) return none
+  if (period < 2 || stable < 0.7 * runs.length) return surf()
   // mask: flood from the border over pixels near the segment between the two checker colors
   const mask = new Uint8Array(W * H), queue = new Int32Array(W * H), t = new Float64Array(3)
   const near = (i) => {
@@ -263,18 +356,20 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
  * Background specks (floating, tiny, near a bg color; see below) are removed with it and counted.
  * halo: an opaque cell beside the removed region that lies within 0.03 of the segment from an opaque
  * 4-neighbor to a bg color takes that neighbor's color.
+ * field (gradient surface, D49): per-cell background colours (n x 3 OKLab: the surface at each cell's source
+ * centre) replace the bg colors in every test above; the solid-colour tolerance and gates apply unchanged.
  */
-export function removeBackground(cells, bg, { mode = 'auto', tolerance, connectivity = 4, halo = false } = {}) {
+export function removeBackground(cells, bg, { mode = 'auto', tolerance, connectivity = 4, halo = false, field = null } = {}) {
   const { w, h, lab, alpha, masked } = cells, n = w * h
   const out = { ...cells, lab: Float32Array.from(lab), alpha: Uint8Array.from(alpha), rgb: cells.rgb && Int32Array.from(cells.rgb) }
   const refuse = (reason) => ({ ...out, background: { applied: false, reason, removed: 0, specks: 0, haloChanged: 0 } })
   if (!bg || !bg.length || !mode) return refuse('no background color')
-  const key = mode === 'key', nb = bg.length / 3, T = toe(lab), B = toe(bg)
+  const key = mode === 'key', nb = field ? 1 : bg.length / 3, T = toe(lab), B = toe(bg), F = field && toe(field)
   // painted checker: neutral grey squares with texture (cells up to ΔE ~0.035 off, which otherwise trip the
   // floating-subject check); chroma x2 keeps tinted pale ink (steel vs the grey square: 0.030 -> 0.051)
   if (nb === 2) for (const A of [T, B]) for (let i = 0; i < A.length; i += 3) { A[i + 1] *= 2; A[i + 2] *= 2 }
   const tol = key ? tolerance ?? 0.03 : nb === 2 ? 0.035 : 0.03, tol2 = tol * tol
-  const bgD2 = (p) => { let m = Infinity; for (let b = 0; b < nb; b++) m = Math.min(m, d2(T, p * 3, B, b * 3)); return m }
+  const bgD2 = F ? (p) => d2(T, p * 3, F, p * 3) : (p) => { let m = Infinity; for (let b = 0; b < nb; b++) m = Math.min(m, d2(T, p * 3, B, b * 3)); return m }
   const isBg = (p) => (masked && masked[p]) || (alpha[p] && (key ? bgD2(p) <= tol2 : bgD2(p) < tol2))
   let border = 0, hit = 0, spread = 0
   for (let p = 0; p < n; p++) {
@@ -348,7 +443,7 @@ export function removeBackground(cells, bg, { mode = 'auto', tolerance, connecti
     for (const q of nbrs) {
       if (q < 0 || gone[q] || !alpha[q] || isBg(q)) continue
       for (let b = 0; b < nb; b++) {
-        const dd = segD2(T, p * 3, T, q * 3, B, b * 3)
+        const dd = F ? segD2(T, p * 3, T, q * 3, F, p * 3) : segD2(T, p * 3, T, q * 3, B, b * 3)
         if (dd < bd) { bd = dd; best = q }
       }
     }

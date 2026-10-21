@@ -42,6 +42,7 @@ export const DEFAULTS = {
   shadowOpacity: 0, shadowBlur: 8, shadowOffsetX: 0.5, shadowOffsetY: 0.8,
   glowOpacity: 0, glowBlur: 12,
   encode: 'png', jpegQuality: 80, jpegGenerations: 1, cropX: 0, cropY: 0, finalRescale: 1,
+  alphaFeather: 0, alphaGamma: 1, alphaMode: 'straight', matte: 255, webpQuality: 85, // soft-alpha stratum A (neutral defaults)
   scene: {}, // overrides applied when the GT is fully opaque (scene: fit cover, no margin, bg 'scene')
 }
 
@@ -57,17 +58,20 @@ const GPT = {
   scene: { edgeBlurSigma: 0.9, cellGradient: 8, textureAmp: 4 },
 }
 
+const GEMINI = {
+  cellSize: 14.2, internalScale: 2, resampleKernel: 'bicubic', aniso: 0.005, driftAmp: 0.35, driftWavelength: 20,
+  driftAxisRatio: 0.3, mixelRegions: 3, supersample: 1, edgeBlurSigma: 0, cellJitter: 2, cellGradient: 1,
+  textureAmp: 1.5, noiseSigma: 0.8, bgMode: 'near-white', nearWhite: [247, 255],
+}
+const SOFT = { ...GPT, bgMode: 'keep-alpha', alphaFeather: [0.8, 1.6], scene: {} }
+
 // §2.8 presets. `fake-alpha` is the single-sprite form of `fake-alpha-sheet` (checker + shadow).
 export const PRESETS = {
   'clean-nn-integer': CLEAN,
   'nonint-nn': NONINT,
   'nonint-bilinear': { ...NONINT, cellSize: 9.6, internalScale: 1.5, resampleKernel: 'bilinear', supersample: 1 },
   'gpt-image-like': GPT,
-  'gemini-like': {
-    cellSize: 14.2, internalScale: 2, resampleKernel: 'bicubic', aniso: 0.005, driftAmp: 0.35, driftWavelength: 20,
-    driftAxisRatio: 0.3, mixelRegions: 3, supersample: 1, edgeBlurSigma: 0, cellJitter: 2, cellGradient: 1,
-    textureAmp: 1.5, noiseSigma: 0.8, bgMode: 'near-white', nearWhite: [247, 255],
-  },
+  'gemini-like': GEMINI,
   'drift-heavy': { ...GPT, cellSize: [5.2, 10], aniso: 0.08, driftAmp: 0.9, driftWavelength: 15, maxLocalScaleVar: 0.1 },
   'mixel-detail': { ...GPT, mixelRegions: 10, mixelRadius: [8, 14], mixelFactor: 2, textureAmp: 4 },
   'jpeg-heavy': { ...NONINT, edgeBlurSigma: 0.4, encode: 'jpeg', jpegQuality: [50, 85], jpegGenerations: 2, cropX: 0, cropY: 0, finalRescale: [0.9, 1.1] },
@@ -83,16 +87,31 @@ export const PRESETS = {
   'bilinear-x8': { ...CLEAN, internalScale: 'cell', resampleKernel: 'bilinear' },
   'bilinear-x8.37': { ...CLEAN, cellSize: 8.37, internalScale: 'cell', resampleKernel: 'bilinear' },
   'bicubic-x8-clean': { ...CLEAN, internalScale: 'cell', resampleKernel: 'bicubic' },
+  // Smooth studio-gradient backdrops at generator-level texture (D49; bicubic-x8 keeps its heavy texture).
+  'gpt-gradient': { ...GPT, bgMode: 'gradient' },
+  'gemini-gradient': { ...GEMINI, bgMode: 'gradient' },
+  // Soft-alpha stratum A (D51): real transparent generator output (e.g. GPT Image 2.5 background "transparent").
+  // GPT-like rendering kept on transparency, alpha feathered (premultiplied Gaussian: colour bleeds out, the
+  // alpha 0.5 contour stays on the true edge); variants store the edge colour wrongly or add layers.
+  'soft-ref': { ...SOFT, alphaFeather: [0, 0] }, // paired control: same draws, no feather (supersample AA only)
+  'soft-alpha': SOFT,
+  'soft-alpha-premul': { ...SOFT, alphaMode: 'premul' }, // premultiplied RGB written as straight: dark fringe
+  'soft-alpha-matte': { ...SOFT, alphaMode: 'matte', matte: 255 }, // cut-out from white without decontamination: bright fringe
+  'soft-alpha-glow': { ...SOFT, glowOpacity: 0.6, glowBlur: 10, shadowOpacity: 0.4, shadowBlur: 6 }, // semi-transparent glow + drop-shadow layers
+  'soft-alpha-webp': { ...SOFT, encode: 'webp', webpQuality: [70, 90] }, // lossy RGB (VP8-like via JPEG), lossless alpha
+  'soft-alpha-erode': { ...SOFT, alphaGamma: 2.2 }, // eroded matte: the 0.5 contour moves inside the true edge
 }
 
-// Primary benchmark stratum per preset (methodology §4): G exact, I interpolated, M mixel, B background.
+// Primary benchmark stratum per preset (methodology §4): G exact, I interpolated, M mixel, B background, A soft alpha.
 export const PRESET_STRATUM = {
   'clean-nn-integer': 'G', 'nonint-nn': 'I', 'nonint-bilinear': 'I', 'jpeg-heavy': 'I', 'bicubic-x8': 'I',
   'bilinear-x8': 'I', 'bilinear-x8.37': 'I', 'bicubic-x8-clean': 'I',
   'gpt-image-like': 'M', 'gemini-like': 'M', 'drift-heavy': 'M', 'mixel-detail': 'M', 'fake-alpha': 'B',
+  'gpt-gradient': 'B', 'gemini-gradient': 'B',
+  'soft-ref': 'A', 'soft-alpha': 'A', 'soft-alpha-premul': 'A', 'soft-alpha-matte': 'A', 'soft-alpha-glow': 'A', 'soft-alpha-webp': 'A', 'soft-alpha-erode': 'A',
 }
 // Bumped on any change that alters emitted fixture pixels or truth (recorded by bench.mjs).
-export const SYNTH_VERSION = 'pixilate-synth/3'
+export const SYNTH_VERSION = 'pixilate-synth/4'
 
 function resolve(params, seed, opaque) {
   const base = { ...DEFAULTS, ...params }
@@ -367,9 +386,43 @@ export function degrade(sprite, params = {}, seed = 1) {
     }
   }
 
+  if (P.bgMode === 'keep-alpha' && (P.shadowOpacity > 0 || P.glowOpacity > 0)) { // transparent layers under the sprite
+    const a0 = new Float32Array(Wi * Hi); for (let i = 0; i < a0.length; i++) a0[i] = buf[i * 4 + 3]
+    const layer = new Float32Array(Wi * Hi * 4) // premultiplied: glow over shadow
+    if (P.shadowOpacity > 0) {
+      const a = gaussian(a0, Wi, Hi, 1, P.shadowBlur / s), ox = Math.round(P.shadowOffsetX * cxi), oy = Math.round(P.shadowOffsetY * cyi)
+      for (let Y = 0; Y < Hi; Y++) for (let X = 0; X < Wi; X++) {
+        const sx = X - ox, sy = Y - oy
+        layer[(Y * Wi + X) * 4 + 3] = P.shadowOpacity * (sx >= 0 && sy >= 0 && sx < Wi && sy < Hi ? a[sy * Wi + sx] : 0)
+      }
+    }
+    if (P.glowOpacity > 0) {
+      const a = gaussian(a0, Wi, Hi, 1, P.glowBlur / s)
+      const gc = palRGB.reduce((b, c) => (c[0] + c[1] + c[2] > b[0] + b[1] + b[2] ? c : b), [0, 0, 0])
+      for (let i = 0; i < Wi * Hi; i++) {
+        const ga = Math.min(1, P.glowOpacity * a[i] * 1.6), o = i * 4 // glow peaks near the edge
+        for (let c = 0; c < 3; c++) layer[o + c] = gc[c] * ga + layer[o + c] * (1 - ga)
+        layer[o + 3] = ga + layer[o + 3] * (1 - ga)
+      }
+    }
+    for (let i = 0; i < Wi * Hi; i++) { const A = buf[i * 4 + 3]; for (let c = 0; c < 4; c++) buf[i * 4 + c] += layer[i * 4 + c] * (1 - A) }
+  }
+
   // Blur + resample to output size (§2.4 step 8).
   buf = gaussian(buf, Wi, Hi, 4, P.edgeBlurSigma)
   if (Wi !== W || Hi !== H) buf = resample(buf, Wi, Hi, W, H, 4, P.resampleKernel)
+
+  if (P.alphaFeather > 0 || P.alphaGamma !== 1) { // soft matte: feathered alpha, colour bled outward, interior colour kept
+    const bl = P.alphaFeather > 0 ? gaussian(buf, W, H, 4, P.alphaFeather) : buf
+    for (let i = 0; i < W * H; i++) {
+      const o = i * 4, A0 = buf[o + 3], A1 = bl[o + 3]
+      const src = A0 >= 0.5 ? buf : bl, As = A0 >= 0.5 ? A0 : A1
+      if (!(As > 1e-6)) { buf[o] = buf[o + 1] = buf[o + 2] = buf[o + 3] = 0; continue }
+      const a = P.alphaGamma === 1 ? A1 : Math.pow(Math.min(1, Math.max(0, A1)), P.alphaGamma)
+      for (let c = 0; c < 3; c++) buf[o + c] = (src[o + c] / As) * a
+      buf[o + 3] = a
+    }
+  }
 
   // Texture, noise; unpremultiply; quantize (§2.4 step 9).
   const rn = rng(seed, 'noise')
@@ -393,6 +446,8 @@ export function degrade(sprite, params = {}, seed = 1) {
       let v = buf[i * 4 + c] / A
       if (tex) v += tex[i] + 0.3 * P.textureAmp * rn.g()
       if (P.noiseSigma > 0) v += P.noiseSigma * rn.g()
+      if (P.alphaMode === 'premul') v *= A // premultiplied bytes stored as straight
+      else if (P.alphaMode === 'matte') v = v * A + P.matte * (1 - A) // composited on a matte, alpha kept
       out[i * 4 + c] = Math.round(v)
     }
     out[i * 4 + 3] = Math.round(A * 255)
@@ -421,6 +476,14 @@ export function degrade(sprite, params = {}, seed = 1) {
     for (let y = 0; y < nh; y++) d.set(img.data.subarray(((y + P.cropY) * W + P.cropX) * 4, ((y + P.cropY) * W + W) * 4), y * nw * 4)
     img = { width: nw, height: nh, data: d }
     cutsX = cutsX.map((c) => c - P.cropX); cutsY = cutsY.map((c) => c - P.cropY)
+  }
+  if (P.encode === 'webp') { // lossy VP8-like RGB (JPEG round trip of the RGB plane, black under alpha 0), lossless alpha
+    const rgb = Uint8ClampedArray.from(img.data)
+    for (let i = 3; i < rgb.length; i += 4) rgb[i] = 255
+    const dec = jpeg.decode(jpeg.encode({ width: img.width, height: img.height, data: rgb }, Math.round(P.webpQuality)).data, { useTArray: true, formatAsRGBA: true })
+    const d = new Uint8ClampedArray(img.data.length)
+    for (let i = 0; i < d.length; i += 4) { d[i] = dec.data[i]; d[i + 1] = dec.data[i + 1]; d[i + 2] = dec.data[i + 2]; d[i + 3] = img.data[i + 3] }
+    img = { width: img.width, height: img.height, data: d }
   }
   if (P.encode === 'jpeg') {
     for (let g = 0; g < P.jpegGenerations; g++) {

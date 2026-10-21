@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeBackground, cleanup, removeBackground } from '../src/lib/core/cleanup.js'
+import { analyzeBackground, cleanup, removeBackground, surfaceAt } from '../src/lib/core/cleanup.js'
 import { existsSync } from 'node:fs'
 import { srgbToOklab } from '../src/lib/core/color.js'
 import { readPng, repoPath } from './fixtures.js'
@@ -232,6 +232,44 @@ describe('analyzeBackground', () => {
   it('reports no background for transparent borders', () => {
     const r = analyzeBackground(image(64, 64, (x, y) => (x > 20 && x < 40 ? [0, 0, 0, 255] : [0, 0, 0, 0])))
     expect(r.bg).toBe(null)
+  })
+
+  // D49: a smooth gradient backdrop gets a quadratic surface; busy scenes and flat colours get none
+  const grad = (x, y) => [150 + 0.5 * y + 0.002 * y * y, 230 - 0.3 * y, 170 + 0.4 * x].map(Math.round).concat(255)
+  it('fits a surface to a smooth gradient border (the sprite is off the border)', () => {
+    const r = analyzeBackground(image(128, 128, (x, y) => (inSprite(x, y) ? [200, 40, 40, 255] : grad(x, y))))
+    expect(r.surface).not.toBe(null)
+    expect(r.checkerboard).toBe(null)
+    const at = (u, v) => surfaceAt(r.surface, u, v, new Float64Array(3))
+    for (const [got, [x, y]] of [[at(0.5, 0), [64, 0]], [at(0.5, 1), [64, 127]], [at(0, 0.5), [0, 64]]]) {
+      const ref = lab(...grad(x, y).slice(0, 3))
+      for (let k = 0; k < 3; k++) expect(Math.abs(got[k] - ref[k])).toBeLessThan(0.01)
+    }
+  })
+  it('fits no surface to a busy opaque scene or a flat colour', () => {
+    let h = 7
+    const rnd = () => ((h = (Math.imul(h, 1103515245) + 12345) >>> 0) >>> 16) & 255
+    const cols = Array.from({ length: 64 }, () => [rnd(), rnd(), rnd(), 255])
+    expect(analyzeBackground(image(128, 128, (x, y) => cols[((x >> 3) * 7 + (y >> 3) * 3) % 64])).surface).toBe(null)
+    expect(analyzeBackground(image(128, 128, () => [120, 120, 120, 255])).surface).toBe(null)
+  })
+  it('surface removal: gradient cells go and the subject stays; a two-tone tile fails the solid gates', () => {
+    const w = 12, h = 12, n = w * h, cells = { w, h, lab: new Float32Array(n * 3), alpha: new Uint8Array(n).fill(255), dominance: new Float32Array(n).fill(1) }
+    const field = new Float32Array(n * 3)
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const p = y * w + x, bg = lab(...grad(x * 10, y * 10).slice(0, 3)), sub = x >= 4 && x < 8 && y >= 4 && y < 8
+      field.set(bg, p * 3); cells.lab.set(sub ? lab(200, 40, 40) : bg, p * 3)
+    }
+    const out = removeBackground(cells, field.subarray(0, 3), { mode: 'auto', field })
+    expect(out.background.applied).toBe(true)
+    expect(out.background.removed).toBe(n - 16)
+    expect(out.alpha[5 * w + 5]).toBe(255)
+    // a tile of two greens ~0.06 apart against the surface through their middle: coverage < 90%, refused
+    const tile = { ...cells, lab: new Float32Array(n * 3) }, mid = new Float32Array(n * 3)
+    for (let p = 0; p < n; p++) { tile.lab.set(((p % w) + Math.floor(p / w)) & 1 ? lab(60, 120, 50) : lab(80, 140, 60), p * 3); mid.set(lab(70, 130, 55), p * 3) }
+    const t = removeBackground(tile, mid.subarray(0, 3), { mode: 'auto', field: mid })
+    expect(t.background.applied).toBe(false)
+    expect(t.alpha.every((a) => a === 255)).toBe(true)
   })
 })
 
