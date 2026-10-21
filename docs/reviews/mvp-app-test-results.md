@@ -101,6 +101,15 @@ Only Save and Share hand over the exact bytes. Copy goes through the system clip
 | Real AI samples, open to first result | 0.3–2.4 s | OBSERVED, local-only, not rights-cleared |
 | Phone budgets (spec: ≤ 4 s first result on a mid-range phone) | Not measured | UNKNOWN |
 
+## Round 5 note (2026-10-21)
+
+Checked at HEAD `0ab3384` (engine `0.14.0`, app `eb0f056`).
+
+- **Content security policy (`eb0f056`).** Production builds carry a CSP meta tag (FR-021): scripts, styles, connections and workers from `'self'` only, images also from `blob:` and `data:`, `object-src`, `base-uri` and `form-action` `'none'`, and the inline theme script allowed by a SHA-256 hash computed at build time. The dev server has no policy, because Vite injects styles and an HMR socket. Static style attributes became classes, so `style-src` needs no `'unsafe-inline'`. On the production preview the meta tag was present and the example ran with no console errors (OBSERVED).
+- **The 10 s time to result was a hidden-pane artefact.** An earlier measurement of about 10 s for the example came from a Browser pane that was hidden and untouched, where the page runs as a background page and its timers are throttled. It is not the engine or the app (INFERRED from the numbers below and the Node timings).
+- **Time to result for the example** (`npm run build`, then `npm run preview`; click "Try an example" until "Pixel art ready", measured in the page; OBSERVED, desktop, procedural). From a freshly loaded page, so the worker starts cold: 857, 749, 753 and 656 ms (median about 750 ms). With the worker already loaded: 353 ms. The result is 32 × 36, Clean, best match. In Node, `analyze` plus `convertCandidates` for the same image takes about 80–130 ms (see the [prototype test results, Round 5](prototype-v1-test-results.md#timing-round-5)). Caveat: the session could not bring the Browser pane into view, so the pane reported itself hidden, while the page reported `document.visibilityState` `visible` and had just been used. The machine ran no benchmark during the timing, but it was not fully idle: an unrelated local dev server used about one core.
+- **Bundle (gzip).** Vite reports app JS 41.8 KB and CSS 16.2 KB. The worker is 60,452 bytes with `gzip -c` (Vite prints no gzip size for it). All three are within the spec budgets.
+
 ## Bundle sizes
 
 OBSERVED from `npm run build` in `app/` (gzip):

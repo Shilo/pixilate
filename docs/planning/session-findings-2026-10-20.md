@@ -2,9 +2,28 @@
 
 ## Purpose and scope
 
-This document records the state reached in the 2026-10-20 session, so work can resume without re-reading the history. It continues the [2026-10-19 session findings](session-findings-2026-10-19.md), whose owner decisions and background still apply. It is a dated summary and resume point. Where it states a number, the canonical source governs: the [prototype design](prototype-algorithm-design.md#deviations) rows D37–D55 and the [test results](../reviews/prototype-v1-test-results.md) sections [Round 3](../reviews/prototype-v1-test-results.md#round-3-2026-10-20) and [2026-10-20 round](../reviews/prototype-v1-test-results.md#2026-10-20-round). The [MVP app update](#mvp-app-2026-10-21) and the [Round 3 update](#round-3-update-2026-10-20) below are the current state; the later sections record the earlier round of the same day. Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence). Numbers that include local samples are OBSERVED, local-only, not rights-cleared, and all of them are in-sample.
+This document records the state reached in the 2026-10-20 session, so work can resume without re-reading the history. It continues the [2026-10-19 session findings](session-findings-2026-10-19.md), whose owner decisions and background still apply. It is a dated summary and resume point. Where it states a number, the canonical source governs: the [prototype design](prototype-algorithm-design.md#deviations) rows D37–D64 and the [test results](../reviews/prototype-v1-test-results.md) sections [Round 5](../reviews/prototype-v1-test-results.md#round-5-2026-10-21), [Round 3](../reviews/prototype-v1-test-results.md#round-3-2026-10-20) and [2026-10-20 round](../reviews/prototype-v1-test-results.md#2026-10-20-round). The [Round 5 update](#round-5-2026-10-21) is the current state; the [MVP app update](#mvp-app-2026-10-21) and the [Round 3 update](#round-3-update-2026-10-20) below it, and the later sections, are history. Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence). Numbers that include local samples are OBSERVED, local-only, not rights-cleared, and all of them are in-sample.
 
 Product and company names may be trademarks of their respective owners; Pixilate is not affiliated with, endorsed by, or sponsored by them.
+
+## Round 5 (2026-10-21)
+
+**Current state.** Engine `0.14.0`, constants 33, synthetic fixture version `pixilate-synth/5`, HEAD `0ab3384`. Since round 3 the engine gained the noisy-ramp smooth-upscale gate and the Clean accent keep (D57–D58, `73a8f72`), the Keys cubic deconvolution kernel (D60, `42ab1ce`), outline-continuity steps in large reductions (D62, `1ea5b32`) and the held-out adjustments (D63, `0ab3384`); the app gained a content security policy (`eb0f056`). D47–D58 were re-measured on held-out seeds (all hold or are weaker, none reversed; [held-out validation](../reviews/prototype-v1-test-results.md#held-out-validation-2026-10-21)). Rejected: Clean on reductions (D59) and the Potts / ICM relabel (D64). Accepted as a finding: the D52 count-DP real-sample "noise" is retained detail (D61). Nothing is pushed, and there is still no `LICENSE` file.
+
+**Key numbers** (OBSERVED, local-only, not rights-cleared, in-sample; details in the [test results, Round 5](../reviews/prototype-v1-test-results.md#round-5-2026-10-21)):
+
+- Fresh clone: 316 prototype tests pass (2 expected failures, 24 local-only skipped, 0 failed); 84 app tests pass; the app builds.
+- Three-seed bench: stratum I median 0.965 → 0.974 and the engine edges nearest on I (0.953 against 0.945); M (0.815) and B (0.700) unchanged; rec = best 72.0 → 72.4 %; false grids 1 of 12.
+- Comparison at `_kT`: ours 0.978 overall, I 0.960, B 0.860; Real-PixelArt fixed-size leads on M (0.872 against 0.835). Native size-exact 0.780.
+- Real samples: recommendations unchanged; `gpt-forest` Clean noise orphans 306 → 417 at the pitch target (accent keep, INFERRED). Timing on this machine is noisy (up to 2 ×); an A/B shows no engine slowdown against round 3. The app's example reaches a result in 0.66–0.86 s from a cold page in the production build.
+
+**Ranked next steps** (proposals, not decisions; they replace the lists below):
+
+1. **The M gap is structural: palette discovery** (`OD-005`, `OD-007`, `EX-009`). Lattice, cell colour and merge threshold are ruled out; the Potts result (M 0.879) shows spatial label coherence helps but must not grow palettes. Bench the diagonal-Potts-only lead at τ_merge 0.045 first, under the ratchet and +20 % palette rule, on the held-out split.
+2. **Eyes at 32 px** (`EX-011`): they read as a dark dash and lose the iris colour; the two `it.fails` straddling-eye fixtures stay open.
+3. **Missed `d2` adoptions** (D61 (2)): exempt well-supported `d2` lattices from the seamless veto (`sparks`, `blade` `bilinear-x8.37`) after no-grid and painted-control checks, and the `mc-face64` octave lock.
+4. **Real-device testing** (owner; [testing to-do](testing-todo.md#mvp-app-what-the-owner-should-test)): phones and tablets, screen readers, and the owner's own AI images.
+5. **Owner decisions:** whether the D62 reduction steps belong in the default output (taken by the orchestrator, flagged for review), the Trim basis default (D50), glow and shadow under `Binary(128)` (D51), the licence, and pushing.
 
 ## MVP app (2026-10-21)
 
