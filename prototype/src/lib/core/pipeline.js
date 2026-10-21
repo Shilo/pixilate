@@ -11,11 +11,12 @@ import { detectGenerator } from './detect.js'
 import { deconvolveCells, fitKernel } from './fitcells.js'
 import { createImage, oklabToSrgb, srgbToOklab } from './color.js'
 import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
+import { indexImage, q4 } from './orphans.js'
 
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.9.2', constants: 28 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.10.0', constants: 28 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -384,11 +385,24 @@ function run(A, o) {
   const cellBasis = o.trim && o.trimBasis === 'cells'
   const trim = { enabled: o.trim, tau: cellBasis && route !== 'grid' ? 127 : 0, comparison: '>', box: null }
   if (cellBasis) trim.basis = 'cells'
-  const visibleBox = (visible) => { // smallest half-open box of alpha > tau source pixels
-    let x0 = W, y0 = H, x1 = -1, y1 = -1
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > trim.tau && visible(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
-    if (x1 < 0) throw new PixilateError('empty-visible-region', `Trim found no ${cellBasis && route === 'grid' ? 'opaque cell' : `pixel with alpha > ${trim.tau}`}`)
-    trim.box = [x0, y0, x1 + 1, y1 + 1]
+  // smallest half-open box of alpha > tau source pixels; `pixels` = the default basis's visibility
+  const visibleBox = (visible, pixels = visible) => {
+    const scan = (tau, vis) => {
+      let x0 = W, y0 = H, x1 = -1, y1 = -1
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > tau && vis(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
+      return x1 < 0 ? null : [x0, y0, x1 + 1, y1 + 1]
+    }
+    trim.box = scan(trim.tau, visible)
+    if (!trim.box && cellBasis) { // D55: a faint subject leaves no opaque cell; fall back to the default alpha > 0 basis
+      trim.box = scan(0, pixels)
+      if (trim.box) {
+        const none = route === 'grid' ? 'opaque cell (Binary(128) majority)' : `pixel with alpha > ${trim.tau}`
+        trim.fallback = { basis: 'pixels', tau: 0, reason: `no ${none}` }
+        trim.tau = 0
+        warnings.push(`trim basis 'cells' found no ${none}: used the default alpha > 0 basis`)
+      }
+    }
+    if (!trim.box) throw new PixilateError('empty-visible-region', `Trim found no ${cellBasis ? 'opaque cell or ' : ''}pixel with alpha > ${cellBasis ? 0 : trim.tau}`)
     return trim.box
   }
 
@@ -403,7 +417,8 @@ function run(A, o) {
     if (o.trim) { // pixels in background-removed cells are not visible
       const nc = native(), col = cellIndex(grid.x, W), row = cellIndex(grid.y, H), gone = nc.removed
       // basis 'cells': only cells left opaque by sampling (Binary(128) majority) and background removal
-      const [x0, y0, x1, y1] = visibleBox(cellBasis ? (x, y) => nc.alpha[row[y] * N0 + col[x]] > 0 : gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true)
+      const pixels = gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true
+      const [x0, y0, x1, y1] = visibleBox(cellBasis ? (x, y) => nc.alpha[row[y] * N0 + col[x]] > 0 : pixels, pixels)
       box = [col[x0], row[y0], col[x1 - 1] + 1, row[y1 - 1] + 1]
     }
     basis = [box[2] - box[0], box[3] - box[1]]
@@ -592,6 +607,10 @@ const REC_REDUCE = 1.25 // min(basis / resized) >= this is a reduction; Clean is
 const REC_AGREE = 97 // percent of union-opaque output pixels on which grid and clean agree (light touch)
 const REC_SAME2 = 0.05 * 0.05 // squared raw OKLab distance for "same colour" in the agreement count
 const REC_COV = 0.03 // Clean may lower outline coverage by at most this
+// D55: a grid output whose noise orphans (orphans.js Q4 NOISE, as scripts/score.mjs) are >= this share of its
+// opaque pixels is AI mixel noise; Clean may then change more, down to REC_AGREE_NOISY % agreement
+const REC_NOISE = 0.04
+const REC_AGREE_NOISY = 90
 
 /** Union-opaque pixels (alpha >= 128 in either) n, and those opaque in both with OKLab distance < 0.05. */
 function outputAgreement(A, B) {
@@ -656,10 +675,14 @@ function recommend(A, cls, candidates, alias, original) {
   if (cc && !d2 && red < REC_REDUCE) {
     const { n, same } = outputAgreement(gc.image, cc.image), agreeOk = same * 100 >= REC_AGREE * n
     const cg = outlineCoverage(gc.image), ccv = outlineCoverage(cc.image), covOk = cg === null || ccv === null || ccv >= cg - REC_COV
-    const pct = n ? (100 * same) / n : 100
+    const pct = n ? (100 * same) / n : 100, outline = cg === null ? 'n/a' : `kept ${r2(ccv)} vs ${r2(cg)}`
     if (agreeOk && covOk)
-      return { id: 'clean', rule: 'light-touch-clean', evidence: `recommended clean: light touch (agreement ${r1(pct)} % >= ${REC_AGREE} %, outline ${cg === null ? 'n/a' : `kept ${r2(ccv)} vs ${r2(cg)}`})` }
-    return { id: 'grid', rule: 'grid', evidence: `recommended grid: Clean declined (${!agreeOk ? `agreement ${r1(pct)} % < ${REC_AGREE} %` : `outline coverage ${r2(ccv)} < ${r2(cg)} - ${REC_COV}`})` }
+      return { id: 'clean', rule: 'light-touch-clean', evidence: `recommended clean: light touch (agreement ${r1(pct)} % >= ${REC_AGREE} %, outline ${outline})` }
+    let noise = null // the grid output's noise-orphan share, only where it can decide
+    if (covOk && same * 100 >= REC_AGREE_NOISY * n) { const ix = indexImage(gc.image); noise = ix.opaque ? q4(ix).noise / ix.opaque : 0 }
+    if (noise >= REC_NOISE) // null (not measured) never passes
+      return { id: 'clean', rule: 'noisy-grid-clean', evidence: `recommended clean: noisy grid (noise orphans ${r1(100 * noise)} % of opaque >= ${100 * REC_NOISE} %, agreement ${r1(pct)} % >= ${REC_AGREE_NOISY} %, outline ${outline})` }
+    return { id: 'grid', rule: 'grid', evidence: `recommended grid: Clean declined (${!agreeOk ? `agreement ${r1(pct)} % < ${REC_AGREE} %` : `outline coverage ${r2(ccv)} < ${r2(cg)} - ${REC_COV}`}${noise === null ? '' : `; noise orphans ${r1(100 * noise)} % < ${100 * REC_NOISE} %`})` }
   }
   return { id: 'grid', rule: 'grid', evidence: `recommended grid: ${d2 ? 'smooth-upscale lattice (d2)' : red >= REC_REDUCE ? `reduction ${r2(red)}x >= ${REC_REDUCE}` : 'Clean identical to grid'}` }
 }
@@ -674,7 +697,8 @@ function recommend(A, cls, candidates, alias, original) {
  * Identical outputs are deduped (the earlier id survives). Recommendation (recommend(), first match):
  * original when present; class none/weak -> smooth; exact at confidence 1 -> grid; grid failed -> clean
  * else smooth; smooth-upscale evidence with a d1 lattice >= 2x off the target -> smooth; Clean when it
- * is a light touch (>= 97 % pixel agreement with grid, outline coverage kept; d1, no reduction); else grid.
+ * is a light touch (>= 97 % pixel agreement with grid, outline coverage kept; d1, no reduction), or when
+ * the grid output is noisy (noise orphans >= 4 % of opaque pixels) and agreement >= 90 % (D55); else grid.
  */
 export function convertCandidates(img, opts = {}, bytes = null) {
   checkImage(img)

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare } from '../src/lib/core/pipeline.js'
 import { degrade, PRESETS, noGrid } from './synth.js'
 import { CANVAS_OPTS, proceduralSprites, readPng, repoPath } from './fixtures.js'
-import { scoreCase } from './metrics.js'
+import { indexImage, q4, scoreCase } from './metrics.js'
 
 /** Integer NN upscale of an RGBA image. */
 function nn(img, k) {
@@ -505,6 +505,21 @@ describe('convert: soft-alpha sprites and gradient backdrops (D49, D50)', () => 
     expect(report.trim.tau).toBe(127)
   })
 
+  it("trim basis 'cells' with no opaque cell falls back to alpha > 0 (warned); a truly empty image still throws (D55)", () => {
+    // faint sprite: every pixel alpha 100, so Binary(128) sampling leaves no opaque cell and no pixel > 127
+    const faint = padded(nn({ ...BLOB, data: BLOB.data.map((v, i) => (i % 4 === 3 && v ? 100 : v)) }, 8), 16, 8, 24, 0), b = bboxCrop(BLOB)
+    const box = [16 + b.x0 * 8, 8 + b.y0 * 8, 16 + (b.x0 + b.width) * 8, 8 + (b.y0 + b.height) * 8]
+    for (const extra of [{ manualPeriod: [8, 8] }, { route: 'raster' }]) {
+      const { report } = convert(faint, { trim: { basis: 'cells' }, targetW: b.width, targetH: b.height, ...extra })
+      expect(report.route).toBe(extra.route ?? 'grid')
+      expect(report.trim.box).toEqual(box)
+      expect(report.trim).toMatchObject({ basis: 'cells', tau: 0, fallback: { basis: 'pixels', tau: 0 } })
+      expect(report.warnings.some((w) => w.startsWith("trim basis 'cells' found no "))).toBe(true)
+    }
+    const empty = { width: 32, height: 32, data: new Uint8ClampedArray(32 * 32 * 4) }
+    for (const route of ['auto', 'raster']) expect(code(() => convert(empty, { trim: { basis: 'cells' }, route, targetW: 8, targetH: 8 }))).toBe('empty-visible-region')
+  })
+
   it("gradient backdrop: 'auto' removes it as a surface (model reported); off by default", () => {
     const { img, truth } = degrade(BLOB, 'gpt-gradient', 3), o = { fit: 'stretch', targetW: truth.cellsX, targetH: truth.cellsY }
     const r = convert(img, { ...o, background: 'auto' })
@@ -633,6 +648,16 @@ describe('convertCandidates', () => {
       expect(em(r, 'clean', truth.sprite, truth)).toBeGreaterThanOrEqual(em(r, 'grid', truth.sprite, truth) - 0.03)
     })
 
+    it('a noisy AI-like grid output recommends Clean below 97 % agreement (D55)', () => {
+      const { img, truth } = degrade(sprite('proc-icon'), PRESETS['fake-alpha'], 2)
+      const r = run(img, truth.sprite)
+      expect(rec(r)).toEqual(['clean', 'noisy-grid-clean'])
+      expect(r.recommendation.evidence).toBe('recommended clean: noisy grid (noise orphans 13.5 % of opaque >= 4 %, agreement 90.5 % >= 90 %, outline kept 0.19 vs 0.21)')
+      const noise = (id) => q4(indexImage(r.candidates.find((c) => c.id === id).image)).noise
+      expect(noise('clean')).toBeLessThan(noise('grid'))
+      expect(em(r, 'clean', truth.sprite, truth)).toBeGreaterThanOrEqual(em(r, 'grid', truth.sprite, truth) - 0.03)
+    })
+
     it('textured art (sub-cell noise on a 2x native) declines Clean', () => {
       const T = sprite('proc-icon'), k = 2, pad = 3, w = T.width + 2 * pad, h = T.height + 2 * pad
       const N = { width: w * k, height: h * k, data: new Uint8ClampedArray(w * h * k * k * 4) }
@@ -644,7 +669,7 @@ describe('convertCandidates', () => {
       }
       const { img } = degrade(N, { ...PRESETS['gpt-image-like'], marginFrac: 0, cellSize: [4, 6.5] }, 1)
       const r = run(img, { width: w, height: h })
-      expect(rec(r)).toEqual(['grid', 'grid'])
+      expect(rec(r)).toEqual(['grid', 'grid']) // agreement below the D55 noise gate's 90 %
       expect(r.recommendation.evidence).toMatch(/^recommended grid: Clean declined \(agreement [\d.]+ % < 97 %\)$/)
     })
 
