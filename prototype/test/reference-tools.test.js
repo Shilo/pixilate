@@ -2,7 +2,8 @@
 // reproduces a clean integer nearest-neighbour upscale exactly or the test documents why not, and the
 // Pixel Snapper reference reproduces the spike's dated live probes. Not quality evidence.
 import { describe, it, expect } from 'vitest'
-import { pixelSnapper, pixelDetector, unfake, retroDiffusion, pixelOE, area, nearest, adapt } from './reference-tools.js'
+import { pixelSnapper, pixelDetector, unfake, retroDiffusion, pixelOE, area, nearest, adapt, realPixelArt, realPixelArtTarget, properPixelArt, fastPixelizer, breakfastz, pixelRefiner, quantize } from './reference-tools.js'
+import { degrade, noGrid, PRESETS } from './synth.js'
 import { proceduralSprites } from './fixtures.js'
 import { mulberry32 } from './synth.js'
 
@@ -69,4 +70,48 @@ describe('determinism and adapter', () => {
     expect(adapt(s, s.width, s.height)).toBe(s)
     expect(same(adapt(nnUp(s, 3), s.width, s.height), s)).toBe(true)
   })
+})
+
+describe('round-3 references (Real-PixelArt, proper-pixel-art, fast-pixelizer, breakfastz, PixelRefiner)', () => {
+  const NEW = { realPixelArt, properPixelArt, fastPixelizer, breakfastz, pixelRefiner }
+  for (const id of ['proc-blob', 'proc-icon']) for (const k of [4, 8]) {
+    const s = sprite(id), img = nnUp(s, k)
+    for (const [n, f] of Object.entries(NEW)) it(`${n} recovers ${id} x${k} exactly`, () => expect(same(f(img).image, s)).toBe(true))
+    it(`realPixelArtTarget recovers ${id} x${k} exactly at the true size`, () => expect(same(realPixelArtTarget(img, s.width, s.height), s)).toBe(true))
+  }
+  it('Real-PixelArt fixed size hits W x H by construction on a degraded GPT-like input', () => {
+    const { img, truth } = degrade(sprite('proc-tile'), PRESETS['gpt-image-like'], 11), T = truth.sprite, out = realPixelArtTarget(img, T.width, T.height)
+    expect([out.width, out.height]).toEqual([T.width, T.height])
+  })
+  it('Real-PixelArt returns the input size (no grid) on a plain bilinear x8 upscale: chance-corrected support stays low', () => {
+    const img = degrade(sprite('proc-tile'), PRESETS['bilinear-x8'], 1).img
+    expect(realPixelArt(img).native).toEqual([img.width, img.height])
+  })
+  it('fast-pixelizer bypasses (returns the source) on a <= 1024-colour, <= 256 px input without a uniform run grid', () => {
+    const img = degrade(sprite('proc-tile'), PRESETS['nonint-nn'], 1000 + 1).img
+    if (Math.min(img.width, img.height) <= 256) expect(fastPixelizer(img).info.path).toBe('native-bypass')
+  })
+  it('PixelRefiner reference picks a 2x coarse grid on proc-1bit x8: the documented area term outweighs reconstruction', () => {
+    // pair score = recon * 255 + 2 sqrt(outW outH) - 12 (sx + sy): halving the count saves ~24 points while the
+    // reconstruction error grows by < 0.1; the harmonic penalty (+14) does not close the gap. Reading, not a bug here.
+    const s = sprite('proc-1bit')
+    expect(pixelRefiner(nnUp(s, 8)).native).not.toEqual([s.width, s.height])
+  })
+  it('breakfastz manual width keeps W and derives rows from the cell size', () => {
+    const s = sprite('proc-ui'), r = breakfastz(nnUp(s, 8), { manualWidth: s.width })
+    expect(r.native).toEqual([s.width, s.height])
+  })
+  it('every round-3 reference is repeatable, and the shared common-cap quantizer is deterministic and caps K', () => {
+    const img = degrade(sprite('proc-blob'), PRESETS['gpt-image-like'], 5).img
+    for (const f of Object.values(NEW)) expect(same(f(img).image, f(img).image)).toBe(true)
+    expect(same(realPixelArtTarget(img, 24, 28), realPixelArtTarget(img, 24, 28))).toBe(true)
+    const q = quantize(area(img, 24, 28), 8).image, cols = new Set()
+    for (let p = 0; p < q.width * q.height; p++) if (q.data[p * 4 + 3]) cols.add(q.data.slice(p * 4, p * 4 + 3).join())
+    expect(cols.size).toBeLessThanOrEqual(8)
+    expect(same(q, quantize(area(img, 24, 28), 8).image)).toBe(true)
+  }, 60000)
+  it('no round-3 reference throws on a no-grid scene', () => {
+    const img = noGrid('shapes', 1)
+    for (const f of Object.values(NEW)) expect(() => f(img)).not.toThrow()
+  }, 60000)
 })

@@ -16,7 +16,7 @@
 // | pixelOE         | KohakuBlueleaf/PixelOE `7ce444b3`, Apache-2.0 (contrast downscale only)             | landscape addendum; planning/prototype-algorithm-design.md "Raster route" |
 // | area, nearest   | Pixilate-owned baselines (same maths as scripts/bench.mjs, which runs on import)   | —                                                                        |
 import { mulberry32 } from './synth.js'
-import { SRGB_TO_LINEAR, cosDet, sinDet } from '../src/lib/core/color.js'
+import { SRGB_TO_LINEAR, cosDet, sinDet, srgbToOklab, linearToOklab, oklabToSrgb } from '../src/lib/core/color.js'
 
 const blank = (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) })
 const luma = (d, o) => 0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2] // Rec.601 (Snapper luma weights INFERRED)
@@ -44,9 +44,11 @@ export function adapt(img, tw, th) {
 // centre, k clamped to the pixel count. ChaCha8(42) is replaced by mulberry32(42) (same role, different
 // stream: exact centres differ from the Rust build). Reused as the stated substitute quantizer elsewhere.
 // ---------------------------------------------------------------------------------------------------
-export function kmeansRGB(img, k, { seed = 42, iters = 15 } = {}) {
-  const d = img.data, n = img.width * img.height, labels = new Int32Array(n).fill(-1), ids = []
-  for (let p = 0; p < n; p++) if (d[p * 4 + 3] > 0) ids.push(p)
+export function kmeansRGB(img, k, { seed = 42, iters = 15, maxSamples = Infinity } = {}) {
+  const d = img.data, n = img.width * img.height, labels = new Int32Array(n).fill(-1), all = []
+  for (let p = 0; p < n; p++) if (d[p * 4 + 3] > 0) all.push(p)
+  // maxSamples: cluster an even-stride subset, then assign every pixel (fast-pixelizer's 50000 cap)
+  const ids = all.length > maxSamples ? Array.from({ length: maxSamples }, (_, i) => all[Math.floor((i * all.length) / maxSamples)]) : all
   const N = ids.length
   if (!N) return { centers: new Float64Array(0), labels }
   k = Math.min(k, N)
@@ -87,12 +89,17 @@ export function kmeansRGB(img, k, { seed = 42, iters = 15 } = {}) {
   }
   assign()
   for (let i = 0; i < N; i++) labels[ids[i]] = L[i]
+  if (ids !== all) for (const p of all) {
+    let best = 0, bd = Infinity
+    for (let c = 0; c < k; c++) { const a = d[p * 4] - C[c * 3], b = d[p * 4 + 1] - C[c * 3 + 1], e = d[p * 4 + 2] - C[c * 3 + 2], v = a * a + b * b + e * e; if (v < bd) { bd = v; best = c } }
+    labels[p] = best
+  }
   return { centers: C, labels }
 }
 
 /** Replace RGB of every alpha > 0 pixel by its k-means centre (alpha bytes untouched). */
-function quantize(img, k) {
-  const { centers, labels } = kmeansRGB(img, k), out = { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }
+export function quantize(img, k, opts) {
+  const { centers, labels } = kmeansRGB(img, k, opts), out = { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }
   for (let p = 0; p < labels.length; p++) if (labels[p] >= 0) for (let j = 0; j < 3; j++) out.data[p * 4 + j] = centers[labels[p] * 3 + j]
   return { image: out, labels }
 }
@@ -761,4 +768,1086 @@ export function nearest(img, tw, th) {
     if (img.data[s + 3] >= 128) { out.set(img.data.subarray(s, s + 3), o); out[o + 3] = 255 }
   }
   return { width: tw, height: th, data: out }
+}
+
+// ===================================================================================================
+// Round-3 references (2026-10-20). Pinned sources were read through a web-fetch tool (a model-mediated
+// reading of the public file at the pin; nothing downloaded, cloned, installed or run; no code copied):
+// every step below is written from that reading and from the ecosystem spike's 2026-10-19 / 2026-10-20
+// addenda. Same conventions: UNKNOWN = not established by the reading (substitute named), INFERRED = our
+// interpretation, omitted = documented but not re-implemented. All MIT at the pins.
+// | export              | tool, pin                                                       | read files at the pin                                   |
+// |---------------------|-----------------------------------------------------------------|---------------------------------------------------------|
+// | realPixelArt        | Bocchi-The-Glock/Real-PixelArt `17ce4875` (web core), MIT        | web/core/{grid,features,sampling,pipeline,config}.js    |
+// | realPixelArtTarget  | same, fixed-size `targetAxis` route                             | web/core/grid.js targetAxis                             |
+// | properPixelArt      | KennethJAllen/proper-pixel-art `4de0dda5`, MIT                   | proper_pixel_art/{mesh,image,colors,config}.py          |
+// | fastPixelizer       | handsupmin/fast-pixelizer `5c041fce`, MIT                        | src/snap*.ts                                            |
+// | breakfastz          | dolphinep/breakfastz-pixel-truth `a1a3961c`, MIT                 | src/lib/pixel/{grid,pipeline,resample,palette,cleanup}.ts |
+// | pixelRefiner        | HappyOnigiri/PixelRefiner `c32659f3` (v1.1.1), MIT               | src/core/{grid-search,cell-sampler}.ts, grid-signals/{profiles,reconstruction,harmonics}.ts, shared/config.ts |
+// Not re-implemented (no licence file; ideas only): pixel-pusher, perfectPixel, asepix.
+// ===================================================================================================
+const gaussZ = (z) => Math.exp(-0.5 * z * z)
+const roundEven = (v) => { const r = Math.round(v); return Math.abs(v - Math.trunc(v)) === 0.5 && r % 2 ? r - 1 : r }
+const interpAt = (p, x) => { if (x <= 0) return p[0]; if (x >= p.length - 1) return p[p.length - 1]; const i = Math.floor(x), f = x - i; return p[i] * (1 - f) + p[i + 1] * f }
+const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a }
+function premul01(img) {
+  const { width: w, height: h, data: d } = img, P = new Float64Array(w * h * 4)
+  for (let p = 0; p < w * h; p++) { const a = d[p * 4 + 3] / 255; P[p * 4] = (d[p * 4] / 255) * a; P[p * 4 + 1] = (d[p * 4 + 1] / 255) * a; P[p * 4 + 2] = (d[p * 4 + 2] / 255) * a; P[p * 4 + 3] = a }
+  return P
+}
+function sampleCuts(img, cx, cy, f) { // f(x0, x1, y0, y1) -> [r, g, b, a] bytes; integer cuts
+  const out = blank(cx.length - 1, cy.length - 1)
+  for (let j = 0; j < cy.length - 1; j++) for (let i = 0; i < cx.length - 1; i++) out.data.set(f(cx[i], cx[i + 1], cy[j], cy[j + 1]), (j * out.width + i) * 4)
+  return out
+}
+const strictCuts = (c, n) => { const o = [0]; for (const v of c.map((x) => clamp(roundEven(x), 0, n))) if (v > o[o.length - 1]) o.push(v); if (o[o.length - 1] !== n) o.push(n); return o }
+const topBy = (a, n) => [...a].sort((u, v) => v[1] - u[1] || u[0] - v[0]).slice(0, n).map((u) => u[0])
+
+// ---------------------------------------------------------------------------------------------------
+// 7. Real-PixelArt (reference re-implementation of Real-PixelArt `17ce4875` web core per ecosystem spike
+// 2026-10-20 refresh, not the tool itself). Dense feature path (all fixtures < DENSE_PIXEL_LIMIT 4e6).
+// Profile: premultiplied RGBA in [0, 1], max-channel |forward difference|, clipped at 0.35, mean per column/row;
+// the features `smooth` kernel is UNKNOWN (substitute [1, 2, 1] / 4). Detection: exact integer grid (GCD of
+// active positions, gradient > 1e-6, >= 4 positions, spacing ratio <= 1.12) first; else square candidates
+// from edge-gap kernel peaks (top 3) and edge-FFT peaks (top 3), x1/x0.5/x2, range [2, min(64, dim/2)],
+// fitted by fitPhase + regular lines, scored 0.48 units + 0.42 chance-corrected explained + 0.10 periodic,
+// plus the "strong regular colour edges" independent-axis pair; top 3 re-cut (regular when explained > 0.94,
+// else walkCuts); accept at score >= 0.30 with units >= 0.10 on both axes; else identity (input size).
+// Omitted: image-spectrum trough proposals, spacing refinement for scores in [0.25, 0.30), segment validation,
+// native_preserved / stylized / estimated-edge routes, curvature knots; palette: none (colors null default).
+// Sampling: `robust` 5x5 median with centre-coherence check, alpha `auto` = sampled alpha.
+// ---------------------------------------------------------------------------------------------------
+const smooth121 = (p) => Float64Array.from(p, (v, i) => 0.25 * p[Math.max(0, i - 1)] + 0.5 * v + 0.25 * p[Math.min(p.length - 1, i + 1)])
+function rpaFeatures(img) {
+  const { width: w, height: h } = img, P = premul01(img), rx = new Float64Array(w), ry = new Float64Array(h)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4
+    if (x > 0) { let g = 0; for (let c = 0; c < 4; c++) g = Math.max(g, Math.abs(P[o + c] - P[o - 4 + c])); rx[x] += Math.min(g, 0.35) }
+    if (y > 0) { let g = 0; for (let c = 0; c < 4; c++) g = Math.max(g, Math.abs(P[o + c] - P[o - 4 * w + c])); ry[y] += Math.min(g, 0.35) }
+  }
+  for (let x = 0; x < w; x++) rx[x] /= h
+  for (let y = 0; y < h; y++) ry[y] /= w
+  return { raw: [rx, ry], prof: [smooth121(rx), smooth121(ry)] }
+}
+function rpaGroups(p, frac = 0.16) { // thresholded local maxima merged across shallow valleys (>= 0.90 lower peak)
+  let mx = 0
+  for (const v of p) mx = Math.max(mx, v)
+  const thr = Math.max(0.0008, frac * mx), groups = []
+  for (let i = 1; i < p.length - 1; i++) {
+    if (!(p[i] >= thr && p[i] > p[i - 1] && p[i] >= p[i + 1])) continue
+    const g = groups[groups.length - 1]
+    if (g) { let v = Infinity; for (let j = g.last; j <= i; j++) v = Math.min(v, p[j]); if (v >= 0.9 * Math.min(p[g.last], p[i])) { g.last = i; continue } }
+    groups.push({ first: i, last: i })
+  }
+  return groups.map((g) => { const c = (g.first + g.last) / 2; return { c, w: interpAt(p, c) } })
+}
+function rpaPower(p) { const L = p.length, m = meanOf(p), x = Float64Array.from(p, (v) => v - m), pw = new Float64Array((L >> 1) + 2); for (let k = 1; k <= L >> 1; k++) pw[k] = dftMag(x, k / L) ** 2; return pw }
+function rpaProposals(A, lo, hi) {
+  const { groups, pw, L } = A, out = [], dens = []
+  for (let s = lo; s <= hi + 1e-9; s += 0.25) {
+    let v = 0
+    const bw = Math.max(0.65, 0.09 * s)
+    for (let i = 0; i + 1 < groups.length; i++) v += Math.min(groups[i].w, groups[i + 1].w) * gaussZ((groups[i + 1].c - groups[i].c - s) / bw)
+    dens.push([s, v])
+  }
+  out.push(...topBy(dens.filter((d, i) => d[1] > 0 && (i === 0 || d[1] > dens[i - 1][1]) && (i === dens.length - 1 || d[1] >= dens[i + 1][1])), 3))
+  const fp = []
+  for (let k = 1; k <= L >> 1; k++) if (L / k >= lo && L / k <= hi && pw[k] > pw[k - 1] && pw[k] >= pw[k + 1]) fp.push([L / k, pw[k]])
+  out.push(...topBy(fp, 3))
+  return out
+}
+const rpaRes = (v, ph, s) => { const r = (((v - ph) % s) + s) % s; return r >= s / 2 ? r - s : r }
+function rpaPhase(groups, s) {
+  const n = Math.min(64, Math.max(12, Math.trunc(4 * s))), wd = Math.max(0.6, 0.12 * s)
+  let best = 0, bs = -Infinity
+  for (let i = 0; i < n; i++) { const ph = (i * s) / n; let sc = 0; for (const g of groups) sc += g.w * gaussZ(rpaRes(g.c, ph, s) / wd); if (sc > bs) { bs = sc; best = ph } }
+  for (let pass = 0; pass < 2; pass++) {
+    let sw = 0, sr = 0
+    for (const g of groups) { const r = rpaRes(g.c, best, s); if (Math.abs(r) < Math.max(0.8, 0.2 * s)) { sw += g.w; sr += g.w * r } }
+    if (sw > 0) best = (((best + sr / sw) % s) + s) % s
+  }
+  return best < 1e-7 || s - best < 1e-7 ? 0 : best
+}
+function rpaLines(L, s, ph) { const m = Math.max(0.5, 0.2 * s), c = [0]; for (let v = ph; v < L - m; v += s) if (v > m) c.push(v); c.push(L); return c }
+function rpaMeasure(A, cuts, s) {
+  const { groups, pw, L } = A
+  if (groups.length < 4) return { score: 0, units: 0, explained: 0 }
+  const tol = Math.max(0.65, 0.14 * s), chance = Math.min(0.85, (2.5066 * tol) / s)
+  let mw = 0, mt = 0, j = 0
+  for (const g of groups) { while (j + 1 < cuts.length && cuts[j + 1] <= g.c) j++; const dd = Math.min(Math.abs(g.c - cuts[j]), j + 1 < cuts.length ? Math.abs(cuts[j + 1] - g.c) : Infinity); mw += g.w * gaussZ(dd / tol); mt += g.w }
+  const explained = Math.max(0, (mt ? mw / mt : 0) - chance) / (1 - chance)
+  let uw = 0, ut = 0
+  for (let i = 0; i + 1 < groups.length; i++) { const wt = Math.min(groups[i].w, groups[i + 1].w); uw += wt * gaussZ((groups[i + 1].c - groups[i].c - s) / Math.max(0.7, 0.12 * s)); ut += wt }
+  const units = ut ? uw / ut : 0
+  let pmax = 0
+  for (let k = 1; k < pw.length; k++) pmax = Math.max(pmax, pw[k])
+  const periodic = pmax > 0 ? Math.min(1, interpAt(pw, L / s) / pmax) : 0
+  return { score: 0.48 * units + 0.42 * explained + 0.1 * periodic, units, explained }
+}
+function rpaWalk(groups, s, L) {
+  if (s < 3 || groups.length < 4) return null
+  const near = groups.filter((g) => Math.abs(g.c - L / 2) <= s)
+  if (!near.length) return null // INFERRED: no anchor -> keep regular cuts
+  const anchor = near.reduce((a, b) => (b.w > a.w ? b : a)).c, pick = (pred) => {
+    let best = null, bs = -Infinity
+    for (const g of groups) if (Math.abs(g.c - pred) <= 0.24 * s) { const v = g.w * gaussZ((g.c - pred) / (0.2 * s)); if (v > bs) { bs = v; best = g.c } }
+    return best ?? pred
+  }
+  const right = [], left = []
+  for (let p = anchor; ;) { const pred = p + s; if (pred > L - 0.2 * s) break; p = Math.max(pick(pred), p + 1); right.push(p) }
+  for (let p = anchor; ;) { const pred = p - s; if (pred < 0.2 * s) break; p = Math.min(pick(pred), p - 1); left.push(p) }
+  return [0, ...left.reverse(), anchor, ...right, L]
+}
+function rpaExact(raw) {
+  const pos = []
+  for (let i = 1; i < raw.length; i++) if (raw[i] > 1e-6) pos.push(i)
+  if (pos.length < 4) return null
+  let g = 0
+  for (let i = 1; i < pos.length; i++) g = gcd(g, pos[i] - pos[i - 1])
+  return { g, phase: pos[0] % g }
+}
+function rpaDetect(img, F) {
+  const { width: w, height: h } = img, ex = rpaExact(F.raw[0]), ey = rpaExact(F.raw[1])
+  if (ex && ey && Math.min(ex.g, ey.g) >= 2 && Math.max(ex.g, ey.g) <= 64 && Math.max(ex.g, ey.g) / Math.min(ex.g, ey.g) <= 1.12)
+    return { route: 'exact', step: [ex.g, ey.g], cx: rpaLines(w, ex.g, ex.phase), cy: rpaLines(h, ey.g, ey.phase), score: 0.95 }
+  const axes = [0, 1].map((a) => {
+    const p = F.prof[a], L = a ? h : w, groups = rpaGroups(p), q95 = pctOf(p, 0.95), q20 = pctOf(p, 0.2)
+    return { p, L, groups, pw: rpaPower(p), ok: groups.length >= 4 && (q95 - q20) / Math.max(q95, 1e-9) >= 0.25 }
+  })
+  if (!axes[0].ok || !axes[1].ok) return null
+  const lo = 2, hi = Math.min(64, Math.min(w, h) / 2), props = []
+  for (const s0 of [...rpaProposals(axes[0], lo, hi), ...rpaProposals(axes[1], lo, hi)]) for (const m of [1, 0.5, 2]) {
+    const s = s0 * m
+    if (s >= lo && s <= hi && !props.some((v) => Math.abs(v - s) < 0.08)) props.push(s)
+  }
+  const fitAxis = (A, s) => { const ph = rpaPhase(A.groups, s), cuts = rpaLines(A.L, s, ph); return { s, cuts, ...rpaMeasure(A, cuts, s) } }
+  const fits = props.map((s) => { const per = axes.map((A) => fitAxis(A, s)); return { per, score: (per[0].score + per[1].score) / 2 } })
+  const bestAxis = (a) => fits.map((f) => f.per[a]).reduce((u, v) => (v.score > u.score || (v.score === u.score && (v.s > u.s || (v.s === u.s && v.explained > u.explained))) ? v : u), { score: -1 })
+  const bx = bestAxis(0), by = bestAxis(1)
+  if (bx.s && by.s && bx.s !== by.s && bx.explained > 0.85 && by.explained > 0.85 && Math.max(bx.s, by.s) / Math.min(bx.s, by.s) <= 1.12) fits.push({ per: [bx, by], score: (bx.score + by.score) / 2 })
+  const rank = (a, b) => b.score - a.score || b.per[0].s - a.per[0].s
+  const top = fits.sort(rank).slice(0, 3).map((f) => {
+    const per = f.per.map((r, a) => { if (r.explained > 0.94) return r; const c = rpaWalk(axes[a].groups, r.s, axes[a].L); return c ? { s: r.s, cuts: c, ...rpaMeasure(axes[a], c, r.s) } : r })
+    return { per, score: (per[0].score + per[1].score) / 2 }
+  }).sort(rank)
+  const b = top[0]
+  if (!b || b.score < 0.3 || b.per.some((r) => r.units < 0.1)) return null
+  return { route: 'grid', step: [b.per[0].s, b.per[1].s], cx: b.per[0].cuts, cy: b.per[1].cuts, score: b.score }
+}
+function rpaRecover(img, cx, cy) { // `robust` sampling, alpha `auto` (sampled)
+  const { width: W, data: d } = img, F = [0.18, 0.34, 0.5, 0.66, 0.82]
+  const px = (x, y) => { const o = (y * W + x) * 4; return [d[o] / 255, d[o + 1] / 255, d[o + 2] / 255, d[o + 3] / 255] }
+  const pm = (s) => [s[0] * s[3], s[1] * s[3], s[2] * s[3], s[3]]
+  return sampleCuts(img, cx, cy, (x0, x1, y0, y1) => {
+    let mass = 0
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) mass += d[(y * W + x) * 4 + 3]
+    if (!mass) return [0, 0, 0, 0]
+    const S = []
+    for (const fy of F) for (const fx of F) S.push(px(Math.min(x1 - 1, x0 + Math.trunc(fx * (x1 - x0))), Math.min(y1 - 1, y0 + Math.trunc(fy * (y1 - y0)))))
+    const vis = S.filter((s) => s[3] > 1e-6), med = [0, 1, 2].map((c) => { const v = vis.map((s) => s[c]).sort((a, b) => a - b); return v.length ? v[Math.floor((v.length - 1) / 2)] : 0 })
+    med.push(S.map((s) => s[3]).sort((a, b) => a - b)[12])
+    const ccx = Math.min(x1 - 1, x0 + Math.trunc(0.5 * (x1 - x0))), ccy = Math.min(y1 - 1, y0 + Math.trunc(0.5 * (y1 - y0))), C = px(ccx, ccy), Cp = pm(C)
+    let near = 0
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const n = pm(px(clamp(ccx + i, x0, x1 - 1), clamp(ccy + j, y0, y1 - 1))); if (Math.max(...n.map((v, k) => Math.abs(v - Cp[k]))) < 0.1) near++ }
+    const tiny = x1 - x0 <= 2 || y1 - y0 <= 2, dev = [0, 1, 2].some((c) => Math.abs(C[c] - med[c]) > 0.1)
+    const v = near < 3 && !tiny && (dev || Math.abs(C[3] - med[3]) > 0.1) ? med : C
+    return v[3] <= 0 ? [0, 0, 0, 0] : v.map((x) => Math.round(x * 255))
+  })
+}
+/** Real-PixelArt reference, automatic size: returns its own discovered size (identity when no grid). */
+export function realPixelArt(img) {
+  const F = rpaFeatures(img), g = rpaDetect(img, F)
+  if (!g) return { image: { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }, native: [img.width, img.height], info: { route: 'none' } }
+  const image = rpaRecover(img, strictCuts(g.cx, img.width), strictCuts(g.cy, img.height))
+  return { image, native: [image.width, image.height], info: { route: g.route, step: g.step, score: g.score } }
+}
+function rpaTargetAxis(p, n, L) { // fixed count: phase-searched regular cuts in +-0.45 p, then the warp DP
+  const s = L / n, r = 0.45 * s, reg = Array.from({ length: n + 1 }, (_, k) => roundEven(k * s))
+  let mn = Infinity, mx = -Infinity
+  for (const v of p) { mn = Math.min(mn, v); mx = Math.max(mx, v) }
+  const amp = mx - mn
+  if (n === 1 || n === L || !(amp > 0.0008)) return reg
+  const ev = Float64Array.from(p, (v) => (v - mn) / amp), peaks = rpaGroups(ev)
+  if (!peaks.length) return reg
+  const lo = (k) => Math.max(k, Math.min(reg[k], Math.ceil(k * s - r))), hi = (k) => Math.min(L - n + k, Math.max(reg[k], Math.floor(k * s + r)))
+  const E = (c) => (c > 0 && c < L ? ev[c] : 0), unary = (c, g) => -E(c) + 0.12 * ((c - g) / s) ** 2, gapC = (g) => 0.35 * ((g - s) / s) ** 2
+  const fitted = clamp(Math.round(rpaRes(rpaPhase(peaks, s), 0, s) * 8) / 8, -r, r)
+  const shifts = [0, fitted, ...Array.from({ length: 17 }, (_, i) => -r + (2 * r * i) / 16)]
+  let best = null, bc = Infinity
+  for (const sh of shifts) {
+    const c = [0]
+    for (let k = 1; k < n; k++) c.push(clamp(roundEven(k * s + sh), lo(k), hi(k)))
+    c.push(L)
+    let cost = 0
+    for (let k = 1; k < n; k++) cost += unary(c[k], k * s)
+    for (let k = 1; k <= n; k++) cost += gapC(c[k] - c[k - 1])
+    if (cost < bc - 1e-12) { bc = cost; best = c }
+  }
+  if (s < 2) return best
+  // warp DP (local_warp 'auto' INFERRED on): candidates per cut, unary against the global cut, gap transitions
+  const cand = [[0]]
+  for (let k = 1; k < n; k++) {
+    const a = lo(k), b = hi(k), set = new Set([best[k]])
+    if (b - a + 1 < 17) for (let c = a; c <= b; c++) set.add(c)
+    else {
+      for (let i = 0; i < 9; i++) set.add(Math.round(a + ((b - a) * i) / 8))
+      const pk = []
+      for (let c = a; c <= b; c++) if (E(c) >= E(c - 1) && E(c) > E(c + 1)) pk.push([c, E(c)])
+      for (const c of topBy(pk, 7)) set.add(c)
+    }
+    cand.push([...set].sort((u, v) => u - v))
+  }
+  cand.push([L])
+  let prev = [{ c: 0, v: 0, back: null }]
+  for (let k = 1; k <= n; k++) {
+    const cur = []
+    for (const c of cand[k]) {
+      let bv = Infinity, bb = null
+      for (const q of prev) if (c > q.c) { const v = q.v + gapC(c - q.c); if (v < bv) { bv = v; bb = q } }
+      if (bb) cur.push({ c, v: bv + (k < n ? unary(c, best[k]) : 0), back: bb })
+    }
+    prev = cur
+  }
+  if (!prev.length) return best
+  const out = []
+  for (let q = prev[0]; q; q = q.back) out.push(q.c)
+  return out.reverse()
+}
+/** Real-PixelArt reference, fixed target size (`fitTargetGrid` / `targetAxis`): exactly tw x th by construction. */
+export function realPixelArtTarget(img, tw, th) {
+  if (tw > img.width || th > img.height) throw new Error('realPixelArt reference: target exceeds source')
+  const F = rpaFeatures(img)
+  return rpaRecover(img, rpaTargetAxis(F.prof[0], tw, img.width), rpaTargetAxis(F.prof[1], th, img.height))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 8. proper-pixel-art (reference re-implementation of proper-pixel-art `4de0dda5` per ecosystem spike
+// 2026-10-19 addendum "Grid-size model selection", not the tool itself). Config defaults read at the pin:
+// upscale x2 then fallback x1 on a trivial mesh, crop_border 2, Canny (50, 200), closing 8, HoughLinesP
+// (rho 1, theta 1 deg, threshold 100, minLineLength 50, maxLineGap 10), angle 15 deg, cluster 4, snap +-2 at
+// 0.5 x profile mean, width: Hough gap median (>= 5 gaps, 20 % trims) / peak spacing (0.2 max, merge < 3) /
+// autocorrelation (lag >= 2, >= 0.2), axis ratio 1.8, mesh split int(gap / w + 0.6), snap window
+// max(2, 0.35 w), validation keep 1 + 1.5 / replace 1 + 0.2 (pixel-weighted within-cell grey variance);
+// colours: method `dominant` (bins 52, two grids offset 26, per-channel median), merge_distance 12 complete
+// linkage, alpha 128, transparency majority 0.5. Substitutes (UNKNOWN or OpenCV, not re-implemented): Canny =
+// Sobel L1 + 4-direction NMS + 8-connected hysteresis; closing = separable 8x8 max/min; HoughLinesP =
+// axis-aligned only (a column/row with >= 100 edge pixels holding a >= 50 px run with gaps <= 10); upscale
+// interpolation = nearest (UNKNOWN); grey = Rec.601, alpha < 128 -> 0; output-colour merge = greedy complete
+// linkage in RGB, most frequent member kept (space and representative UNKNOWN); border lines map to 0 and W.
+// ---------------------------------------------------------------------------------------------------
+function ppaEdges(G, W, H) {
+  const gx = new Float64Array(W * H), gy = new Float64Array(W * H), mag = new Float64Array(W * H)
+  const at = (x, y) => G[clamp(y, 0, H - 1) * W + clamp(x, 0, W - 1)]
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x
+    gx[p] = at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)
+    gy[p] = at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)
+    mag[p] = Math.abs(gx[p]) + Math.abs(gy[p])
+  }
+  const M = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? 0 : mag[y * W + x]), st = new Uint8Array(W * H), stack = []
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x, m = mag[p]
+    if (m <= 50) continue
+    const ax = Math.abs(gx[p]), ay = Math.abs(gy[p])
+    let a, b
+    if (ay <= ax * 0.4142) { a = M(x - 1, y); b = M(x + 1, y) } else if (ay > ax * 2.4142) { a = M(x, y - 1); b = M(x, y + 1) } else if (gx[p] * gy[p] > 0) { a = M(x - 1, y - 1); b = M(x + 1, y + 1) } else { a = M(x + 1, y - 1); b = M(x - 1, y + 1) }
+    if (m > a && m >= b) { st[p] = 1; if (m > 200) { st[p] = 2; stack.push(p) } }
+  }
+  while (stack.length) {
+    const p = stack.pop(), x = p % W, y = (p - x) / W
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const q = (y + j) * W + x + i; if (x + i >= 0 && x + i < W && y + j >= 0 && y + j < H && st[q] === 1) { st[q] = 2; stack.push(q) } }
+  }
+  const E = Uint8Array.from(st, (v) => (v === 2 ? 1 : 0))
+  const pass = (src, horiz, isMax, lo, hi) => { // separable rect filter over offsets [lo, hi], outside ignored
+    const out = new Uint8Array(W * H)
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let v = isMax ? 0 : 1
+      for (let k = lo; k <= hi; k++) { const xx = horiz ? x + k : x, yy = horiz ? y : y + k; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue; const s = src[yy * W + xx]; v = isMax ? v | s : v & s }
+      out[y * W + x] = v
+    }
+    return out
+  }
+  const dil = pass(pass(E, true, true, -4, 3), false, true, -4, 3)
+  return pass(pass(dil, true, false, -3, 4), false, false, -3, 4)
+}
+function ppaHough(E, W, H, vertical) {
+  const out = [], n = vertical ? W : H, m = vertical ? H : W
+  for (let i = 0; i < n; i++) {
+    let cnt = 0, run = 0, best = 0, gap = 0
+    for (let j = 0; j < m; j++) {
+      const v = vertical ? E[j * W + i] : E[i * W + j]
+      cnt += v
+      if (v) { run += gap + 1; gap = 0; best = Math.max(best, run) } else if (run) { gap++; if (gap > 10) { run = 0; gap = 0 } }
+    }
+    if (cnt >= 100 && best >= 50) out.push(i)
+  }
+  return out
+}
+function ppaCluster(pos, t = 4) {
+  const s = [...pos].sort((a, b) => a - b), out = []
+  let cur = []
+  const flush = () => { if (cur.length) { const k = cur.length; out.push(roundEven(k & 1 ? cur[k >> 1] : (cur[k / 2 - 1] + cur[k / 2]) / 2)) } cur = [] }
+  for (const v of s) { if (cur.length && v - cur[cur.length - 1] > t) flush(); cur.push(v) }
+  flush()
+  return out
+}
+function ppaSnap(prof, t, rad, lo, hi) { // strongest peak within +-rad of t, strictly inside (lo, hi), if > 0.5 mean
+  const mean = meanOf(prof)
+  let best = -1, bv = -Infinity
+  for (let i = Math.max(lo + 1, t - rad); i <= Math.min(hi - 1, t + rad); i++) if (prof[i] > bv) { bv = prof[i]; best = i }
+  return best >= 0 && bv > 0.5 * mean ? best : t
+}
+function ppaWidthAxis(lines, prof) {
+  const gaps = lines.slice(1).map((v, i) => v - lines[i]).sort((a, b) => a - b), r = {}
+  if (gaps.length >= 5) { const k = Math.floor(0.2 * gaps.length); r.hough = Math.round(medianOf(gaps.slice(k, gaps.length - k))) }
+  let mx = 0
+  for (const v of prof) mx = Math.max(mx, v)
+  const pk = []
+  for (let i = 1; i < prof.length - 1; i++) if (prof[i] > 0.2 * mx && prof[i] > prof[i - 1] && prof[i] >= prof[i + 1]) { if (pk.length && i - pk[pk.length - 1] < 3) { if (prof[i] > prof[pk[pk.length - 1]]) pk[pk.length - 1] = i } else pk.push(i) }
+  if (pk.length >= 2) r.peak = Math.round(medianOf(pk.slice(1).map((v, i) => v - pk[i])))
+  const m = meanOf(prof), c = Float64Array.from(prof, (v) => v - m), n = c.length
+  let a0 = 0
+  for (const v of c) a0 += v * v
+  if (a0 > 0) {
+    const ac = (l) => { let s = 0; for (let i = 0; i + l < n; i++) s += c[i] * c[i + l]; return s / a0 }
+    let prev = ac(1), cur = ac(2)
+    for (let l = 2; l < n / 2; l++) { const nx = ac(l + 1); if (cur > prev && cur >= nx && cur >= 0.2) { r.auto = l; break } prev = cur; cur = nx }
+  }
+  r.best = r.hough ?? r.peak ?? r.auto ?? null
+  return r
+}
+function ppaComplete(lines, wd, prof) {
+  let cur = lines
+  const rad = Math.max(2, Math.round(0.35 * wd))
+  for (let pass = 0; pass < 8; pass++) {
+    const out = [cur[0]]
+    let changed = false
+    for (let i = 0; i + 1 < cur.length; i++) {
+      const a = cur[i], b = cur[i + 1], n = Math.trunc((b - a) / wd + 0.6)
+      for (let k = 1; k < n; k++) { const t = ppaSnap(prof, a + Math.trunc((k * (b - a)) / n), rad, out[out.length - 1], b); if (t > out[out.length - 1] && t < b) { out.push(t); changed = true } }
+      out.push(b)
+    }
+    cur = out
+    if (!changed) break
+  }
+  return cur
+}
+function ppaMesh(img) {
+  const B = 2, W = img.width - 2 * B, H = img.height - 2 * B, d = img.data
+  if (W < 8 || H < 8) return null
+  const G = new Float64Array(W * H)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = ((y + B) * img.width + x + B) * 4; G[y * W + x] = d[o + 3] >= 128 ? luma(d, o) : 0 }
+  const E = ppaEdges(G, W, H), prof = [new Float64Array(W), new Float64Array(H)]
+  for (let y = 0; y < H; y++) for (let x = 1; x < W - 1; x++) prof[0][x] += Math.abs(G[y * W + x + 1] - G[y * W + x - 1])
+  for (let y = 1; y < H - 1; y++) for (let x = 0; x < W; x++) prof[1][y] += Math.abs(G[(y + 1) * W + x] - G[(y - 1) * W + x])
+  const base = [W, H].map((L, a) => {
+    const ls = ppaCluster([0, L - 1, ...ppaHough(E, W, H, a === 0)])
+    return ppaCluster(ls.map((v, i) => (i === 0 || i === ls.length - 1 ? v : ppaSnap(prof[a], v, 2, -1, L))))
+  })
+  const est = base.map((ls, a) => ppaWidthAxis(ls, prof[a]))
+  const [ex, ey] = est.map((e) => e.best)
+  let wd = ex && ey ? (Math.max(ex, ey) / Math.min(ex, ey) > 1.8 ? Math.min(ex, ey) : Math.round((ex + ey) / 2)) : ex ?? ey
+  if (!wd) { const g = base.flatMap((ls) => ls.slice(1).map((v, i) => v - ls[i])); wd = g.length ? Math.round(medianOf(g)) : null }
+  if (!wd || wd < 1) return null
+  const mesh = (w0) => base.map((ls, a) => ppaComplete(ls, w0, prof[a]))
+  if (wd >= 2) { // validation over the candidate widths (pixel-weighted mean within-cell grey variance)
+    const score = (w0) => {
+      const [mx, my] = mesh(w0), ix = new Int32Array(W), iy = new Int32Array(H)
+      for (let i = 0, c = 0; i < W; i++) { while (c + 2 < mx.length && i >= mx[c + 1]) c++; ix[i] = c }
+      for (let i = 0, c = 0; i < H; i++) { while (c + 2 < my.length && i >= my[c + 1]) c++; iy[i] = c }
+      const nc = (mx.length - 1) * (my.length - 1), S = new Float64Array(nc), S2 = new Float64Array(nc), N = new Float64Array(nc)
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const c = iy[y] * (mx.length - 1) + ix[x], v = G[y * W + x]; S[c] += v; S2[c] += v * v; N[c]++ }
+      let t = 0
+      for (let c = 0; c < nc; c++) if (N[c]) t += S2[c] - (S[c] * S[c]) / N[c]
+      return t / (W * H)
+    }
+    const cands = [...new Set([wd, ...est.flatMap((e) => [e.hough, e.peak, e.auto])].filter((v) => v && v >= 2 && v <= Math.min(W, H) / 2))]
+    if (cands.length) {
+      const sc = new Map(cands.map((c) => [c, score(c)])), best = Math.min(...sc.values())
+      if (!(sc.has(wd) && sc.get(wd) <= 2.5 * best)) { const ok = cands.filter((c) => sc.get(c) <= 1.2 * best); if (ok.length) wd = Math.max(...ok) }
+    }
+  }
+  const [mx, my] = mesh(wd)
+  const shift = (ls, L) => ls.map((v, i) => (i === 0 ? 0 : i === ls.length - 1 ? L : v + B))
+  return { cx: shift(mx, img.width), cy: shift(my, img.height), width: wd, lines: [mx.length, my.length] }
+}
+function ppaDominant(img, cx, cy) {
+  const { width: W, data: d } = img
+  const med = (s) => [0, 1, 2].map((c) => { const v = s.map((p) => p[c]).sort((a, b) => a - b), k = v.length; return k & 1 ? v[k >> 1] : Math.floor((v[k / 2 - 1] + v[k / 2]) / 2) })
+  return sampleCuts(img, cx, cy, (x0, x1, y0, y1) => {
+    const px = []
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const o = (y * W + x) * 4; if (d[o + 3] >= 128) px.push([d[o], d[o + 1], d[o + 2]]) }
+    const n = (x1 - x0) * (y1 - y0)
+    if (!px.length || px.length <= n * 0.5) return [0, 0, 0, 0]
+    if (px.length <= 3) return [...med(px), 255]
+    let best = null
+    for (const off of [0, 26]) {
+      const bins = new Map()
+      for (const p of px) { const k = (Math.floor((p[0] + off) / 52) * 8 + Math.floor((p[1] + off) / 52)) * 8 + Math.floor((p[2] + off) / 52); let b = bins.get(k); if (!b) bins.set(k, (b = [])); b.push(p) }
+      let top = null
+      for (const v of bins.values()) if (!top || v.length > top.length) top = v
+      if (!best || top.length > best.length) best = top
+    }
+    return [...med(best), 255]
+  })
+}
+function mergeColours(img, dist) { // greedy complete-linkage merge of output colours (substitute)
+  const cnt = new Map(), d = img.data
+  for (let p = 0; p < img.width * img.height; p++) if (d[p * 4 + 3]) { const k = (d[p * 4] << 16) | (d[p * 4 + 1] << 8) | d[p * 4 + 2]; cnt.set(k, (cnt.get(k) ?? 0) + 1) }
+  if (cnt.size > 4096) return img
+  const keys = [...cnt.keys()].sort((a, b) => cnt.get(b) - cnt.get(a) || a - b), rgb = (k) => [k >> 16, (k >> 8) & 255, k & 255], clusters = [], map = new Map()
+  for (const k of keys) {
+    const c = rgb(k), cl = clusters.find((m) => m.every((q) => { const e = rgb(q); return (e[0] - c[0]) ** 2 + (e[1] - c[1]) ** 2 + (e[2] - c[2]) ** 2 <= dist * dist }))
+    if (cl) { cl.push(k); map.set(k, cl[0]) } else { clusters.push([k]); map.set(k, k) }
+  }
+  const out = { width: img.width, height: img.height, data: Uint8ClampedArray.from(d) }
+  for (let p = 0; p < img.width * img.height; p++) if (d[p * 4 + 3]) out.data.set(rgb(map.get((d[p * 4] << 16) | (d[p * 4 + 1] << 8) | d[p * 4 + 2])), p * 4)
+  return out
+}
+/** proper-pixel-art reference: returns its own discovered size (mesh cells). */
+export function properPixelArt(img) {
+  for (const f of [2, 1]) {
+    const work = f === 2 ? adapt(img, img.width * 2, img.height * 2) : img, m = ppaMesh(work)
+    if (!m) continue
+    if (f === 2 && m.lines[0] <= 3 && m.lines[1] <= 3) continue
+    const image = mergeColours(ppaDominant(work, m.cx, m.cy), 12)
+    return { image, native: [image.width, image.height], info: { scale: f, width: m.width } }
+  }
+  return { image: { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }, native: [img.width, img.height], info: { scale: 0 } }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 9. fast-pixelizer `snap` (reference re-implementation of fast-pixelizer `5c041fce` per ecosystem spike
+// 2026-10-19 addendum, not the tool itself), options colorVariety 32, output 'resized' (one pixel per cell;
+// the default 'original' repaints blocks at source size). Order: exact-neighbour ratio, native palette
+// (<= 1024 RGBA), uniform run-length grid, exact-scale search, exact-transition grid (square only), native
+// bypass, else k-means(32) + luma profiles + autocorrelation steps, crisp (phase-aligned) / walked grids,
+// peak-grid override, detail modes (enhance: long axis 128-299; preserve: >= 128 and cell <= 9 or >= 300 and
+// cell <= 5) with k-means 256, else cell mode on the quantized image. k-means: RGB, alpha > 0, <= 50000
+// samples, mulberry32(42) k-means++, 15 iterations (kmeansRGB above; its stop rule is max squared move < 0.01
+// after the first iteration, the original's is L1 move <= 0.01). UNKNOWN substitutes: "locally aligned cuts"
+// = the walked cuts; "transition grid too coarse" not used; square forcing = rounded mean of the two counts;
+// harmonic multiple test = |r - round r| <= 0.08 with round r >= 2.
+// ---------------------------------------------------------------------------------------------------
+const FP_MIN_CELLS = 4
+const fpKey = (d, o) => ((d[o] << 24) | (d[o + 1] << 16) | (d[o + 2] << 8) | d[o + 3]) >>> 0
+const fpMinStep = (w, h) => Math.max(2, Math.ceil(Math.min(w, h) / 256))
+function fpSmooth(p) { const W = [0.5, 1, 2, 1, 0.5]; return Float64Array.from(p, (_, i) => { let s = 0, t = 0; for (let k = -2; k <= 2; k++) if (i + k >= 0 && i + k < p.length) { s += W[k + 2] * p[i + k]; t += W[k + 2] } return s / t }) }
+function fpProfiles(img) {
+  const { width: w, height: h, data: d } = img, L = new Float64Array(w * h), px = new Float64Array(w), py = new Float64Array(h)
+  for (let p = 0; p < w * h; p++) L[p] = d[p * 4 + 3] ? luma(d, p * 4) : 0
+  for (let y = 0; y < h; y++) for (let x = 1; x < w - 1; x++) px[x] += Math.abs(L[y * w + x + 1] - L[y * w + x - 1])
+  for (let y = 1; y < h - 1; y++) for (let x = 0; x < w; x++) py[y] += Math.abs(L[(y + 1) * w + x] - L[(y - 1) * w + x])
+  return [px, py]
+}
+function fpPeriodic(p, minLag = 2) {
+  const s = fpSmooth(p), m = meanOf(s), c = Float64Array.from(s, (v) => v - m), maxLag = Math.min(256, Math.floor(p.length / 3)), lo = Math.max(2, Math.min(maxLag, Math.ceil(minLag)))
+  let e = 0
+  for (const v of c) e += v * v
+  if (!(e > 0)) return null
+  let best = null, bc = -Infinity
+  for (let l = lo; l <= maxLag; l++) { let a = 0, b = 0, ab = 0; for (let i = 0; i + l < c.length; i++) { ab += c[i] * c[i + l]; a += c[i] * c[i]; b += c[i + l] * c[i + l] } const r = a > 0 && b > 0 ? ab / Math.sqrt(a * b) : 0; if (r > bc) { bc = r; best = l } }
+  return best && Number.isFinite(bc) && bc > 0 ? { step: best, confidence: bc } : null
+}
+function fpPeakStep(p, minLag = 2) {
+  const s = fpSmooth(p), m = meanOf(s), sd = Math.sqrt(meanOf(Array.from(s, (v) => (v - m) ** 2))), thr = m + 0.75 * sd, pk = []
+  for (let i = 1; i < s.length - 1; i++) if (s[i] >= thr && s[i] > s[i - 1] && s[i] >= s[i + 1]) pk.push(i)
+  if (pk.length < 4) return null
+  const maxLag = Math.min(256, Math.floor(p.length / 3)), lo = Math.max(2, Math.ceil(minLag)), hist = new Map()
+  let tot = 0
+  for (let i = 1; i < pk.length; i++) { const g = pk[i] - pk[i - 1]; if (g >= lo && g <= maxLag) { hist.set(g, (hist.get(g) ?? 0) + 1); tot++ } }
+  let best = 0, bc = 0
+  for (const [g, c] of [...hist].sort((a, b) => a[0] - b[0])) if (c > bc) { bc = c; best = g }
+  return tot && bc / tot >= 0.3 ? { step: best, confidence: bc / tot } : null
+}
+function fpWalk(p, step, limit) {
+  const win = Math.max(2, 0.35 * step), mean = meanOf(p), cuts = [0]
+  for (let pos = 0; ;) {
+    const t = pos + step
+    if (t >= limit) { cuts.push(limit); break }
+    let bi = -1, bv = -Infinity
+    for (let i = Math.max(pos + 1, Math.ceil(t - win)); i <= Math.min(limit - 1, Math.floor(t + win)); i++) if (p[i] > bv) { bv = p[i]; bi = i }
+    pos = bi >= 0 && bv > 0.5 * mean ? bi : Math.max(pos + 1, Math.round(t))
+    if (pos >= limit) { cuts.push(limit); break }
+    cuts.push(pos)
+  }
+  return cuts
+}
+function fpTrim(cuts, step, limit) {
+  const c = [...cuts]
+  while (c.length > 2 && c[1] - c[0] < 0.5 * step) c.splice(1, 1)
+  while (c.length > 2 && c[c.length - 1] - c[c.length - 2] < 0.5 * step) c.splice(c.length - 2, 1)
+  c[0] = 0; c[c.length - 1] = limit
+  return c
+}
+const fpUniformCuts = (limit, cells) => { const n = Math.max(FP_MIN_CELLS, Math.min(limit, Math.round(cells))); return Array.from({ length: n + 1 }, (_, i) => Math.round((i * limit) / n)) }
+function fpClamp(w, h, cols, rows) {
+  if (Math.min(cols, rows) <= 256) return { cols, rows }
+  return cols <= rows ? { cols: 256, rows: Math.max(FP_MIN_CELLS, Math.round((256 * h) / w)) } : { rows: 256, cols: Math.max(FP_MIN_CELLS, Math.round((256 * w) / h)) }
+}
+function fpUniformGrid(img) {
+  const { width: w, height: h, data: d } = img
+  const axis = (horiz) => {
+    const n = horiz ? h : w, limit = horiz ? w : h, stride = Math.max(1, Math.floor(n / 128)), hist = new Map()
+    let total = 0, maxRuns = 0, maxThin = 0
+    for (let l = 0; l < n; l += stride) {
+      let runs = 0, thin = 0, start = 0
+      const key = (i) => fpKey(d, (horiz ? l * w + i : i * w + l) * 4)
+      for (let i = 1; i <= limit; i++) {
+        if (i < limit && key(i) === key(i - 1)) continue
+        const len = i - start, first = start === 0, last = i === limit
+        if (len >= 2 && len <= 256) { hist.set(len, (hist.get(len) ?? 0) + 1); total++ }
+        if (len >= 2 || first || last) runs++; else thin++
+        start = i
+      }
+      maxRuns = Math.max(maxRuns, runs); maxThin = Math.max(maxThin, thin)
+    }
+    if (total < 64) return null
+    let best = null, bf = 0
+    for (let s = 2; s <= Math.min(256, Math.floor(limit / FP_MIN_CELLS)); s++) {
+      let k = 0
+      for (const [len, c] of hist) if (len % s === 0) k += c
+      const f = k / total
+      if (f < 0.72) continue
+      if (!best || f > bf + 0.02 || (f >= 0.98 * bf && s > best)) { best = s; bf = Math.max(bf, f) }
+    }
+    if (!best) return null
+    const cells = maxThin >= 0.5 * maxRuns ? maxRuns : Math.max(Math.round(limit / best), Math.min(maxRuns, Math.ceil(limit / best) + 1))
+    return { step: best, cells, confidence: bf }
+  }
+  const H = axis(true), V = axis(false)
+  if (!H || !V || Math.min(H.step, V.step) <= fpMinStep(w, h)) return null
+  return { cols: Math.max(FP_MIN_CELLS, H.cells), rows: Math.max(FP_MIN_CELLS, V.cells), confidence: Math.min(H.confidence, V.confidence) }
+}
+function fpTransitionGrid(img) {
+  const { width: w, height: h, data: d } = img
+  if (w !== h) return null
+  const prof = (horiz) => {
+    const n = horiz ? h : w, limit = horiz ? w : h, lines = Math.min(512, n), p = new Float64Array(limit)
+    for (let k = 0; k < lines; k++) { const l = Math.floor((k * n) / lines); for (let i = 1; i < limit; i++) { const a = horiz ? l * w + i : i * w + l, b = horiz ? a - 1 : a - w; if (fpKey(d, a * 4) !== fpKey(d, b * 4)) p[i]++ } }
+    for (let i = 0; i < limit; i++) p[i] /= lines
+    return p
+  }
+  const px = prof(true), py = prof(false), avg = (meanOf(px) + meanOf(py)) / 2, maxN = Math.min(256, w, h, Math.floor(Math.min(w, h) / fpMinStep(w, h)))
+  const sc = (n) => { const f = (p, L) => { let s = 0; for (let i = 1; i < n; i++) s += p[Math.round((i * L) / n)] ?? 0; return n > 1 ? s / (n - 1) : 0 }; return (f(px, w) + f(py, h)) / 2 }
+  let best = 0, bs = -1
+  const all = new Map()
+  for (let n = FP_MIN_CELLS; n <= maxN; n++) { const s = sc(n); all.set(n, s); if (s > bs) { bs = s; best = n } }
+  if (!best || bs < 0.08 || bs / (avg + 1e-9) < 3) return null
+  for (let n = best + 1; n <= maxN; n++) if (all.get(n) >= 0.8 * bs) best = n
+  return { cols: best, rows: best, confidence: bs / (avg + 1e-9) }
+}
+function fpExactScale(img) {
+  const { width: w, height: h, data: d } = img
+  for (let s = Math.floor(Math.min(64, w / FP_MIN_CELLS, h / FP_MIN_CELLS)); s >= 2; s--) {
+    if (w % s || h % s) continue
+    let ok = true
+    for (let y = 0; y < h && ok; y++) for (let x = 0; x < w; x++) if (fpKey(d, (y * w + x) * 4) !== fpKey(d, (Math.floor(y / s) * s * w + Math.floor(x / s) * s) * 4)) { ok = false; break }
+    if (ok) return s
+  }
+  return 1
+}
+function fpModeCells(img, cx, cy) {
+  const { width: W, data: d } = img
+  return sampleCuts(img, cx, cy, (x0, x1, y0, y1) => {
+    const m = new Map()
+    let bk = 0, bc = 0
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const k = fpKey(d, (y * W + x) * 4), c = (m.get(k) ?? 0) + 1; m.set(k, c); if (c > bc) { bc = c; bk = k } }
+    return [bk >>> 24, (bk >>> 16) & 255, (bk >>> 8) & 255, bk & 255]
+  })
+}
+function fpDetailCells(img, cx, cy, edge) {
+  const { width: W, height: H, data: d } = img
+  return sampleCuts(img, cx, cy, (x0, x1, y0, y1) => {
+    const s = [0, 0, 0, 0]
+    let lo = Infinity, hi = -Infinity, n = 0
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const o = (y * W + x) * 4; for (let c = 0; c < 4; c++) s[c] += d[o + c]; const l = luma(d, o); lo = Math.min(lo, l); hi = Math.max(hi, l); n++ }
+    const ct = hi - lo, wt = edge ? 0.2 + clamp((ct - 8) / 32, 0, 1) * 0.8 : 0.1 + clamp((ct - 14) / 44, 0, 1) * 0.75
+    const o = (clamp(Math.floor((y0 + y1) / 2), 0, H - 1) * W + clamp(Math.floor((x0 + x1) / 2), 0, W - 1)) * 4
+    return s.map((v, c) => clamp(Math.round(v / n + (d[o + c] - v / n) * wt), 0, 255))
+  })
+}
+function fpSharpen(img) {
+  const { width: w, height: h, data: d } = img, out = { width: w, height: h, data: Uint8ClampedArray.from(d) }, K = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    let b = 0, k = 0
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) b += K[k++] * luma(d, ((y + j) * w + x + i) * 4)
+    const diff = luma(d, (y * w + x) * 4) - b / 16, adj = Math.sign(diff) * Math.min(20, Math.max(0, Math.abs(diff) - 2) * 0.4), o = (y * w + x) * 4
+    for (let c = 0; c < 3; c++) out.data[o + c] = clamp(Math.round(d[o + c] + adj), 0, 255)
+  }
+  return out
+}
+/** fast-pixelizer snap reference (output 'resized'): returns its own discovered size. */
+export function fastPixelizer(img, { colorVariety = 32 } = {}) {
+  const { width: w, height: h, data: d } = img
+  let same = 0, pairs = 0
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = (y * w + x) * 4; if (x + 1 < w) { pairs++; same += fpKey(d, o) === fpKey(d, o + 4) } if (y + 1 < h) { pairs++; same += fpKey(d, o) === fpKey(d, o + 4 * w) } }
+  const ratio = pairs ? same / pairs : 0, pal = new Set()
+  for (let p = 0; p < w * h && pal.size <= 1024; p++) pal.add(fpKey(d, p * 4))
+  const nativePal = pal.size <= 1024
+  let uniform = fpUniformGrid(img), exactScale = 1, st = null
+  const steps = () => (st ??= (() => { const [px, py] = fpProfiles(img); return [fpPeriodic(px), fpPeriodic(py)] })())
+  if (!uniform && nativePal) { const [a, b] = steps(); if (a && b && Math.max(a.step, b.step) <= fpMinStep(w, h)) { exactScale = fpExactScale(img); if (exactScale > 1) uniform = { cols: w / exactScale, rows: h / exactScale, confidence: 1 } } }
+  const trans = fpTransitionGrid(img)
+  const grid = uniform && (!trans || (uniform.confidence >= 0.95 && Math.min(uniform.cols, uniform.rows) >= 2 * Math.min(trans.cols, trans.rows))) ? uniform : trans ?? uniform
+  if (!uniform && nativePal) { const [a, b] = steps(); if (Math.min(w, h) <= 256 || (!trans && a && b && Math.max(a.step, b.step) <= fpMinStep(w, h))) return { image: { width: w, height: h, data: Uint8ClampedArray.from(d) }, native: [w, h], info: { path: 'native-bypass' } } }
+  let image, path
+  if (grid) {
+    const c = exactScale === 1 ? fpClamp(w, h, grid.cols, grid.rows) : grid
+    image = fpModeCells(img, fpUniformCuts(w, c.cols), fpUniformCuts(h, c.rows)); path = 'strong-grid'
+  } else {
+    const q = quantize(img, colorVariety, { maxSamples: 50000 }).image, [qx, qy] = fpProfiles(q), sx = fpPeriodic(qx), sy = fpPeriodic(qy)
+    let step = Math.min(w, h) / 64
+    if (sx && sy) { const [a, b] = sx.step <= sy.step ? [sx, sy] : [sy, sx], r = b.step / a.step; step = Math.round(r) >= 2 && Math.abs(r - Math.round(r)) <= 0.08 && a.confidence >= 0.55 ? a.step : (sx.step + sy.step) / 2 } else if (sx || sy) step = (sx ?? sy).step
+    let cols, rows, cuts = null, walked = null
+    if (sx && sy && sx.confidence >= 0.55 && sy.confidence >= 0.55 && ratio >= 0.6) {
+      const s = Math.max(1, Math.round(step)), phaseOf = (p) => { let b = 0, bv = -Infinity; for (let ph = 0; ph < s; ph++) { let t = 0, n = 0; for (let i = ph; i < p.length; i += s) { t += p[i]; n++ } if (n && t / n > bv) { bv = t / n; b = ph } } return b === s - 1 ? 0 : b }
+      const lay = (ph, L) => { const c = [0]; for (let i = ph; i < L; i += s) if (i > 0) c.push(i); if (c[c.length - 1] !== L) c.push(L); return c }
+      cuts = [lay(phaseOf(qx), w), lay(phaseOf(qy), h)]; cols = Math.max(FP_MIN_CELLS, cuts[0].length - 1); rows = Math.max(FP_MIN_CELLS, cuts[1].length - 1); path = 'crisp'
+    } else {
+      walked = [fpTrim(fpWalk(qx, step, w), step, w), fpTrim(fpWalk(qy, step, h), step, h)]
+      cols = Math.max(FP_MIN_CELLS, walked[0].length - 1); rows = Math.max(FP_MIN_CELLS, walked[1].length - 1); path = 'walked'
+    }
+    if (w === h && cols !== rows) { cols = rows = Math.round((cols + rows) / 2); cuts = null }
+    const pa = fpPeakStep(qx), pb = fpPeakStep(qy)
+    if (pa && pb) {
+      const ps = (pa.step + pb.step) / 2, pc = Math.max(FP_MIN_CELLS, fpTrim(fpWalk(qx, ps, w), ps, w).length - 1), pr = Math.max(FP_MIN_CELLS, fpTrim(fpWalk(qy, ps, h), ps, h).length - 1)
+      if (Math.min(cols, rows) < 24 && Math.min(pc, pr) > 1.8 * Math.min(cols, rows) && Math.min(w / pc, h / pr) >= fpMinStep(w, h) && Math.abs(pc / pr / (w / h) - 1) <= 0.05) { cols = pc; rows = pr; cuts = null; walked = null; path = 'peak' }
+    }
+    const cell = Math.min(w / cols, h / rows), long = Math.max(w, h), sc = cuts ?? [fpUniformCuts(w, cols), fpUniformCuts(h, rows)]
+    const k256 = (im) => quantize(im, Math.max(colorVariety, 256), { iters: 12 }).image
+    if (long >= 128 && long <= 299 && cell <= 9 && ratio >= 0.25 && walked) { image = k256(fpSharpen(fpDetailCells(img, walked[0], walked[1], true))); path += '+enhance' }
+    else if ((long >= 128 && cell <= 9 && ratio >= 0.25) || (long >= 300 && cell <= 5)) { image = k256(fpDetailCells(img, sc[0], sc[1], false)); path += '+preserve' }
+    else image = fpModeCells(q, sc[0], sc[1])
+  }
+  return { image, native: [image.width, image.height], info: { path } }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 10. breakfastz-pixel-truth (reference re-implementation of breakfastz-pixel-truth `a1a3961c` per ecosystem
+// spike 2026-10-19 addendum, not the tool itself), DEFAULT_OPTIONS: auto grid, auto palette 16 (k-means on
+// the sampled cells), no dither, orphan removal and pixel-perfect on (skipped for "clean" exact-99 grids),
+// background off. Grid order: integer scale (clean, then noisy 3-bit), snapped comb grid (`detected`
+// = confidence > 1.4), freeform (block-size estimate, width max(8, round(w / block))). Sampling: inset 0.3
+// (exact) / 0.22 (snapped), 5-bit mode bucket then the bucket mean; freeform: whole cell + keepDetail.
+// UNKNOWN substitutes: luminance = Rec.601; snapCuts reads the filtered profile; per-candidate phase = the
+// best comb phase of that period; uniformGrid rows via round(j * cell) clamped to h; k-means space = OKLab
+// (the source comment says OKLab, the helper is `rgbToLab`); PRNG = mulberry32(42); the orphan lightness
+// guard 0.25 is read as OKLab L; refinement steps of 1 % of the period.
+// ---------------------------------------------------------------------------------------------------
+function bfProfile(img, axis) {
+  const { width: w, height: h, data: d } = img, Y = new Float64Array(w * h)
+  for (let p = 0; p < w * h; p++) Y[p] = luma(d, p * 4)
+  const L = axis ? h : w, raw = new Float64Array(L)
+  for (let i = 1; i < L; i++) { let s = 0; if (axis) for (let x = 0; x < w; x++) s += Math.abs(Y[i * w + x] - Y[(i - 1) * w + x]); else for (let y = 0; y < h; y++) s += Math.abs(Y[y * w + i] - Y[y * w + i - 1]); raw[i] = s }
+  return raw
+}
+const bfSmooth = (raw) => Float64Array.from(raw, (v, i) => 0.25 * raw[i > 0 ? i - 1 : i] + 0.5 * v + 0.25 * raw[i < raw.length - 1 ? i + 1 : i])
+function bfFilter(raw) {
+  const s = bfSmooth(raw), f = new Float64Array(s.length), pk = []
+  for (let i = 1; i < s.length - 1; i++) if (s[i] >= s[i - 1] && s[i] >= s[i + 1] && s[i] > 0) pk.push(i)
+  const t = 0.25 * pctOf(pk.map((i) => s[i]), 0.9)
+  for (const i of pk) if (s[i] >= t) f[i] = s[i]
+  return f
+}
+const bfAt = (f, x) => Math.max(f[Math.floor(x)] ?? 0, f[Math.ceil(x)] ?? 0)
+function bfScore(f, p, mean) { let best = -1, bp = 0; for (let ph = 0; ph < p; ph += 0.25) { let s = 0, n = 0; for (let x = ph; x < f.length; x += p) { s += bfAt(f, x); n++ } const v = n ? s / n / mean : 0; if (v > best) { best = v; bp = ph } } return { score: best, phase: bp } }
+function bfTeeth(f, big, phase, n, mean) { let s = 0, k = 0; for (let i = 0, x = phase; x < f.length; i++, x = phase + (i * big) / n) { if (i % n === 0) continue; s += bfAt(f, x); k++ } return k ? s / k / mean : 0 }
+function bfPeriod(raw, minP = 2, maxP = Math.min(64, raw.length / 4)) {
+  const f = bfFilter(raw), mean = meanOf(f)
+  if (!(mean > 0) || maxP < minP) return null
+  const all = []
+  let best = null
+  for (let p = minP; p <= maxP + 1e-9; p += p < 16 ? 0.05 : 0.1) { const r = bfScore(f, p, mean); all.push(r.score); if (!best || r.score > best.score) best = { p, ...r } }
+  const refine = (p0) => { let b = null; for (let k = -3; k <= 3; k++) { const p = p0 * (1 + k / 100), r = bfScore(f, p, mean); if (!b || r.score > b.score) b = { p, ...r } } return b }
+  best = refine(best.p)
+  for (let changed = true; changed;) {
+    changed = false
+    for (let n = 6; n >= 2; n--) {
+      if (best.p / n < 3) continue
+      const r = refine(best.p / n)
+      if (r.score >= 0.45 * best.score && bfTeeth(f, best.p, best.phase, n, mean) >= 2) { best = r; changed = true; break }
+    }
+  }
+  const med = medianOf(all)
+  return { period: best.p, phase: best.phase, score: best.score, median: med, confidence: med > 0 ? best.score / med : 0, f, mean }
+}
+function bfSnap(f, mean, period, phase) {
+  const L = f.length, cuts = [0]
+  let off = 0
+  for (let k = 0; ; k++) {
+    const base = phase + k * period, pos = base + off
+    if (pos >= L - 0.4 * period) break
+    let bi = -1, bv = -Infinity
+    for (let i = Math.max(1, Math.ceil(pos - 0.3 * period)); i <= Math.min(L - 1, Math.floor(pos + 0.3 * period)); i++) if (f[i] > bv) { bv = f[i]; bi = i }
+    let cut
+    if (bi >= 0 && bv > 1.2 * mean) { let a = bi, b = bi; while (a > 0 && f[a - 1] >= 0.9 * bv) a--; while (b < L - 1 && f[b + 1] >= 0.9 * bv) b++; cut = Math.round((a + b) / 2); off = cut - base } else cut = Math.round(pos)
+    if (cut >= cuts[cuts.length - 1] + 0.5 * period) cuts.push(cut)
+  }
+  if (cuts.length > 1 && L - cuts[cuts.length - 1] < 0.5 * period) cuts.pop()
+  cuts.push(L)
+  return cuts
+}
+function bfCellNoise(img, xs, ys) {
+  const { width: W, data: d } = img, v = []
+  const sx = Math.max(1, Math.floor((xs.length - 1) / 32)), sy = Math.max(1, Math.floor((ys.length - 1) / 32))
+  for (let j = 0; j < ys.length - 1; j += sy) for (let i = 0; i < xs.length - 1; i += sx) {
+    const tx = Math.floor(0.25 * (xs[i + 1] - xs[i])), ty = Math.floor(0.25 * (ys[j + 1] - ys[j])), x0 = xs[i] + tx, x1 = Math.max(x0 + 1, xs[i + 1] - tx), y0 = ys[j] + ty, y1 = Math.max(y0 + 1, ys[j + 1] - ty)
+    const S = [0, 0, 0], S2 = [0, 0, 0]
+    let n = 0
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const o = (y * W + x) * 4; for (let c = 0; c < 3; c++) { S[c] += d[o + c]; S2[c] += d[o + c] ** 2 } n++ }
+    let t = 0
+    for (let c = 0; c < 3; c++) t += Math.max(0, S2[c] / n - (S[c] / n) ** 2)
+    v.push(Math.sqrt(t))
+  }
+  return pctOf(v, 0.9)
+}
+function bfIntegerScale(img, noisy) {
+  const { width: w, height: h, data: d } = img, key = (p) => (d[p * 4 + 3] < 128 ? -1 : noisy ? ((d[p * 4] >> 5) << 6) | ((d[p * 4 + 1] >> 5) << 3) | (d[p * 4 + 2] >> 5) : (d[p * 4] << 16) | (d[p * 4 + 1] << 8) | d[p * 4 + 2])
+  const cols = new Set()
+  for (let p = 0; p < w * h && cols.size <= 4096; p++) cols.add(key(p))
+  if (!noisy && cols.size > 4096) return null
+  const runs = [], starts = [[], []]
+  for (const horiz of [true, false]) {
+    const n = horiz ? h : w, L = horiz ? w : h
+    for (let l = 0; l < n; l++) {
+      let start = 0
+      const at = (k) => key(horiz ? l * w + k : k * w + l)
+      for (let i = 1; i <= L; i++) {
+        if (i < L && at(i) === at(i - 1)) continue
+        if (start > 0 && i < L) { runs.push(i - start); starts[horiz ? 0 : 1].push(start) }
+        start = i
+      }
+    }
+  }
+  if (runs.length < 20) return null
+  let k = 0
+  for (let c = 32; c >= (noisy ? 2 : 1); c--) { let m = 0; for (const r of runs) if (r % c === 0) m++; if (m / runs.length >= (noisy ? 0.85 : 0.97)) { k = c; break } }
+  if (!k) return null
+  if (k === 1 && !(runs.filter((r) => r === 1).length >= 0.1 * runs.length && cols.size <= 64 && meanOf(runs) <= 4)) return null
+  const cutsOf = (L, st) => {
+    const m = new Map()
+    for (const s of st) m.set(s % k, (m.get(s % k) ?? 0) + 1)
+    let ph = 0, bc = -1
+    for (const [r, c] of [...m].sort((a, b) => a[0] - b[0])) if (c > bc) { bc = c; ph = r }
+    const c = [0]
+    for (let x = ph || k; x < L; x += k) c.push(x)
+    if (c.length > 1 && L - c[c.length - 1] < k / 2) c.pop()
+    c.push(L)
+    return c
+  }
+  return { kind: 'exact', xs: cutsOf(w, starts[0]), ys: cutsOf(h, starts[1]), confidence: noisy ? 90 : 99 }
+}
+function bfDetectGrid(img) {
+  const { width: w, height: h } = img, ex = bfPeriod(bfProfile(img, 0)), ey = bfPeriod(bfProfile(img, 1))
+  if (!ex || !ey) return null
+  const cands = []
+  for (const base of [ex.period, ey.period]) for (const m of [1, 2, 3, 0.5, 1 / 3]) { const p = base * m; if (p >= 3 && p <= Math.min(w, h) / 3 && !cands.some((c) => Math.abs(c - p) / c < 0.05)) cands.push(p) }
+  if (!cands.length) cands.push(ex.period)
+  const built = cands.map((p) => { const ax = bfScore(ex.f, p, ex.mean), ay = bfScore(ey.f, p, ey.mean), xs = bfSnap(ex.f, ex.mean, p, ax.phase), ys = bfSnap(ey.f, ey.mean, p, ay.phase); return { p, xs, ys, noise: bfCellNoise(img, xs, ys), sx: ax.score, sy: ay.score } })
+  const best = Math.min(...built.map((b) => b.noise)), pick = built.filter((b) => b.noise <= 1.35 * best + 2).reduce((a, b) => (b.p > a.p ? b : a))
+  const confidence = Math.min(ex.median > 0 ? pick.sx / ex.median : 0, ey.median > 0 ? pick.sy / ey.median : 0)
+  return { kind: 'snapped', xs: pick.xs, ys: pick.ys, confidence, detected: confidence > 1.4 }
+}
+function bfBlockSize(img) {
+  const { width: w, height: h } = img, gaps = []
+  for (const axis of [0, 1]) {
+    const s = bfSmooth(bfProfile(img, axis)), m = meanOf(s)
+    let last = -1
+    for (let i = 1; i < s.length - 1; i++) if (s[i] > 1.5 * m && s[i] >= s[i - 1] && s[i] >= s[i + 1]) { if (last >= 0 && i - last >= 3) gaps.push(i - last); last = i }
+  }
+  if (!gaps.length) return Math.max(1, Math.min(w, h) / 64)
+  const small = Math.min(w, h) <= 160
+  return clamp(small ? pctOf(gaps, 0.25) : medianOf(gaps), small ? 2 : 3, 64)
+}
+function bfUniform(w, h, tw) { const cell = w / tw, rows = Math.max(1, Math.round(h / cell)); return { xs: Array.from({ length: tw + 1 }, (_, i) => Math.min(w, Math.round(i * cell))), ys: Array.from({ length: rows + 1 }, (_, j) => (j === rows ? h : Math.min(h, Math.round(j * cell)))) } }
+const okOf = (r, g, b) => { const o = new Float64Array(3); srgbToOklab(r, g, b, o, 0); return o }
+function bfSample(img, xs, ys, inset, keepDetail) {
+  const { width: W, data: d } = img, ink = [], out = blank(xs.length - 1, ys.length - 1)
+  for (let j = 0; j < ys.length - 1; j++) for (let i = 0; i < xs.length - 1; i++) {
+    const ix = Math.floor((xs[i + 1] - xs[i]) * inset), iy = Math.floor((ys[j + 1] - ys[j]) * inset)
+    const x0 = xs[i] + ix, x1 = Math.max(x0 + 1, xs[i + 1] - ix), y0 = ys[j] + iy, y1 = Math.max(y0 + 1, ys[j + 1] - iy), b = new Map()
+    let op = 0, n = 0, inkN = 0
+    const inkS = [0, 0, 0]
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      const o = (y * W + x) * 4
+      n++
+      if (d[o + 3] < 128) continue
+      op++
+      const k = ((d[o] >> 3) << 10) | ((d[o + 1] >> 3) << 5) | (d[o + 2] >> 3)
+      let e = b.get(k)
+      if (!e) b.set(k, (e = [0, 0, 0, 0]))
+      e[0] += d[o]; e[1] += d[o + 1]; e[2] += d[o + 2]; e[3]++
+      if (luma(d, o) < 60) { inkN++; inkS[0] += d[o]; inkS[1] += d[o + 1]; inkS[2] += d[o + 2] }
+    }
+    const idx = j * out.width + i
+    ink[idx] = { cov: op ? inkN / op : 0, col: inkN ? inkS.map((v) => v / inkN) : null }
+    if (!op || op < 0.5 * n) continue
+    const ranked = [...b.values()].sort((u, v) => v[3] - u[3])
+    let c = ranked[0].slice(0, 3).map((v) => v / ranked[0][3])
+    if (keepDetail) {
+      if (inkN >= 0.2 * op) c = ink[idx].col
+      else if (ranked[1] && ranked[1][3] >= 0.3 * op) {
+        const c2 = ranked[1].slice(0, 3).map((v) => v / ranked[1][3]), L1 = okOf(...c.map(Math.round))[0], L2 = okOf(...c2.map(Math.round))[0]
+        if (Math.abs(L1 - L2) > 0.12 && (L2 < L1 || ranked[1][3] >= 0.4 * op)) c = c2
+      }
+    }
+    out.data.set([...c.map(Math.round), 255], idx * 4)
+  }
+  if (keepDetail) { // bridgeInk
+    const W2 = out.width, H2 = out.height, cov = (x, y) => (x < 0 || y < 0 || x >= W2 || y >= H2 ? 0 : ink[y * W2 + x].cov)
+    for (let y = 0; y < H2; y++) for (let x = 0; x < W2; x++) {
+      const k = ink[y * W2 + x]
+      if (!(k.cov >= 0.08 && k.cov < 0.2) || !k.col) continue
+      if ([[1, 0], [0, 1], [1, 1], [1, -1]].some(([a, b]) => cov(x - a, y - b) >= 0.2 && cov(x + a, y + b) >= 0.2)) out.data.set([...k.col.map(Math.round), 255], (y * W2 + x) * 4)
+    }
+  }
+  return out
+}
+function bfKmeans(img, k, iters = 14) {
+  const d = img.data, cnt = new Map()
+  for (let p = 0; p < img.width * img.height; p++) if (d[p * 4 + 3] >= 128) { const key = (d[p * 4] << 16) | (d[p * 4 + 1] << 8) | d[p * 4 + 2]; cnt.set(key, (cnt.get(key) ?? 0) + 1) }
+  const keys = [...cnt.keys()].sort((a, b) => cnt.get(b) - cnt.get(a) || a - b), N = keys.length
+  if (N <= k) return keys.map((q) => [q >> 16, (q >> 8) & 255, q & 255])
+  const X = new Float64Array(N * 3), Wt = keys.map((q) => cnt.get(q))
+  keys.forEach((q, i) => srgbToOklab(q >> 16, (q >> 8) & 255, q & 255, X, i * 3))
+  const C = new Float64Array(k * 3), D = new Float64Array(N).fill(Infinity), r = mulberry32(42), dd = (i, c) => (X[i * 3] - C[c * 3]) ** 2 + (X[i * 3 + 1] - C[c * 3 + 1]) ** 2 + (X[i * 3 + 2] - C[c * 3 + 2]) ** 2
+  for (let c = 0; c < k; c++) {
+    let pick = 0
+    if (c > 0) { let tot = 0; for (let i = 0; i < N; i++) tot += Wt[i] * D[i]; let t = r() * tot; for (pick = 0; pick < N - 1; pick++) { t -= Wt[pick] * D[pick]; if (t <= 0) break } }
+    C.set(X.subarray(pick * 3, pick * 3 + 3), c * 3)
+    for (let i = 0; i < N; i++) D[i] = Math.min(D[i], dd(i, c))
+  }
+  for (let it = 0; it < iters; it++) {
+    const S = new Float64Array(k * 3), T = new Float64Array(k)
+    for (let i = 0; i < N; i++) { let b = 0, bd = Infinity; for (let c = 0; c < k; c++) { const v = dd(i, c); if (v < bd) { bd = v; b = c } } for (let j = 0; j < 3; j++) S[b * 3 + j] += Wt[i] * X[i * 3 + j]; T[b] += Wt[i] }
+    for (let c = 0; c < k; c++) if (T[c]) for (let j = 0; j < 3; j++) C[c * 3 + j] = S[c * 3 + j] / T[c]
+  }
+  const pal = []
+  for (let c = 0; c < k; c++) { const o = [0, 0, 0]; oklabToSrgb(C[c * 3], C[c * 3 + 1], C[c * 3 + 2], o, 0); pal.push([...o, C[c * 3]]) }
+  return pal.sort((a, b) => a[3] - b[3]).map((p) => p.slice(0, 3))
+}
+function bfApply(img, pal) {
+  const P = pal.map((c) => okOf(...c)), out = { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }, o = new Float64Array(3), d = out.data
+  for (let p = 0; p < img.width * img.height; p++) {
+    if (d[p * 4 + 3] < 128) { d.set([0, 0, 0, 0], p * 4); continue }
+    srgbToOklab(d[p * 4], d[p * 4 + 1], d[p * 4 + 2], o, 0)
+    let b = 0, bd = Infinity
+    P.forEach((q, i) => { const v = (q[0] - o[0]) ** 2 + (q[1] - o[1]) ** 2 + (q[2] - o[2]) ** 2; if (v < bd) { bd = v; b = i } })
+    d.set([...pal[b], 255], p * 4)
+  }
+  return out
+}
+const N8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
+function bfKeyAt(img, x, y) { if (x < 0 || y < 0 || x >= img.width || y >= img.height) return -2; const o = (y * img.width + x) * 4; return img.data[o + 3] < 128 ? -1 : (img.data[o] << 16) | (img.data[o + 1] << 8) | img.data[o + 2] }
+function bfMajority(keys) { const m = new Map(); let bk, bc = 0; for (const k of keys) { if (k === -2) continue; const c = (m.get(k) ?? 0) + 1; m.set(k, c); if (c > bc) { bc = c; bk = k } } return bk }
+function bfOrphans(img) {
+  const out = { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }
+  for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) {
+    const k = bfKeyAt(img, x, y)
+    if (k < 0) continue
+    const nb = N8.map(([a, b]) => bfKeyAt(img, x + a, y + b)), inb = nb.filter((v) => v !== -2)
+    if (inb.length < 3 || inb.includes(k)) continue
+    const m = bfMajority(nb)
+    if (m === undefined || m === -1) continue
+    if (Math.abs(okOf(k >> 16, (k >> 8) & 255, k & 255)[0] - okOf(m >> 16, (m >> 8) & 255, m & 255)[0]) > 0.25) continue
+    out.data.set([m >> 16, (m >> 8) & 255, m & 255, 255], (y * img.width + x) * 4)
+  }
+  return out
+}
+function bfPixelPerfect(img) {
+  const out = { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) }, arms = [[[0, -1], [1, 0]], [[1, 0], [0, 1]], [[0, 1], [-1, 0]], [[-1, 0], [0, -1]]]
+  for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) {
+    const k = bfKeyAt(out, x, y)
+    if (k < 0) continue
+    const same = (dx, dy) => bfKeyAt(out, x + dx, y + dy) === k, orth = [[0, -1], [1, 0], [0, 1], [-1, 0]].filter(([a, b]) => same(a, b))
+    if (orth.length !== 2) continue
+    for (const [A, B] of arms) {
+      if (!same(...A) || !same(...B) || same(A[0] + B[0], A[1] + B[1])) continue
+      if (same(2 * A[0], 2 * A[1]) && same(2 * B[0], 2 * B[1])) continue // both arms long: a box corner
+      const m = bfMajority(N8.map(([a, b]) => bfKeyAt(out, x + a, y + b)).filter((v) => v !== k))
+      out.data.set(m === undefined || m < 0 ? [0, 0, 0, 0] : [m >> 16, (m >> 8) & 255, m & 255, 255], (y * img.width + x) * 4)
+      break
+    }
+  }
+  return out
+}
+/** breakfastz-pixel-truth reference (defaults); `manualWidth` = its manual grid mode. Returns its own size. */
+export function breakfastz(img, { manualWidth = null, colors = 16 } = {}) {
+  const { width: w, height: h } = img
+  let g
+  if (manualWidth) g = { kind: 'manual', ...bfUniform(w, h, manualWidth), confidence: 0 }
+  else {
+    g = bfIntegerScale(img, false) ?? bfIntegerScale(img, true)
+    if (!g) { const s = bfDetectGrid(img); g = s?.detected ? s : { kind: 'freeform', ...bfUniform(w, h, Math.max(8, Math.round(w / bfBlockSize(img)))), confidence: s?.confidence ?? 0 } }
+  }
+  const cells = bfSample(img, g.xs, g.ys, g.kind === 'exact' ? 0.3 : g.kind === 'snapped' ? 0.22 : 0, g.kind === 'freeform' || g.kind === 'manual')
+  const clean = g.kind === 'exact' && g.confidence === 99, nCol = new Set()
+  for (let p = 0; p < cells.width * cells.height; p++) if (cells.data[p * 4 + 3]) nCol.add((cells.data[p * 4] << 16) | (cells.data[p * 4 + 1] << 8) | cells.data[p * 4 + 2])
+  let image = clean && nCol.size <= colors ? cells : bfApply(cells, bfKmeans(cells, colors))
+  if (!clean) image = bfPixelPerfect(bfOrphans(image))
+  return { image, native: [image.width, image.height], info: { kind: g.kind, confidence: g.confidence } }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 11. PixelRefiner phase-aware grid search + cell sampler (reference re-implementation of PixelRefiner
+// `c32659f3` src/core/grid-search.ts, grid-signals/{profiles,reconstruction,harmonics}.ts, cell-sampler.ts and
+// shared/config.ts limits, not the tool itself). Runs `searchPhaseAwareGrid` on the full canvas, then
+// `hard-alpha-medoid` sampling (32 samples, cellAlphaThreshold 16, core margin 0.375 / max 6 / min span 2,
+// coverage >= 128 -> opaque), no colour reduction (PROCESS_DEFAULTS reduceColors false). Omitted (not
+// re-implemented): the processor's classifier/routes, trim-to-content (the tool searches the opaque bbox),
+// the trimmed-grid strategy and detector.ts fallbacks (used above maxPhaseAwarePixels 1.2 Mpx or when an axis
+// score < 0.55: this reference runs the phase-aware search regardless), background tools, thin-feature
+// preservation, Gemini watermark handling. UNKNOWN substitutes: transitions "before/after" = pixels p-1 and p;
+// phases rounded to quarter pixels; stratified sample grid rows = round(sqrt(32 h / w)).
+// ---------------------------------------------------------------------------------------------------
+function prProfiles(img) {
+  const { width: w, height: h, data: d } = img, stride = Math.max(1, Math.ceil(Math.max(w, h) / 256)), Y = new Float64Array(w * h)
+  for (let p = 0; p < w * h; p++) Y[p] = 0.2126 * SRGB_TO_LINEAR[d[p * 4]] + 0.7152 * SRGB_TO_LINEAR[d[p * 4 + 1]] + 0.0722 * SRGB_TO_LINEAR[d[p * 4 + 2]]
+  const axes = [0, 1].map((axis) => {
+    const L = axis ? h : w, M = axis ? w : h, col = new Float64Array(L + 1), lum = new Float64Array(L + 1), al = new Float64Array(L + 1), n = new Float64Array(L + 1)
+    const reg = Array.from({ length: 4 }, () => ({ v: new Float64Array(L + 1), n: new Float64Array(L + 1) }))
+    for (let m = 0; m < M; m += stride) {
+      const r = reg[Math.min(3, Math.floor((m * 4) / M))]
+      for (let p = 1; p < L; p++) {
+        const a = axis ? (p - 1) * w + m : m * w + p - 1, b = axis ? p * w + m : m * w + p
+        if (d[a * 4 + 3] < 16 && d[b * 4 + 3] < 16) continue
+        const c = (Math.abs(d[a * 4] - d[b * 4]) + Math.abs(d[a * 4 + 1] - d[b * 4 + 1]) + Math.abs(d[a * 4 + 2] - d[b * 4 + 2])) / 765, l = Math.abs(Y[a] - Y[b]), al0 = Math.abs(d[a * 4 + 3] - d[b * 4 + 3]) / 255
+        col[p] += c; lum[p] += l; al[p] += al0; n[p]++
+        r.v[p] += 0.45 * c + 0.35 * l + 0.2 * al0; r.n[p]++
+      }
+    }
+    for (let p = 0; p <= L; p++) if (n[p]) { col[p] /= n[p]; lum[p] /= n[p]; al[p] /= n[p] }
+    for (const r of reg) for (let p = 0; p <= L; p++) if (r.n[p]) r.v[p] /= r.n[p]
+    const comb = new Float64Array(L + 1)
+    for (let p = 1; p <= L - 2; p++) comb[p] = col[p] + 0.7 * lum[p] + 0.3 * al[p]
+    return { L, comb, regions: reg.map((r) => r.v) }
+  })
+  return [...axes, stride]
+}
+const prNorm = (v, c) => { let r = ((v % c) + c) % c; if (r < 1e-6 || c - r < 1e-6) r = 0; return r }
+function prAlign(e, cell, phase) {
+  const L = e.length - 1
+  let tot = 0, al = 0, mx = 0
+  for (let p = 1; p < L; p++) { tot += e[p]; mx = Math.max(mx, e[p]); const r = prNorm(p - phase, cell); if (Math.min(r, cell - r) <= 0.625) al += e[p] }
+  const recall = tot > 0 ? al / tot : 0
+  let ev = 0, cnt = 0
+  for (let b = phase === 0 ? cell : phase; b < L; b += cell) {
+    cnt++
+    let v = 0
+    for (let q = Math.ceil(b - 1); q <= Math.floor(b + 1); q++) if (q >= 0 && q <= L) v = Math.max(v, e[q] * (1 - Math.abs(q - b)))
+    ev += v
+  }
+  const precision = cnt && mx > 0 ? ev / (cnt * mx) : 0
+  return clamp(recall * 0.65 + precision * 0.35, 0, 1)
+}
+function prAuto(e, cell) {
+  const base = Math.max(1, Math.round(cell)), L = e.length - 1
+  const lag = (l) => {
+    const n = L - 1 - l
+    if (l < 1 || n < 3) return 0
+    let ma = 0, mb = 0
+    for (let i = 1; i + l < L; i++) { ma += e[i]; mb += e[i + l] }
+    ma /= n; mb /= n
+    let ab = 0, aa = 0, bb = 0
+    for (let i = 1; i + l < L; i++) { const a = e[i] - ma, b = e[i + l] - mb; ab += a * b; aa += a * a; bb += b * b }
+    return aa > 0 && bb > 0 ? clamp(ab / Math.sqrt(aa * bb), 0, 1) : 0
+  }
+  return clamp(0.55 * lag(base) + 0.3 * lag(2 * base) + 0.15 * lag(3 * base), 0, 1)
+}
+const prAgree = (v) => { if (v.length <= 1) return v.length; const m = meanOf(v); return clamp(1 - 2 * Math.sqrt(meanOf(v.map((x) => (x - m) ** 2))), 0, 1) }
+function prAxisCands(A, maxCell) {
+  const { L, comb, regions } = A, cells = new Set(), tr = []
+  for (let n = 1; n <= Math.min(600, L); n++) cells.add(+(L / n).toFixed(4))
+  for (let c = 1; c <= Math.floor(maxCell); c++) cells.add(c)
+  for (let p = 1; p < L; p++) if (comb[p] > 0) tr.push([p, comb[p]])
+  const strong = topBy(tr, 32).sort((a, b) => a - b)
+  for (let i = 0; i < strong.length; i++) for (let j = i + 1; j < strong.length && j - i < 9; j++) cells.add(+((strong[j] - strong[i]) / (j - i)).toFixed(4))
+  const score = (cell, ph, ac) => { const align = prAlign(comb, cell, ph), loc = prAgree(regions.map((r) => prAlign(r, cell, ph))); return (0.75 * align + 0.15 * ac + 0.1 * loc) * Math.min(1, L / cell / 3) }
+  const evalCell = (cell) => {
+    const ac = prAuto(comb, cell), phs = new Set([0])
+    for (const t of strong) phs.add(+prNorm(Math.round(prNorm(t, cell) * 4) / 4, cell).toFixed(4))
+    let best = null
+    for (const ph of phs) { const s = score(cell, ph, ac); if (!best || s > best.score) best = { cell, phase: ph, score: s } }
+    return best.phase === 0 ? [best] : [best, { cell, phase: 0, score: score(cell, 0, ac) }]
+  }
+  const all = [...cells].filter((c) => c >= 1 && c <= maxCell).flatMap(evalCell)
+  all.sort((a, b) => b.score - a.score || b.cell - a.cell || a.phase - b.phase)
+  const outN = (c) => Math.max(1, Math.ceil((L - (c.phase > 0 ? c.phase - c.cell : 0)) / c.cell)), seen = new Set(), base = []
+  for (const c of all) { if (base.length >= 12) break; const n = outN(c); if (!seen.has(n)) { seen.add(n); base.push(c) } }
+  const out = [...base]
+  for (const b of base) { if (out.length >= 24) break; if (2 * b.cell <= maxCell) out.push(...evalCell(2 * b.cell)) }
+  const uniq = new Map()
+  for (const c of out.slice(0, 24)) uniq.set(`${c.cell}:${c.phase}`, c)
+  return [...uniq.values()]
+}
+function prRecon(img, OK, cropX, cropY, cw, ch, stride) {
+  const { width: W, height: H, data: d } = img
+  let s = 0, n = 0
+  for (let y = 0; y < H; y += stride) {
+    const cy = clamp(Math.floor(cropY + (Math.floor((y - cropY) / ch) + 0.5) * ch), 0, H - 1)
+    for (let x = 0; x < W; x += stride) {
+      const p = y * W + x
+      if (d[p * 4 + 3] < 16) continue
+      const q = cy * W + clamp(Math.floor(cropX + (Math.floor((x - cropX) / cw) + 0.5) * cw), 0, W - 1)
+      s += 0.8 * Math.sqrt((OK[p * 3] - OK[q * 3]) ** 2 + (OK[p * 3 + 1] - OK[q * 3 + 1]) ** 2 + (OK[p * 3 + 2] - OK[q * 3 + 2]) ** 2) + (0.2 * Math.abs(d[p * 4 + 3] - d[q * 4 + 3])) / 255
+      n++
+    }
+  }
+  return n ? s / n : Infinity
+}
+function prHarmonics(pairs) {
+  const isInt = (v) => Math.abs(v - Math.round(v)) <= 0.001
+  for (const p of pairs) {
+    if (p.harm) { p.score += 14; continue }
+    for (const s of pairs) {
+      if (s === p) continue
+      const rx = p.x.cell / s.x.cell, ry = p.y.cell / s.y.cell, fx = Math.round(rx), fy = Math.round(ry)
+      if ((fx === 1 && fy === 1) || fx < 1 || fx > 3 || fy < 1 || fy > 3 || ![p.x.cell, p.y.cell, s.x.cell, s.y.cell].every(isInt) || Math.abs(rx - fx) > 0.02 || Math.abs(ry - fy) > 0.02) continue
+      if (s.recon <= p.recon + 0.02 && s.x.score >= 0.9 * p.x.score && s.y.score >= 0.9 * p.y.score) { p.harm = true; p.score += 14; break }
+    }
+  }
+}
+function prSample(img, cx, cy) { // hard-alpha-medoid over inset-core samples, premultiplied OKLab
+  const { width: W, data: d } = img, tmp = new Float64Array(3), core = (span) => Math.min(span * 0.375, 6, Math.max(0, (span - 2) / 2))
+  return sampleCuts(img, cx, cy, (x0, x1, y0, y1) => {
+    const cw = x1 - x0, ch = y1 - y0, area = cw * ch, mx = core(cw), my = core(ch), S = []
+    const add = (fx, fy) => {
+      const x = clamp(Math.floor(fx), x0, x1 - 1), y = clamp(Math.floor(fy), y0, y1 - 1), o = (y * W + x) * 4, a = d[o + 3] / 255
+      linearToOklab(SRGB_TO_LINEAR[d[o]] * a, SRGB_TO_LINEAR[d[o + 1]] * a, SRGB_TO_LINEAR[d[o + 2]] * a, tmp, 0)
+      S.push({ rgb: [d[o], d[o + 1], d[o + 2]], a: d[o + 3], lab: [tmp[0], tmp[1], tmp[2]], core: fx >= x0 + mx && fx <= x1 - mx && fy >= y0 + my && fy <= y1 - my })
+    }
+    if (area <= 32) { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) add(x + 0.5, y + 0.5) }
+    else { const rows = clamp(Math.round(Math.sqrt((32 * ch) / cw)), 1, 32), cols = Math.max(1, Math.floor(32 / rows)); for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) add(x0 + ((i + 0.5) * cw) / cols, y0 + ((j + 0.5) * ch) / rows) }
+    let ta = 0, pk = 0, fl = 255
+    for (const s of S) { ta += s.a; pk = Math.max(pk, s.a); fl = Math.min(fl, s.a) }
+    const cov = Math.round(ta / S.length)
+    if (cw >= 2 && ch >= 2 && pk - fl >= 16 && fl * 2 < pk && pk < 192 && cov < 128) return [0, 0, 0, 0] // bleed-only cell
+    if (cov < 128) return [0, 0, 0, 0]
+    let pop = S.filter((s) => s.a >= 16), useA = true
+    if (!pop.length) { pop = S; useA = false }
+    const cs = pop.filter((s) => s.core)
+    if (cs.length) pop = cs
+    let best = null, bs = Infinity
+    for (const c of pop) { let sc = 0; for (const s of pop) sc += ((c.lab[0] - s.lab[0]) ** 2 + (c.lab[1] - s.lab[1]) ** 2 + (c.lab[2] - s.lab[2]) ** 2) * (useA ? s.a / 255 : 1); if (sc < bs) { bs = sc; best = c } }
+    return [...best.rgb, 255]
+  })
+}
+/** PixelRefiner reference (phase-aware search on the full canvas + hard-alpha-medoid): its own discovered size. */
+export function pixelRefiner(img) {
+  const { width: W, height: H } = img, [AX, AY, stride] = prProfiles(img), maxCell = Math.min(W, H)
+  const cx = prAxisCands(AX, maxCell), cy = prAxisCands(AY, maxCell)
+  if (!cx.length || !cy.length) throw new Error('pixelRefiner reference: no axis candidates')
+  const OK = new Float64Array(W * H * 3)
+  for (let p = 0; p < W * H; p++) srgbToOklab(img.data[p * 4], img.data[p * 4 + 1], img.data[p * 4 + 2], OK, p * 3)
+  const crop = (c) => (c.phase > 0 ? c.phase - c.cell : 0), outN = (c, L) => Math.min(600, Math.max(1, Math.ceil((L - crop(c)) / c.cell)))
+  let pairs = []
+  for (const x of cx) for (const y of cy) pairs.push({ x, y })
+  const rescore = (st) => { for (const p of pairs) { p.recon = prRecon(img, OK, crop(p.x), crop(p.y), p.x.cell, p.y.cell, st); p.score = p.recon * 255 + 2 * Math.sqrt(outN(p.x, W) * outN(p.y, H)) - (p.x.score + p.y.score) * 12 } prHarmonics(pairs); pairs.sort((a, b) => a.score - b.score) }
+  rescore(Math.max(1, stride * 2))
+  pairs = pairs.slice(0, 32)
+  rescore(Math.ceil(Math.sqrt((W * H) / 16384)))
+  const b = pairs[0], cuts = (c, L) => { const o = crop(c); return strictCuts(Array.from({ length: outN(c, L) + 1 }, (_, i) => o + i * c.cell), L) }
+  const image = prSample(img, cuts(b.x, W), cuts(b.y, H))
+  return { image, native: [image.width, image.height], info: { cell: [b.x.cell, b.y.cell], phase: [b.x.phase, b.y.phase], score: b.score } }
 }
