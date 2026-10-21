@@ -63,6 +63,10 @@ const GEMINI = {
   driftAxisRatio: 0.3, mixelRegions: 3, supersample: 1, edgeBlurSigma: 0, cellJitter: 2, cellGradient: 1,
   textureAmp: 1.5, noiseSigma: 0.8, bgMode: 'near-white', nearWhite: [247, 255],
 }
+const SMOOTH_NOISY = {
+  ...CLEAN, cellSize: 8.3, internalScale: 'cell', resampleKernel: 'bilinear', cellJitter: 2, paletteDrift: 1.5,
+  textureAmp: 3, noiseSigma: 0.6, bgMode: 'near-white', nearWhite: [252, 255], // GPT's backdrop
+}
 const SOFT = { ...GPT, bgMode: 'keep-alpha', alphaFeather: [0.8, 1.6], scene: {} }
 
 // §2.8 presets. `fake-alpha` is the single-sprite form of `fake-alpha-sheet` (checker + shadow).
@@ -100,18 +104,22 @@ export const PRESETS = {
   'soft-alpha-glow': { ...SOFT, glowOpacity: 0.6, glowBlur: 10, shadowOpacity: 0.4, shadowBlur: 6 }, // semi-transparent glow + drop-shadow layers
   'soft-alpha-webp': { ...SOFT, encode: 'webp', webpQuality: [70, 90] }, // lossy RGB (VP8-like via JPEG), lossless alpha
   'soft-alpha-erode': { ...SOFT, alphaGamma: 2.2 }, // eroded matte: the 0.5 contour moves inside the true edge
+  // Noisy smooth upscales (D57): a GPT-like sprite (palette drift, cell jitter, texture and noise at generator level)
+  // rendered 1 px per cell and smoothly upscaled by a non-integer x8.3 onto a near-white backdrop.
+  'smooth-noisy-bilinear': SMOOTH_NOISY,
+  'smooth-noisy-bicubic': { ...SMOOTH_NOISY, resampleKernel: 'bicubic' },
 }
 
 // Primary benchmark stratum per preset (methodology §4): G exact, I interpolated, M mixel, B background, A soft alpha.
 export const PRESET_STRATUM = {
   'clean-nn-integer': 'G', 'nonint-nn': 'I', 'nonint-bilinear': 'I', 'jpeg-heavy': 'I', 'bicubic-x8': 'I',
-  'bilinear-x8': 'I', 'bilinear-x8.37': 'I', 'bicubic-x8-clean': 'I',
+  'bilinear-x8': 'I', 'bilinear-x8.37': 'I', 'bicubic-x8-clean': 'I', 'smooth-noisy-bilinear': 'I', 'smooth-noisy-bicubic': 'I',
   'gpt-image-like': 'M', 'gemini-like': 'M', 'drift-heavy': 'M', 'mixel-detail': 'M', 'fake-alpha': 'B',
   'gpt-gradient': 'B', 'gemini-gradient': 'B',
   'soft-ref': 'A', 'soft-alpha': 'A', 'soft-alpha-premul': 'A', 'soft-alpha-matte': 'A', 'soft-alpha-glow': 'A', 'soft-alpha-webp': 'A', 'soft-alpha-erode': 'A',
 }
 // Bumped on any change that alters emitted fixture pixels or truth (recorded by bench.mjs).
-export const SYNTH_VERSION = 'pixilate-synth/4'
+export const SYNTH_VERSION = 'pixilate-synth/5'
 
 function resolve(params, seed, opaque) {
   const base = { ...DEFAULTS, ...params }

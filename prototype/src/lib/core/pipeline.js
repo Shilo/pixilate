@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.10.1', constants: 28 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.11.0', constants: 29 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -129,15 +129,16 @@ function analysis(img0, o, bytes) {
     // first-difference lattice (weak or grid) is replaced only by a more coherent one, or by one with
     // >= 4x the cells at >= 0.9x its coherence (a smooth upscale's d1 profile often locks onto a multiple).
     // Ramp share (OBSERVED, procedural + local-only samples): natives 0-0.03, gridded AI 0.03-0.06,
-    // smooth upscales 0.25-0.89.
+    // smooth upscales 0.25-0.89; noisy smooth upscales fall to ~0.06 and pass on rampShareNoisy (D57).
     if (grid.class === 'none' || grid.class === 'weak' || grid.class === 'grid' || (grid.class === 'exact' && grid.confidence < 1)) {
       ramp = rampShare(img)
-      if (ramp >= 0.15) {
+      const noisy = ramp >= 0.15 ? null : rampShareNoisy(img) // D57: noise-tolerant ramp share, only when the exact one fails
+      if (ramp >= 0.15 || noisy >= RAMP_NOISY) {
         const g2 = detectGrid(img, { ...dopts, profile: 'd2' }), c2 = minCoherence(g2), lattice = grid.class === 'weak' || grid.class === 'grid'
         const c1 = lattice ? minCoherence(grid) : 0
         const finer = lattice && g2.x.count * g2.y.count >= 4 * grid.x.count * grid.y.count && c2 >= 0.9 * c1
         if (g2.class === 'grid' && c2 >= 0.3 && (!lattice || c2 >= c1 + 0.05 || finer)) {
-          g2.evidence.unshift(`smooth-upscale fallback: second-difference lattice ${g2.x.count}x${g2.y.count} (ramp share ${r3(ramp)} >= 0.15, min coherence ${r3(c2)} >= 0.3) replaces ${grid.class}${lattice ? ` ${grid.x.count}x${grid.y.count} (min coherence ${r3(c1)}${finer && c2 < c1 + 0.05 ? ', >= 4x the cells at >= 0.9x its coherence' : ''})` : ''}`)
+          g2.evidence.unshift(`smooth-upscale fallback: second-difference lattice ${g2.x.count}x${g2.y.count} (${noisy === null ? `ramp share ${r3(ramp)} >= 0.15` : `noisy ramp share ${r3(noisy)} >= ${RAMP_NOISY}`}, min coherence ${r3(c2)} >= 0.3) replaces ${grid.class}${lattice ? ` ${grid.x.count}x${grid.y.count} (min coherence ${r3(c1)}${finer && c2 < c1 + 0.05 ? ', >= 4x the cells at >= 0.9x its coherence' : ''})` : ''}`)
           grid = g2
         }
       }
@@ -168,6 +169,30 @@ export function rampShare(img) {
       if (!(Math.min(L, R) <= v && v <= Math.max(L, R)) || Math.abs(L + R - 2 * v) > 2 || (L !== R && (v === L || v === R))) ramp = false
     }
     if (!diff) continue
+    n++
+    if (ramp) r++
+  }
+  return n ? r / n : 0
+}
+
+// D57: noisy smooth upscales (generator texture and noise on a bilinear/bicubic upscale) break rampShare's
+// exact-line test (0.66 -> 0.06). A pixel then counts only where its neighbours really change (some channel
+// |L - R| > RAMP_CHANGE) and lies on the ramp when every channel has |L + R - 2v| <= RAMP_TOL. OBSERVED
+// (synthetic): noisy smooth upscales >= 0.39, gridded AI-like presets <= 0.36, real AI samples <= 0.25.
+const RAMP_TOL = 6, RAMP_CHANGE = 12, RAMP_NOISY = 0.45
+export function rampShareNoisy(img) {
+  const { width: W, height: H, data: d } = img
+  let n = 0, r = 0
+  for (let y = 0; y < H; y++) for (let x = 1; x < W - 1; x++) {
+    const o = (y * W + x) * 4
+    if (d[o + 3] < 255 || d[o - 1] < 255 || d[o + 7] < 255) continue
+    let big = false, ramp = true
+    for (let c = 0; c < 3; c++) {
+      const L = d[o - 4 + c], v = d[o + c], R = d[o + 4 + c]
+      if (Math.abs(L - R) > RAMP_CHANGE) big = true
+      if (Math.abs(L + R - 2 * v) > RAMP_TOL) ramp = false
+    }
+    if (!big) continue
     n++
     if (ramp) r++
   }

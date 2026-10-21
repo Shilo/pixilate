@@ -231,7 +231,9 @@ export const SMOOTH_PRESETS = ['bilinear-x8', 'bilinear-x8.37', 'bicubic-x8-clea
 // so existing case seeds stay put (not in the committed ratchet until a baseline rewrite adds them).
 export const GRADIENT_PRESETS = ['gpt-gradient', 'gemini-gradient']
 export const SOFT_PRESETS = ['soft-ref', 'soft-alpha', 'soft-alpha-premul', 'soft-alpha-matte', 'soft-alpha-glow', 'soft-alpha-webp', 'soft-alpha-erode']
-const NEW_PRESETS = [...GRADIENT_PRESETS, ...SOFT_PRESETS]
+// Noisy smooth upscales (D57): bench-only extra groups, appended after the soft-alpha cases
+export const NOISY_SMOOTH_PRESETS = ['smooth-noisy-bilinear', 'smooth-noisy-bicubic']
+const NEW_PRESETS = [...GRADIENT_PRESETS, ...SOFT_PRESETS, ...NOISY_SMOOTH_PRESETS]
 export const SMOOTH_FIXTURES = [['proc-blob', 'bilinear-x8'], ['proc-blob', 'bicubic-x8-clean'], ['proc-tile', 'bilinear-x8'], ['proc-tile', 'bilinear-x8.37'], ['proc-1bit', 'bilinear-x8.37'],
   ['proc-ui', 'bilinear-x8'], ['proc-blob', 'bilinear-x8.37']]
 
@@ -240,6 +242,7 @@ export const SMOOTH_FIXTURES = [['proc-blob', 'bilinear-x8'], ['proc-blob', 'bic
  * subject trim, then the smooth presets (`smooth`: [spriteId, preset] pairs to keep; default every non-`fewPresets` sprite).
  * `extra`: then the gradient presets on every sprite (opaque sprites become scenes: the background must stay) and the
  * soft-alpha presets on transparent sprites: full canvas, `+trim` (TRIM_OPTS) and `+trim-cells` (trim basis 'cells'), margin 0.3;
+ * then the noisy smooth-upscale presets on every sprite (D57);
  * seeds from seedBase + 50000, one seed per sprite shared by its soft variants (paired comparison).
  */
 export function matrixCases(sprites, { fewPresets = [], seedBase = 1, smooth = null, extra = false } = {}) {
@@ -270,6 +273,7 @@ export function matrixCases(sprites, { fewPresets = [], seedBase = 1, smooth = n
       for (const p of SOFT_PRESETS) add(s, p, { ...PRESETS[p], marginFrac: 0.3 }, TRIM_OPTS, '+trim', sd)
       for (const p of SOFT_PRESETS) add(s, p, { ...PRESETS[p], marginFrac: 0.3 }, CELL_TRIM_OPTS, '+trim-cells', sd)
     }
+    for (const s of sprites) for (const p of NOISY_SMOOTH_PRESETS) add(s, p, PRESETS[p], CANVAS_OPTS, '', seed++)
   }
   return cases
 }

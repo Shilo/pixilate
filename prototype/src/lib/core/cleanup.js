@@ -5,6 +5,7 @@
 import { dist2 as d2, srgbToOklab, toe, toeL } from './color.js'
 
 const NB8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
+const ACCENT_L = 0.15 // D58: toe-L contrast of a protected 1-px accent against each 4-neighbour
 const SPECK_AREA = 0.005, SPECK_DE = 0.09 // background-speck rule: share of opaque cells, ΔE to a bg color
 
 /** Squared distance from point P[p..] to segment A[a..]-B[b..] in OKLab. */
@@ -246,6 +247,17 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
   const changed = { orphan: 0, rareLone: 0, pinhole: 0, island: 0, pixelPerfect: 0 }
   const diff = (a, b) => { let k = 0; for (let p = 0; p < n; p++) if (a[p] !== b[p]) k++; return k }
 
+  // D58 accent: a cell with 8 opaque neighbours that is lighter (or darker) than each 4-neighbour by more than
+  // ACCENT_L in toe L is a 1-px eye or pupil, not noise; the orphan and rareLone passes keep it.
+  const accent = (idx, x, y, v) => {
+    let sgn = 0
+    for (const u of [idx[y * w + x + 1], idx[y * w + x - 1], idx[(y + 1) * w + x], idx[(y - 1) * w + x]]) {
+      const dl = P[v * 3] - P[u * 3], s = dl > ACCENT_L ? 1 : dl < -ACCENT_L ? -1 : 0
+      if (!s || (sgn && s !== sgn)) return false
+      sgn = s
+    }
+    return true
+  }
   // 1a. orphans
   let old = indexed.index, cur = Int16Array.from(old)
   for (let y = 0; y < h; y++) {
@@ -257,6 +269,7 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
       if (same) continue
       m = opaqueOnly(m)
       if (m === 0) continue // island: alpha step
+      if (m === 8 && accent(old, x, y, v)) continue
       const md = mode(vals, m)
       if (dom[p] < 0.6 || d2(P, v * 3, P, md * 3) < 0.08 * 0.08) cur[p] = md
     }
@@ -272,6 +285,7 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
       if (v < 0 || prot[p] || uses[v] > 2 || dom[p] >= 0.5) continue
       if ((x > 0 && old[p - 1] === v) || (x < w - 1 && old[p + 1] === v) || (y > 0 && old[p - w] === v) || (y < h - 1 && old[p + w] === v)) continue
       const m = opaqueOnly(neigh(old, x, y))
+      if (m === 8 && accent(old, x, y, v)) continue
       if (m) cur[p] = mode(vals, m)
     }
   }

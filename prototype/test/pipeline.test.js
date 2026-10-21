@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare } from '../src/lib/core/pipeline.js'
+import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare, rampShareNoisy } from '../src/lib/core/pipeline.js'
 import { degrade, PRESETS, noGrid } from './synth.js'
 import { CANVAS_OPTS, proceduralSprites, readPng, repoPath } from './fixtures.js'
 import { indexImage, q4, scoreCase } from './metrics.js'
+import { srgbToOklab } from '../src/lib/core/color.js'
 
 /** Integer NN upscale of an RGBA image. */
 function nn(img, k) {
@@ -588,6 +589,24 @@ describe('convert: smooth-upscale fallback (second-difference lattice)', () => {
     }
   })
 
+  it('rampShareNoisy separates a noisy smooth upscale (>= 0.45) from gridded GPT-like input (< 0.45) (D57)', () => {
+    for (const s of proceduralSprites(1)) for (const seed of [1, 2]) {
+      const smooth = degrade(s.img, 'smooth-noisy-bilinear', seed).img
+      expect(rampShare(smooth), s.id).toBeLessThan(0.15) // noise breaks the exact-line test
+      expect(rampShareNoisy(smooth), s.id).toBeGreaterThanOrEqual(0.45)
+      expect(rampShareNoisy(degrade(s.img, 'gpt-image-like', seed).img), s.id).toBeLessThan(0.45)
+    }
+  })
+
+  it('a noisy smooth x8.3 upscale recovers its true lattice through the noisy-ramp gate (D57)', () => {
+    for (const s of proceduralSprites(1).filter((s) => ['proc-blob', 'proc-tile', 'proc-ui'].includes(s.id))) {
+      const { img, truth } = degrade(s.img, 'smooth-noisy-bilinear', 1)
+      const r = convert(img, { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY })
+      expect(r.report.grid.evidence[0], s.id).toMatch(/^smooth-upscale fallback: second-difference lattice \d+x\d+ \(noisy ramp share /)
+      expect([r.report.grid.class, String(r.report.grid.suggestedSize)], s.id).toEqual(['grid', `${truth.cellsX},${truth.cellsY}`])
+    }
+  })
+
   it('a smooth no-grid texture keeps its verdict (second differences find no pure grid); NN upscales skip the fallback', () => {
     const tex = noGrid('texture', 1)
     expect(rampShare(tex)).toBeGreaterThanOrEqual(0.15)
@@ -769,4 +788,20 @@ describe('octave lock to the target (N ≈ T/2)', () => {
     expect(report.path).toBe('grid-upscale-k')
     expect(report.grid.evidence.some((e) => e.startsWith('octave lock:'))).toBe(false)
   })
+})
+
+describe('Clean accent keep (D58)', () => {
+  const t = new Float64Array(3)
+  const L = (im, x, y) => { const o = (y * im.width + x) * 4; if (im.data[o + 3] < 128) return null; srgbToOklab(im.data[o], im.data[o + 1], im.data[o + 2], t, 0); return t[0] }
+  // visible eye: opaque and >= 0.1 lighter (OKLab L) than each opaque 4-neighbour
+  const eye = (im, x, y) => { const v = L(im, x, y); return v != null && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => { const u = L(im, x + dx, y + dy); return u == null || u <= v - 0.1 }) }
+  // proc-blob 1-px left eye at sprite (9, 14); cases where cleanup off shows it and engine 0.10.1 Clean removed it
+  for (const [seed, preset] of [[1, 'gemini-like'], [2, 'gpt-image-like'], [5, 'smooth-noisy-bilinear']]) {
+    it(`a 1-px eye inside the sprite survives Clean on the raster route (proc-blob seed ${seed}, ${preset})`, () => {
+      const { img, truth } = degrade(proceduralSprites(seed)[0].img, preset, seed), { x: mx, y: my } = truth.spriteRect
+      const o = { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY, route: 'raster' }
+      expect(eye(convert(img, o).image, mx + 9, my + 14)).toBe(true)
+      expect(eye(convert(img, { ...o, cleanup: true }).image, mx + 9, my + 14)).toBe(true)
+    })
+  }
 })
