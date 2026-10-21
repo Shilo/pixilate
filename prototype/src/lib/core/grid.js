@@ -787,6 +787,8 @@ function emptyGrid(img, ev, why, alternatives = { x: [], y: [] }) {
  */
 export function detectGrid(img, opts = {}) {
   const W = img.width, H = img.height, f = factorize(img), top = f.candidates[0]
+  // D56: no pixel with alpha > 0 is no evidence of any grid (not a 1 x 1 exact lattice)
+  if (!f.u32.some((v) => v)) return Object.assign(emptyGrid(img, [], 'none: no pixel with alpha > 0'), { candidates: [], ambiguous: false, suggestedSize: null })
   const done = (g, suggestedSize) => Object.assign(g, { candidates: f.candidates, ambiguous: f.ambiguous, suggestedSize, alternatives: g.alternatives ?? { x: [], y: [] } })
   const exactOf = (c, confidence, ev, suggested) => done({ x: latticeAxis(W, c.sx, c.phaseX), y: latticeAxis(H, c.sy, c.phaseY), class: 'exact', confidence, evidence: ev }, suggested)
   // A scale-1 axis must itself look native (>= 3 changing lines in a row); otherwise it is a

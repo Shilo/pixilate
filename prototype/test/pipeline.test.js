@@ -119,6 +119,13 @@ describe('convert: empty visible region', () => {
     const { image } = convert(empty, { targetW: 8, targetH: 8 })
     expect(image.data.every((v) => v === 0)).toBe(true)
   })
+  it('reports no grid and no suggested size, not a 1 x 1 exact lattice (D56)', () => {
+    const a = analyze(empty), { image, report } = convert(empty, { targetW: 12, targetH: 9 })
+    expect([a.grid.class, a.suggestedSize, a.grid.suggestedSize, a.grid.ambiguous, a.grid.candidates, a.grid.alternatives]).toEqual(['none', null, null, false, [], { x: [], y: [] }])
+    expect(a.grid.evidence).toEqual(['none: no pixel with alpha > 0'])
+    expect([report.grid.class, report.grid.suggestedSize, report.route, image.width, image.height]).toEqual(['none', null, 'raster', 12, 9])
+    expect(report.output.colors).toBe(0)
+  })
 })
 
 describe('convert: identity (PRO-NOOP)', () => {
@@ -299,6 +306,22 @@ describe('convert: Step 4 path table on a degraded GPT-like input', () => {
       background: { mode: 'key', key: [255, 255, 255], tolerance: 0.03, connectivity: 4 }, halo: false, colors: 'auto', palette: null, manualPeriod: null,
     })
     expect(JSON.stringify(report.recipe)).not.toMatch(/timings/)
+  })
+
+  it('every recorded recipe.options replays through convert() to identical pixels (D56)', async () => {
+    const src = nn(BLOB, 8), soft = degrade(BLOB, PRESETS['gpt-image-like'], 3).img
+    const combos = [
+      [src, {}], [src, { trim: true, fit: 'contain' }], [src, { trim: { basis: 'cells' } }], [src, { background: 'auto' }],
+      [src, { background: { key: [255, 255, 255], tolerance: 0.1, connectivity: 8 }, halo: true }], [src, { fit: 'cover', targetW: 20, targetH: 30 }],
+      [src, { palette: [[0, 0, 0], [255, 255, 255], [200, 40, 40]] }], [src, { colors: 4, route: 'raster' }], [src, { manualPeriod: [8, 8] }],
+      [soft, { trim: true, background: 'auto', cleanup: true }], [soft, { trim: { basis: 'cells' }, background: 'auto', fit: 'contain' }],
+      [soft, { route: 'grid', colors: 8 }], [BLOB, { targetW: BX, targetH: BY }],
+    ]
+    for (const [img, opts] of combos) {
+      const a = convert(img, { targetW: BX, targetH: BY, ...opts }), b = convert(img, a.report.recipe.options)
+      expect(await canonicalHash(b.image), JSON.stringify(opts)).toBe(await canonicalHash(a.image))
+      expect(b.report.recipe, JSON.stringify(opts)).toEqual(a.report.recipe)
+    }
   })
 })
 

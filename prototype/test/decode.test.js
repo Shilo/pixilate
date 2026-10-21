@@ -99,10 +99,17 @@ describe('decodeImage other formats', () => {
     await expect(decodeImage(jpg)).rejects.toThrow(/Image too large: JPEG exceeds 16.7 MP/)
   })
 
-  it('sniffs by magic bytes, then by MIME hint', () => {
+  it('sniffs by magic bytes only, never the MIME hint (FMT-001)', () => {
     const riff = new Uint8Array([...'RIFF\0\0\0\0WEBPVP8 '].map((c) => c.charCodeAt(0)))
     expect(sniffFormat(riff)).toBe('webp')
-    expect(sniffFormat(new Uint8Array(4), 'image/jpg')).toBe('jpeg')
+    expect(sniffFormat(new Uint8Array(4), 'image/jpg')).toBe('other')
+  })
+
+  it('a text file declared image/png is a typed unsupported-format error, not "too large" (D56)', async () => {
+    for (const text of ['not a png, just text!', 'a text file named fake.png with well over thirty bytes in it']) {
+      const err = await decodeImage(new TextEncoder().encode(text), 'image/png').catch((e) => e)
+      expect([err.code, err.message]).toEqual(['unsupported-format', 'unsupported-format: unsupported or undecodable file: no known image signature'])
+    }
   })
 
   it('rejects canvas-only formats clearly in Node', async () => {

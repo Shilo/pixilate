@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.10.0', constants: 28 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.10.1', constants: 28 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -43,8 +43,9 @@ function normalize(opts, requireTarget = true) {
   const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi
   for (const k of ['targetW', 'targetH']) if ((requireTarget || o[k] != null) && !int(o[k], 1, MAX_TARGET)) bad(`${k} must be an integer in 1..${MAX_TARGET} (got ${o[k]})`)
   if (o.trim && typeof o.trim === 'object') { // D50: { basis: 'pixels' (alpha > 0, the default) | 'cells' }
-    const { basis = 'pixels', ...rest } = o.trim
-    if (!['pixels', 'cells'].includes(basis) || Object.keys(rest).length) bad(`trim must be a boolean or { basis: 'pixels' | 'cells' }`)
+    // D56: the recipe's own form { tau: 0, comparison: '>' } (basis pixels) replays too
+    const { basis = 'pixels', tau = 0, comparison = '>', ...rest } = o.trim
+    if (!['pixels', 'cells'].includes(basis) || (basis === 'cells' && 'tau' in o.trim) || tau !== 0 || comparison !== '>' || Object.keys(rest).length) bad(`trim must be a boolean or { basis: 'pixels' | 'cells' }`)
     o.trimBasis = basis; o.trim = true
   } else o.trimBasis = 'pixels'
   for (const k of ['trim', 'cleanup', 'halo']) if (typeof o[k] !== 'boolean') bad(`${k} must be a boolean or (trim) { basis }`)
@@ -53,11 +54,15 @@ function normalize(opts, requireTarget = true) {
   const B = o.background
   if (B === 'auto') o.background = { mode: 'auto', connectivity: 4 }
   else if (B && typeof B === 'object') {
-    const { key, tolerance = 0.03, connectivity = 4 } = B
-    if (!Array.isArray(key) || key.length !== 3 || !key.every((v) => int(v, 0, 255))) bad('background.key must be [r, g, b] bytes')
-    if (typeof tolerance !== 'number' || !(tolerance >= 0 && tolerance <= 1)) bad('background.tolerance must be a number in 0..1')
+    const { mode = 'key', key, tolerance = 0.03, connectivity = 4 } = B
     if (connectivity !== 4 && connectivity !== 8) bad('background.connectivity must be 4 or 8')
-    o.background = { mode: 'key', key: [...key], tolerance, connectivity }
+    if (mode === 'auto') o.background = { mode, connectivity } // D56: the recipe's own form replays
+    else {
+      if (mode !== 'key') bad(`background.mode must be 'auto' or 'key' (got ${mode})`)
+      if (!Array.isArray(key) || key.length !== 3 || !key.every((v) => int(v, 0, 255))) bad('background.key must be [r, g, b] bytes')
+      if (typeof tolerance !== 'number' || !(tolerance >= 0 && tolerance <= 1)) bad('background.tolerance must be a number in 0..1')
+      o.background = { mode, key: [...key], tolerance, connectivity }
+    }
   } else if (B !== false) bad(`background must be false, 'auto' or { key, tolerance, connectivity }`)
   if (o.colors !== 'auto' && !int(o.colors, 1, 256)) bad(`colors must be 'auto' or an integer in 1..256 (got ${o.colors})`)
   if (o.palette != null) {
@@ -172,7 +177,8 @@ export function rampShare(img) {
 /** Decode passthrough (decodeImage's format, decode, strict, orientation); not part of the recipe. */
 const inputReport = (width, height, o) => ({ width, height, format: o.format ?? null, decode: o.decode ?? 'js', strict: o.strict ?? null, orientation: o.orientation ?? null })
 
-const suggestedSizeOf = (grid) => grid.suggestedSize ?? (grid.class !== 'none' ? [grid.x.count, grid.y.count] : null)
+// D56: null = no size supported (an underdetermined or empty exact grid); undefined = a lockGrid lattice
+const suggestedSizeOf = (grid) => grid.suggestedSize !== undefined ? grid.suggestedSize : (grid.class !== 'none' ? [grid.x.count, grid.y.count] : null)
 const generatorReport = (gen) => ({ family: gen.family, model: gen.model ?? null, confidence: gen.confidence, evidence: gen.evidence })
 
 /**

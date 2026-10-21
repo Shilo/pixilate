@@ -5,9 +5,10 @@
 import { decode as pngDecode, encode as pngEncode } from 'fast-png'
 import jpeg from 'jpeg-js'
 import { walk } from './core/detect.js'
+import { PixilateError } from './core/canonical.js'
 
-/** Sniff the container by magic bytes; falls back to the MIME hint. */
-export function sniffFormat(b, mimeHint = '') {
+/** Sniff the container by magic bytes only (FMT-001: never the MIME hint or extension); 'other' when none matches. */
+export function sniffFormat(b) {
   const at = (o, s) => b.length >= o + s.length && [...s].every((c, i) => b[o + i] === c.charCodeAt(0))
   if (b[0] === 0x89 && at(1, 'PNG')) return 'png'
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpeg'
@@ -15,8 +16,7 @@ export function sniffFormat(b, mimeHint = '') {
   if (at(0, 'GIF8')) return 'gif'
   if (at(4, 'ftyp') && (at(8, 'avif') || at(8, 'avis'))) return 'avif'
   if (at(0, 'BM')) return 'bmp'
-  const m = /^image\/([a-z0-9.+-]+)/i.exec(mimeHint)
-  return m ? m[1].toLowerCase().replace('jpg', 'jpeg') : 'other'
+  return 'other'
 }
 
 export const MAX_PIXELS = 4096 * 4096 // ~16.7 MP input/output cap
@@ -79,9 +79,12 @@ const COLOR_META = ['iCCP', 'gAMA', 'cHRM', 'sRGB', 'cICP', 'ICC', 'ICCP'] // PN
  *   decode:'js'|'canvas', strict:boolean, orientation:number, warnings:string[]}>}
  * orientation: the EXIF value applied on the strict path (1 = none; the canvas path lets the browser apply it).
  */
-export async function decodeImage(bytes, mimeHint) {
+export async function decodeImage(bytes) {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-  const format = sniffFormat(b, mimeHint), c = walk(b), warnings = []
+  const format = sniffFormat(b)
+  // D56: no known signature is unsupported, whatever the MIME hint claims (a text file named .png is not a PNG)
+  if (format === 'other') throw new PixilateError('unsupported-format', 'unsupported or undecodable file: no known image signature')
+  const c = walk(b), warnings = []
   const color = COLOR_META.filter((t) => c.types.includes(t))
   if (color.length) warnings.push(`colour metadata ignored, pixels assumed sRGB: ${color.join(', ')}`)
   if (c.types.includes('acTL')) warnings.push('animated PNG: only the default image is decoded')
@@ -109,7 +112,7 @@ export async function decodeImage(bytes, mimeHint) {
   if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') {
     throw new Error(`Cannot decode ${format}: only PNG and JPEG decode without a browser (createImageBitmap/OffscreenCanvas unavailable)`)
   }
-  const type = mimeHint || (format === 'other' ? '' : `image/${format}`)
+  const type = `image/${format}`
   const bmp = await createImageBitmap(new Blob([b], { type }), { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'from-image' })
   if (bmp.width * bmp.height > MAX_PIXELS) { bmp.close?.(); throw tooBig(`${bmp.width}x${bmp.height}`) }
   const cv = new OffscreenCanvas(bmp.width, bmp.height)
