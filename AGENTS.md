@@ -42,6 +42,14 @@ Live AI-image batch (.local/live/ to .local/live-out/): cd prototype && node scr
 
 Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseline.mjs
 
+App install (after the prototype install): cd app && npm install
+
+App tests: cd app && npm test
+
+App dev server: cd app && npm run dev
+
+App build: cd app && npm run build
+
 ## Engine
 
 [prototype/src/lib/core/pipeline.js](prototype/src/lib/core/pipeline.js): entry point; convert, convertCandidates, analyze, routes, trim, fit, report.
@@ -69,6 +77,14 @@ Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseli
 [prototype/src/lib/core/color.js](prototype/src/lib/core/color.js): deterministic OKLab maths; no transcendental Math anywhere.
 
 [prototype/src/App.svelte](prototype/src/App.svelte): plain test-harness UI; work runs in [worker.js](prototype/src/worker.js).
+
+## App
+
+[app/README.md](app/README.md): MVP app overview, commands, notices and known gaps; the engine is imported through the `$engine` alias in [app/vite.config.js](app/vite.config.js).
+
+[app/src/App.svelte](app/src/App.svelte): app shell and state; components in [app/src/components/](app/src/components/), conversion in [app/src/worker.js](app/src/worker.js).
+
+[app/src/lib/opts.js](app/src/lib/opts.js): app settings to engine options; [app/test/parity.test.js](app/test/parity.test.js) proves app output equals the engine's.
 
 ## Tests
 
