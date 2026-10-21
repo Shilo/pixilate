@@ -15,7 +15,7 @@ import { PixilateError, canonicalize, roundHalfEven } from './canonical.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.9.1', constants: 28 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.9.2', constants: 28 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -86,13 +86,17 @@ function recipeOf(o) {
   }
 }
 
-/** Shared analysis (once per image + options): canonical pixels, generator, background estimate, grid. */
+/**
+ * Shared analysis (once per image + options): canonical pixels, generator, background estimate, grid.
+ * edges: grid.js edge profiles of (img, mask) per profile; memo: run()'s per-analysis results shared
+ * by the candidates (lattices, samples, palettes, raster cells).
+ */
 function analysis(img0, o, bytes) {
   checkImage(img0)
   const timingsMs = {}
   let t0 = performance.now()
   const lap = (k) => { const t = performance.now(); timingsMs[k] = (timingsMs[k] || 0) + t - t0; t0 = t }
-  const img = canonicalize(img0), W = img.width, H = img.height
+  const img = canonicalize(img0), W = img.width, H = img.height, edges = new Map()
   const gen = detectGenerator(bytes ?? null, img)
   const wm = gen.watermarkMask ?? null
   lap('detect')
@@ -106,13 +110,13 @@ function analysis(img0, o, bytes) {
   let grid, ramp = null // ramp: the d2 fallback's rampShare, kept for recommend(); null when not computed
   if (o.manualPeriod) {
     const [px, py] = o.manualPeriod
-    grid = lockGrid(img, Math.max(1, Math.round(W / px)), Math.max(1, Math.round(H / py)), { mask, preset: gen.preset })
+    grid = lockGrid(img, Math.max(1, Math.round(W / px)), Math.max(1, Math.round(H / py)), { mask, preset: gen.preset, edges })
     grid.evidence.unshift(`manual period ${px} x ${py}`)
     if (grid.class === 'none') grid.class = 'weak' // the user vouches for the grid
   } else {
     // with Trim the target sizes the trimmed basis, so it is no prior for the full canvas, and the canvas
     // count is not refined over its margins (D52)
-    const dopts = { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset, noRefine: o.trim }
+    const dopts = { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset, noRefine: o.trim, edges }
     grid = detectGrid(img, dopts)
     // Smooth-upscale fallback: no pure grid, but many pixels sit on straight ramps (a bilinear/bicubic
     // upscale of pixel art) -> re-detect on second differences; adopt only a coherent pure grid. A
@@ -134,7 +138,7 @@ function analysis(img0, o, bytes) {
     }
   }
   lap('grid')
-  return { img, gen, wm, bg, mask, grid, ramp, timingsMs }
+  return { img, gen, wm, bg, mask, grid, ramp, timingsMs, edges, memo: new Map() }
 }
 
 const r3 = (v) => Math.round(v * 1000) / 1000
@@ -343,21 +347,25 @@ function run(A, o) {
   }
   const gridUV = (g) => [(i) => ((g.x.cuts[i] + g.x.cuts[i + 1]) / 2 + off[0]) / W, (j) => ((g.y.cuts[j] + g.y.cuts[j + 1]) / 2 + off[1]) / H]
   const boxUV = (bx, cw, ch) => [(i) => (bx[0] + ((i + 0.5) * (bx[2] - bx[0])) / cw) / W, (j) => (bx[1] + ((j + 0.5) * (bx[3] - bx[1])) / ch) / H]
-  const dropBg = (cells, uv) => {
-    if (!bgMode) return cells
-    const c = removeBackground(cells, bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity, halo: o.halo, field: fieldOf(cells, uv) })
+  // candidates share one analysis: a key names the same inputs within it (o differs only in route and cleanup)
+  const memo = (key, f) => { let v = A.memo.get(key); if (v === undefined) A.memo.set(key, (v = f())); return v }
+  const dropBg = (cells, uv) => !bgMode ? cells : removeBackground(cells, bgColors, { mode: bgMode, tolerance: B.tolerance, connectivity: B.connectivity, halo: o.halo, field: fieldOf(cells, uv) })
+  const noteBg = (c) => { // report the background stage of cells that went through dropBg
+    if (!c.background) return c
     Object.assign(bgReport, { applied: c.background.applied, reason: c.background.reason, removed: c.background.removed, specks: c.background.specks })
     bgReport.halo.changed = c.background.haloChanged
     return c
   }
-  const sample = (src, g, m) => {
-    let c = sampleCells(src, g, { mask: m })
-    if (grid.profile === 'd2') { // smooth upscale: deconvolve the cell colours with the image's own kernel
-      // the first sample is always the native one (img, grid); later re-samples reuse its kernel
-      A.kernel ??= fitKernel(src, g, c)
-      c = deconvolveCells(src, g, c, A.kernel)
-    }
-    c = dropBg(c, gridUV(g))
+  const sample = (src, g, m, key) => {
+    const c = noteBg(memo(key, () => {
+      let c = sampleCells(src, g, { mask: m })
+      if (grid.profile === 'd2') { // smooth upscale: deconvolve the cell colours with the image's own kernel
+        // the first sample is always the native one (img, grid); later re-samples reuse its kernel
+        A.kernel ??= fitKernel(src, g, c)
+        c = deconvolveCells(src, g, c, A.kernel)
+      }
+      return dropBg(c, gridUV(g))
+    }))
     lap('sample')
     return c
   }
@@ -366,7 +374,7 @@ function run(A, o) {
   const clean = (cells) => {
     // D48: deconvolved smooth-upscale cells pass the kernel residual (the palette may keep close colours apart)
     const kernelRms = grid.profile === 'd2' && route === 'grid' && A.kernel?.a != null ? A.kernel.rms : null
-    let ix = buildPalette(cells, { colors: o.colors, palette: o.palette, exact, kernelRms })
+    let ix = memo(cells, () => buildPalette(cells, { colors: o.colors, palette: o.palette, exact, kernelRms })) // same cells, same options
     for (const w of ix.warnings) if (!warnings.includes(w)) warnings.push(w)
     lap('palette')
     if (o.cleanup && !exact) { ix = cleanup(ix, cells); add(ix.changed); lap('cleanup') }
@@ -386,29 +394,41 @@ function run(A, o) {
 
   let path, out, g = grid, off = [0, 0], geo, basis, fw, fh
   if (route === 'grid') {
-    const native = sample(img, grid, wm), N0 = grid.x.count, M0 = grid.y.count
+    const N0 = grid.x.count, M0 = grid.y.count
+    // native cells, sampled on first use (the lock path re-samples on its own lattice), always before any re-sample
+    let nat = null
+    const native = () => (nat ??= sample(img, grid, wm, 'cells native'))
+    if (grid.profile === 'd2') native() // the deconvolution kernel is fitted on the native sample
     let box = [0, 0, N0, M0] // cell box
     if (o.trim) { // pixels in background-removed cells are not visible
-      const col = cellIndex(grid.x, W), row = cellIndex(grid.y, H), gone = native.removed
+      const nc = native(), col = cellIndex(grid.x, W), row = cellIndex(grid.y, H), gone = nc.removed
       // basis 'cells': only cells left opaque by sampling (Binary(128) majority) and background removal
-      const [x0, y0, x1, y1] = visibleBox(cellBasis ? (x, y) => native.alpha[row[y] * N0 + col[x]] > 0 : gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true)
+      const [x0, y0, x1, y1] = visibleBox(cellBasis ? (x, y) => nc.alpha[row[y] * N0 + col[x]] > 0 : gone ? (x, y) => !gone[row[y] * N0 + col[x]] : () => true)
       box = [col[x0], row[y0], col[x1 - 1] + 1, row[y1 - 1] + 1]
     }
     basis = [box[2] - box[0], box[3] - box[1]]
     geo = fitBox(basis[0], basis[1], Tx, Ty, o.fit)
     if (geo.crop) box = [box[0] + geo.crop[0], box[1] + geo.crop[1], box[0] + geo.crop[2], box[1] + geo.crop[3]]
-    let src = img, cells = native, m = wm, gmask = mask
+    let src = img, cells = null, m = wm, gmask = mask // cells: the crop's or a relock's; else native()
     if (box[0] || box[1] || box[2] < N0 || box[3] < M0) {
-      ({ src, g, cells, wm: m, gmask, off } = cropTo(img, grid, native, wm, mask, { x0: box[0], y0: box[1], x1: box[2], y1: box[3] }))
+      ({ src, g, cells, wm: m, gmask, off } = cropTo(img, grid, native(), wm, mask, { x0: box[0], y0: box[1], x1: box[2], y1: box[3] }))
       // the full canvas decided the background; a crop's border is mostly sprite, so re-samples
       // of it (lock/relock) must not re-run the floating-subject guard
       if (bgMode === 'auto' && bgReport.applied) bgMode = true
     }
     fw = geo.fw; fh = geo.fh
-    const N = g.x.count, M = g.y.count
+    const N = g.x.count, M = g.y.count, base = () => cells ?? native()
+    // nx x ny lattice on src (keyed by the cell box src was cropped to) and its sample
+    const at = (nx, ny) => `${box} ${nx}x${ny}`
+    const lock = (nx, ny) => {
+      const L = memo('lock ' + at(nx, ny), () => lockGrid(src, nx, ny, { mask: gmask, preset: gen.preset, profile: grid.profile, edges: src === img ? A.edges : null }))
+      lap('grid')
+      return L
+    }
+    const resample = (nx, ny) => sample(src, lock(nx, ny), m, 'cells ' + at(nx, ny))
     if (exact && N === fw && M === fh) {
       path = 'exact'
-      out = clean(cells)
+      out = clean(base())
     } else {
       const rx = rowOf(N, fw), ry = rowOf(M, fh)
       let kind = rx.kind === ry.kind ? rx.kind : 'nonint', locked = null
@@ -419,9 +439,7 @@ function run(A, o) {
         (Math.abs(2 * N - fw) <= LOCK_WINDOW * fw && Math.abs(2 * M - fh) <= LOCK_WINDOW * fh))) {
         // Judge the lock on edge capture of its elastic cuts vs the free count's elastic lattice on the
         // same image: a drifting source makes a regular T lattice look bad even when T is right.
-        const L = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset, profile: grid.profile })
-        const F = lockGrid(src, N, M, { mask: gmask, preset: gen.preset, profile: grid.profile })
-        lap('grid')
+        const L = lock(fw, fh), F = lock(N, M)
         const ratio = Math.min(L.x.coherence / Math.max(1e-12, F.x.coherence), L.y.coherence / Math.max(1e-12, F.y.coherence))
         if (ratio >= 0.97) {
           if (Math.abs(N - fw) > LOCK_WINDOW * fw || Math.abs(M - fh) > LOCK_WINDOW * fh) gridNotes.push(`octave lock: ${N}x${M} -> ${fw}x${fh} (ratio ${Math.round(ratio * 100) / 100})`)
@@ -440,29 +458,27 @@ function run(A, o) {
       }
       if (kind === 'lock') {
         path = 'grid-locked'
-        if (!locked) { locked = lockGrid(src, fw, fh, { mask: gmask, preset: gen.preset, profile: grid.profile }); lap('grid') }
-        g = locked
-        out = clean(sample(src, g, m))
+        g = locked ?? lock(fw, fh)
+        out = clean(resample(fw, fh))
       } else if (kind === 'reduce') {
         path = 'grid-reduce-k'
         warnings.push('detail reduced')
-        out = shrink(clean(cells))
+        out = shrink(clean(base()))
       } else if (kind === 'up') {
         path = 'grid-upscale-k'
         warnings.push('target exceeds native resolution')
         if (g.x.count !== fw / rx.k || g.y.count !== fh / ry.k) {
-          g = lockGrid(src, fw / rx.k, fh / ry.k, { mask: gmask, preset: gen.preset, profile: grid.profile })
-          lap('grid')
-          cells = sample(src, g, m)
+          g = lock(fw / rx.k, fh / ry.k)
+          cells = resample(fw / rx.k, fh / ry.k)
         }
-        out = upscaleInteger(clean(cells), rx.k, ry.k)
+        out = upscaleInteger(clean(base()), rx.k, ry.k)
         lap('reduce')
       } else if (o.trim && o.fit === 'contain' && fw >= N && fh >= M) {
         // a trimmed sprite with T > N: never stretch by a non-integer factor (mixels); integer-upscale and pad
         const k = Math.max(1, Math.floor(Math.min(fw / N, fh / M)))
         path = 'grid-upscale-k'
         warnings.push(`target exceeds native resolution: integer upscale x${k}, padded to ${Tx}x${Ty}`)
-        out = upscaleInteger(clean(cells), k, k)
+        out = upscaleInteger(clean(base()), k, k)
         fw = N * k; fh = M * k
         lap('reduce')
       } else {
@@ -470,7 +486,7 @@ function run(A, o) {
         if (fw < N || fh < M) warnings.push('detail reduced')
         warnings.push('non-integer ratio, approximate')
         if (fw > N || fh > M) warnings.push('target exceeds native resolution')
-        out = shrink(clean(cells))
+        out = shrink(clean(base()))
       }
     }
   } else {
@@ -497,7 +513,7 @@ function run(A, o) {
     if (geo.crop) box = [box[0] + geo.crop[0], box[1] + geo.crop[1], box[0] + geo.crop[2], box[1] + geo.crop[3]]
     const src = box[0] || box[1] || box[2] < W || box[3] < H ? cropImage(img, ...box) : img
     fw = geo.fw; fh = geo.fh
-    const cells = dropBg(resampleToTarget(src, fw, fh), boxUV(box, fw, fh))
+    const cells = noteBg(memo(`raster ${box} ${fw}x${fh}`, () => dropBg(resampleToTarget(src, fw, fh), boxUV(box, fw, fh))))
     lap('sample')
     out = clean(cells)
   }

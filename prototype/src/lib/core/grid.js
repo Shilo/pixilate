@@ -636,6 +636,17 @@ function setupAxis(P, len, bands, d2) {
   return { P, len, bands, qmax, sp, med: bandMedian(sp, qmax), x: centered(P), e: edgeSignal(P), d2 }
 }
 
+/** Edge profiles and both axes of (img, mask, profile); `edges` (a Map owned by the caller, one img and mask only) keeps them per profile. */
+function edgeSetup(img, mask, profile, edges) {
+  let s = edges?.get(profile)
+  if (!s) {
+    const pr = edgeProfiles(img, mask, profile)
+    s = { pr, axes: [setupAxis(pr.Px, pr.W, pr.bx, pr.d2), setupAxis(pr.Py, pr.H, pr.by, pr.d2)] }
+    edges?.set(profile, s)
+  }
+  return s
+}
+
 function regularAxis(len, p) {
   const n = Math.max(1, Math.round(len / p)), cuts = new Float64Array(n + 1)
   for (let i = 0; i <= n; i++) cuts[i] = (i * len) / n
@@ -762,8 +773,8 @@ function emptyGrid(img, ev, why, alternatives = { x: [], y: [] }) {
 }
 
 /**
- * detectGrid(img, { targetW?, targetH?, mask?, preset?, profile?, noRefine? }) -> Grid.
- * noRefine: skip the D52 count refinement (the pipeline sets it under Trim).
+ * detectGrid(img, { targetW?, targetH?, mask?, preset?, profile?, noRefine?, edges? }) -> Grid.
+ * noRefine: skip the D52 count refinement (the pipeline sets it under Trim). edges: see edgeSetup.
  * mask: Uint8Array (1 = excluded pixel, e.g. watermark/checkerboard). preset.jpegStrict = JPEG container.
  * profile: 'd1' (default, first differences) or 'd2' (second differences, smooth upscales; see edgeProfiles);
  * spectral grids carry it as grid.profile so lockGrid can re-solve on the same profile.
@@ -797,14 +808,13 @@ export function detectGrid(img, opts = {}) {
   // <= 256 colours + binary alpha, no pure grid: the trivial candidate, reported as a heuristic.
   return exactOf(top, 0.9, [`1:1 candidate (heuristic, not proof): ${native}`], [W, H])
 }
-function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noRefine = false } = {}) {
+function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noRefine = false, edges = null } = {}) {
   const ev = [], alternatives = { x: [], y: [] }
   if (img.width < 16 || img.height < 16) return emptyGrid(img, ev, 'none: image smaller than 16 px')
-  const pr = edgeProfiles(img, mask, profile)
+  const { pr, axes } = edgeSetup(img, mask, profile, edges)
   const [b7, b8, b9] = pr.blockiness
   const jpeg = !!preset?.jpegStrict || b8 >= 1.2 * Math.max(b7, b9)
   ev.push(`JPEG evidence: ${jpeg ? 'yes' : 'no'} (container ${preset?.jpegStrict ? 'jpeg' : 'n/a'}, blockiness 8: ${f2(b8)} vs 7/9: ${f2(b7)}/${f2(b9)})`)
-  const axes = [setupAxis(pr.Px, pr.W, pr.bx, pr.d2), setupAxis(pr.Py, pr.H, pr.by, pr.d2)]
   const targets = [targetW, targetH], names = ['x', 'y'], periods = []
   for (let a = 0; a < 2; a++) {
     const A = axes[a], T = targets[a]
@@ -879,15 +889,14 @@ function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noR
 }
 
 /**
- * lockGrid(img, countX, countY, { mask?, preset?, profile? }) -> Grid with period len/count; phase and
+ * lockGrid(img, countX, countY, { mask?, preset?, profile?, edges? }) -> Grid with period len/count; phase and
  * elastic cuts re-solved (on the given edge profile, see detectGrid).
  */
-export function lockGrid(img, countX, countY, { mask, preset, profile = 'd1' } = {}) {
+export function lockGrid(img, countX, countY, { mask, preset, profile = 'd1', edges = null } = {}) {
   const ev = [`locked to ${countX}x${countY} cells`]
-  const pr = edgeProfiles(img, mask, profile)
+  const { pr, axes } = edgeSetup(img, mask, profile, edges)
   const [b7, b8, b9] = pr.blockiness
   const jpeg = !!preset?.jpegStrict || b8 >= 1.2 * Math.max(b7, b9)
-  const axes = [setupAxis(pr.Px, pr.W, pr.bx, pr.d2), setupAxis(pr.Py, pr.H, pr.by, pr.d2)]
   const [X, Y] = [countX, countY].map((n, a) => {
     const A = axes[a], p = A.len / n, ax = buildAxis(A, p, n)
     // D52: elastic cuts rejected for their count, or regular cuts with the wrong count: count-constrained DP

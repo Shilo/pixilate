@@ -52,26 +52,29 @@ function kuwahara(lab, A, w, h, r) {
   const W1 = w + 1, S = [0, 1, 2, 3, 4].map(() => new Float64Array(W1 * (h + 1)))
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const q = y * w + x, a = A[q], L = lab[q * 3], aa = lab[q * 3 + 1], bb = lab[q * 3 + 2]
-      const v = [a, a * L, a * aa, a * bb, a * (L * L + aa * aa + bb * bb)], o = (y + 1) * W1 + x + 1
-      for (let k = 0; k < 5; k++) S[k][o] = v[k] + S[k][o - 1] + S[k][o - W1] - S[k][o - W1 - 1]
+      const q = y * w + x, a = A[q], L = lab[q * 3], aa = lab[q * 3 + 1], bb = lab[q * 3 + 2], o = (y + 1) * W1 + x + 1
+      for (let k = 0; k < 5; k++) {
+        const v = k === 0 ? a : k === 1 ? a * L : k === 2 ? a * aa : k === 3 ? a * bb : a * (L * L + aa * aa + bb * bb)
+        S[k][o] = v + S[k][o - 1] + S[k][o - W1] - S[k][o - W1 - 1]
+      }
     }
   }
   const box = (k, x0, y0, x1, y1) => S[k][(y1 + 1) * W1 + x1 + 1] - S[k][y0 * W1 + x1 + 1] - S[k][(y1 + 1) * W1 + x0] + S[k][y0 * W1 + x0]
   const out = Float64Array.from(lab)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let best = Infinity, bq = null
-      for (const [qx, qy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-        const x0 = Math.max(0, qx < 0 ? x - r : x), x1 = Math.min(w - 1, qx < 0 ? x : x + r)
-        const y0 = Math.max(0, qy < 0 ? y - r : y), y1 = Math.min(h - 1, qy < 0 ? y : y + r)
+      let best = Infinity, bL = 0, ba = 0, bb = 0, found = false
+      for (let quad = 0; quad < 4; quad++) { // quadrants (-1, -1), (1, -1), (-1, 1), (1, 1)
+        const left = !(quad & 1), up = quad < 2
+        const x0 = Math.max(0, left ? x - r : x), x1 = Math.min(w - 1, left ? x : x + r)
+        const y0 = Math.max(0, up ? y - r : y), y1 = Math.min(h - 1, up ? y : y + r)
         const sw = box(0, x0, y0, x1, y1)
         if (sw <= 0) continue
         const mL = box(1, x0, y0, x1, y1) / sw, ma = box(2, x0, y0, x1, y1) / sw, mb = box(3, x0, y0, x1, y1) / sw
         const v = box(4, x0, y0, x1, y1) / sw - (mL * mL + ma * ma + mb * mb)
-        if (v < best) { best = v; bq = [mL, ma, mb] }
+        if (v < best) { best = v; bL = mL; ba = ma; bb = mb; found = true }
       }
-      if (bq) { const o = (y * w + x) * 3; out[o] = bq[0]; out[o + 1] = bq[1]; out[o + 2] = bq[2] }
+      if (found) { const o = (y * w + x) * 3; out[o] = bL; out[o + 1] = ba; out[o + 2] = bb }
     }
   }
   return out
@@ -83,15 +86,15 @@ const RIDGE_R = 3, RIDGE_T = 0.06 // top-hat radius at S (~0.75 target cell) and
 /** Separable square min (isMax false) or max filter of radius r, edges clipped. */
 function morph(src, w, h, r, isMax) {
   const tmp = new Float64Array(w * h), out = new Float64Array(w * h)
-  const f = isMax ? Math.max : Math.min
+  // direct Math.max / Math.min calls (inlined), not through a function variable: ~3x faster
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     let v = src[y * w + x]
-    for (let i = Math.max(0, x - r); i <= Math.min(w - 1, x + r); i++) v = f(v, src[y * w + i])
+    for (let i = Math.max(0, x - r); i <= Math.min(w - 1, x + r); i++) v = isMax ? Math.max(v, src[y * w + i]) : Math.min(v, src[y * w + i])
     tmp[y * w + x] = v
   }
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     let v = tmp[y * w + x]
-    for (let j = Math.max(0, y - r); j <= Math.min(h - 1, y + r); j++) v = f(v, tmp[j * w + x])
+    for (let j = Math.max(0, y - r); j <= Math.min(h - 1, y + r); j++) v = isMax ? Math.max(v, tmp[j * w + x]) : Math.min(v, tmp[j * w + x])
     out[y * w + x] = v
   }
   return out
@@ -134,7 +137,7 @@ function ridges(lab, A, targetW, targetH) {
 function select(flat, A, targetW, targetH, raw) {
   const sw = targetW * 4, n = targetW * targetH, ridge = ridges(raw, A, targetW, targetH)
   const out = new Float32Array(n * 3), alpha = new Uint8Array(n), dominance = new Float32Array(n)
-  const ids = new Int32Array(16), Ls = new Float64Array(16)
+  const ids = new Int32Array(16), Ls = new Float64Array(16), sorted = new Float64Array(16)
   for (let ty = 0; ty < targetH; ty++) {
     for (let tx = 0; tx < targetW; tx++) {
       const c = ty * targetW + tx, lab = ridge[c] ? raw : flat
@@ -148,7 +151,12 @@ function select(flat, A, targetW, targetH, raw) {
       }
       if (m < 8) { dominance[c] = 1; continue }
       alpha[c] = 255
-      const sorted = Array.from(Ls.subarray(0, m)).sort((a, b) => a - b)
+      for (let k = 0; k < m; k++) { // stable insertion sort of Ls[0..m) (m <= 16) into sorted
+        const v = Ls[k]
+        let j = k
+        for (; j > 0 && sorted[j - 1] > v; j--) sorted[j] = sorted[j - 1]
+        sorted[j] = v
+      }
       const med = (sorted[(m - 1) >> 1] + sorted[m >> 1]) / 2, mean = sum / m, lo = sorted[0], hi = sorted[m - 1]
       let pick = -1
       if (ridge[c] > 0) { for (let k = 0; k < m; k++) if (pick < 0 || Ls[k] < Ls[pick]) pick = k }

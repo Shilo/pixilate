@@ -87,10 +87,18 @@ export function sampleCells(img, grid, { mask = null } = {}) {
       if (pure[c]) { rgbOf[c] = first; lab[c * 3] = trueL[0]; lab[c * 3 + 1] = px[1]; lab[c * 3 + 2] = px[2]; continue }
       let mL = 0, ma = 0, mb = 0, cnt = 0
       for (let i = 0; i < m; i++) if (label[i] === win) order[cnt++] = i
-      const sorted = Array.from(order.subarray(0, cnt)).sort((i, j) => px[i * 3] - px[j * 3] || i - j)
-      const drop = Math.floor(cnt * 0.2), keep = sorted.slice(drop, cnt - drop)
-      for (const i of keep) { mL += trueL[i]; ma += px[i * 3 + 1]; mb += px[i * 3 + 2] }
-      lab[c * 3] = mL / keep.length; lab[c * 3 + 1] = ma / keep.length; lab[c * 3 + 2] = mb / keep.length
+      // by (toe L, index): a total order, so insertion sort (small cells) and the library sort agree
+      let sorted = order
+      if (cnt > 64) sorted = order.slice(0, cnt).sort((i, j) => px[i * 3] - px[j * 3] || i - j)
+      else for (let a = 1; a < cnt; a++) { // stable, and order holds ascending indices
+        const v = order[a], L = px[v * 3]
+        let j = a
+        for (; j > 0 && px[order[j - 1] * 3] > L; j--) order[j] = order[j - 1]
+        order[j] = v
+      }
+      const drop = Math.floor(cnt * 0.2), end = cnt - drop, nk = end - drop
+      for (let a = drop; a < end; a++) { const i = sorted[a]; mL += trueL[i]; ma += px[i * 3 + 1]; mb += px[i * 3 + 2] }
+      lab[c * 3] = mL / nk; lab[c * 3 + 1] = ma / nk; lab[c * 3 + 2] = mb / nk
     }
   }
   return { w, h, lab, alpha, dominance, masked, pure, rgb: rgbOf }
