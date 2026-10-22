@@ -1064,3 +1064,10 @@ These entries are the documented product decisions that §21 requires before a d
 - **Rationale:** owner direction after the app went live on GitHub Pages under `OWN-008`.
 - **Supersedes:** the "first designed MVP" framing of `OWN-007`, whose scope, design rules and verification obligations otherwise stand. Earlier documents that say "MVP" stay as dated history.
 - **Remaining verification obligations:** the `OWN-007` and `OWN-008` obligations, real-device and screen-reader testing, and the `DET-*` matrix before any strict-determinism claim. Being live is not a release gate.
+
+### OWN-010 — Shared tooling and strict TypeScript, preserving the interface (2026-10-22)
+
+- **Decision:** standardize development tooling with the owner's Backpack and PixelDoll projects: Node.js 24.22.1, npm 11.19.1, strict TypeScript 6.0.3, Svelte 5.57.2, Vite 8.3.4 with `@sveltejs/vite-plugin-svelte` 7.3.1, `svelte-check` 4.7.7, Vitest 4.1.12, and Playwright Test (`@playwright/test`) 1.64.1. Convert Pixilate's app, engine, workers, harness and Vite configurations to TypeScript. Keep JavaScript fixtures, tests and benchmark scripts where migration adds no safety.
+- **Scope:** architecture, dependency management, versioning and tests. The owner explicitly excluded design and visual changes. Keep Pixilate's GlassKit 1.22.2, CSS, markup, client-only architecture, defaults, decoder paths, engine identifier/version, PNG bytes and recipe behavior. PixelDoll retains its own CSS.
+- **Supersedes:** the source-language choice in `OWN-001` and the JavaScript-or-TypeScript choice in `OWN-007`; runtime JavaScript, deterministic math, privacy and all quality gates remain required. Necessary root runtime configuration, CI, current instructions and documentation updates are authorized as part of this migration.
+- **Verification:** [stack-standardization review](../reviews/stack-standardization-2026-10-22.md). This is a type/tooling migration, with no intended engine behavior change and no baseline rewrite; it creates no new algorithm Deviations entry. Real-device, accessibility and `DET-*` obligations remain open.

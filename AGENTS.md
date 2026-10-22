@@ -4,7 +4,7 @@ Pixilate is a free, open-source (MIT) web app that turns AI-generated (GPT Image
 
 AI "pixel art" is usually a large image with fake, drifting, blurred and noisy blocks (mixels) at the wrong size. Pixilate recovers the hidden source grid when one exists (exact factorization, spectral and second-difference detection, deconvolution of smooth upscales) and falls back to a raster reduction when there is none. It offers three named styles, Faithful, Clean and Smooth, recommends one with a plain-language reason, and exports a PNG at exactly the requested size. Output must be crisp: a clean palette, binary alpha, and no orphans, jaggies, mixels, muddy shading or broken silhouettes. Conversion is deterministic (same image and settings give identical pixels) and runs fully client-side in JavaScript; no image leaves the device. Background removal, crop to subject, the colour count and the pixel-grid override are explicit and off unless chosen. There is no recolouring feature: colour options exist only where they improve the converted output.
 
-The product is the app in app/: Vite + Svelte 5 (not SvelteKit), JavaScript, styled with GlassKit (required), designed in Apple's spirit, easy, intuitive and minimal for casual users, on desktop and mobile at every resolution and orientation. It imports the engine in place from prototype/, so its PNGs are byte-identical to the engine's. prototype/ holds the engine, a plain test harness, the tests and the benchmarks, and is where algorithm work happens.
+The product is the app in app/: Vite 8.3.4 + Svelte 5.57.2 (not SvelteKit), strict TypeScript 6.0.3, styled with GlassKit (required), designed in Apple's spirit, easy, intuitive and minimal for casual users, on desktop and mobile at every resolution and orientation. It imports the engine in place from prototype/, so its PNGs are byte-identical to the engine's. prototype/ holds the engine, a plain test harness, the tests and the benchmarks, and is where algorithm work happens.
 
 ## Rules
 
@@ -12,7 +12,7 @@ Follow KISS and YAGNI: no architecture, dependency, feature or abstraction witho
 
 Keep work in app/, prototype/ and docs/; anything else needs owner approval (docs/planning/product-requirements.md §25).
 
-Keep the engine deterministic: no Math.random, no transcendental Math (use color.js), no module-level state.
+Keep the engine deterministic: no Math.random, no transcendental Math (use color.ts), no module-level state.
 
 Record every engine behaviour change as a Deviations row with measured evidence; rewrite baselines only with the baseline script, in a commit of their own.
 
@@ -32,13 +32,19 @@ Follow the Conventional Commits standard, for example feat(app): add share sheet
 
 ## Commands
 
-Install: cd prototype && npm install, then cd app && npm install
+Use Node.js 24.22.1 and npm 11.19.1. Production source is strict TypeScript; the browser executes its compiled JavaScript. Existing JavaScript fixtures and benchmark scripts stay in place. GlassKit remains 1.22.2 to preserve the interface.
+
+Install: cd prototype && npm ci, then cd ../app && npm ci
 
 Engine tests: cd prototype && npm test
 
 One engine test: cd prototype && npx vitest run test/grid.test.js -t "test name"
 
+Type checks: cd prototype && npm run check, then cd ../app && npm run check
+
 App tests: cd app && npm test
+
+Browser smoke: cd app && npm run e2e:smoke (first run: npx playwright install chromium)
 
 App dev server: cd app && npm run dev
 
@@ -64,13 +70,13 @@ Shell and state machine: app/src/App.svelte
 
 Components: app/src/components/
 
-Conversion worker: app/src/worker.js
+Conversion worker: app/src/worker.ts
 
-Settings to engine options and recipe: app/src/lib/opts.js
+Settings to engine options and recipe: app/src/lib/opts.ts
 
-Every UI string: app/src/lib/copy.js
+Every UI string: app/src/lib/copy.ts
 
-Engine import alias and CSP: app/vite.config.js
+Engine import alias and CSP: app/vite.config.ts
 
 App output equals engine output: app/test/parity.test.js
 
@@ -78,29 +84,29 @@ Pages deploy: .github/workflows/pages.yml
 
 ## Engine
 
-Entry points (convert, convertCandidates, analyze, recommendation): prototype/src/lib/core/pipeline.js
+Entry points (convert, convertCandidates, analyze, recommendation): prototype/src/lib/core/pipeline.ts
 
-Grid detection: prototype/src/lib/core/grid.js
+Grid detection: prototype/src/lib/core/grid.ts
 
-Grid cells to colours: prototype/src/lib/core/sample.js
+Grid cells to colours: prototype/src/lib/core/sample.ts
 
-Smooth-upscale kernel fit and deconvolution: prototype/src/lib/core/fitcells.js
+Smooth-upscale kernel fit and deconvolution: prototype/src/lib/core/fitcells.ts
 
-Palette: prototype/src/lib/core/palette.js
+Palette: prototype/src/lib/core/palette.ts
 
-Raster route and reductions: prototype/src/lib/core/resample.js
+Raster route and reductions: prototype/src/lib/core/resample.ts
 
-Background stage and Clean style: prototype/src/lib/core/cleanup.js
+Background stage and Clean style: prototype/src/lib/core/cleanup.ts
 
-Orphan-pixel classification: prototype/src/lib/core/orphans.js
+Orphan-pixel classification: prototype/src/lib/core/orphans.ts
 
-Provenance signals (report only): prototype/src/lib/core/detect.js
+Provenance signals (report only): prototype/src/lib/core/detect.ts
 
-Decoding: prototype/src/lib/decode.js
+Decoding: prototype/src/lib/decode.ts
 
-Typed errors and canonical hash: prototype/src/lib/core/canonical.js
+Typed errors and canonical hash: prototype/src/lib/core/canonical.ts
 
-Deterministic OKLab maths: prototype/src/lib/core/color.js
+Deterministic OKLab maths: prototype/src/lib/core/color.ts
 
 ## Tests
 

@@ -1,5 +1,7 @@
 # Session Findings — 2026-10-21
 
+> Update 2026-10-22: source and tooling migrated to strict TypeScript under `OWN-010`, preserving UI and engine output. Start with the [stack-standardization review](../reviews/stack-standardization-2026-10-22.md) for current versions, commands and verification. The dated findings below remain historical evidence.
+
 ## Purpose
 
 This is the resume point for any agent picking up Pixilate. It summarises the current state and the ranked next steps. It continues the [2026-10-20 session findings](session-findings-2026-10-20.md), which hold the round-by-round history. Where it states a number, the canonical source governs: the [Deviations log](prototype-algorithm-design.md#deviations) (D1–D66), the [engine test results](../reviews/prototype-v1-test-results.md) and the [app test results](../reviews/mvp-app-test-results.md). Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence); numbers that include local samples are OBSERVED, local-only, not rights-cleared.

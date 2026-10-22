@@ -21,8 +21,6 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "allowJs": true,
-    "checkJs": false,
     "paths": {
       "$engine/*": [
         "../prototype/src/lib/*"

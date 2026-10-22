@@ -1,10 +1,11 @@
-# Builds the MVP app (app/) on every push to main and publishes it to GitHub Pages.
+# Checks, tests and builds pull requests; pushes to main also publish app/ to GitHub Pages.
 # One-time repository setting: Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
 name: Deploy app to GitHub Pages
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -30,24 +31,35 @@ jobs:
             prototype/package-lock.json
             app/package-lock.json
       - id: pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
       # The app imports the engine from prototype/src/lib, and its codecs from prototype/node_modules.
       - run: npm ci
+        working-directory: prototype
+      - run: npm run check
         working-directory: prototype
       - run: npm test -- --no-file-parallelism
         working-directory: prototype
       - run: npm ci
         working-directory: app
+      - run: npm run check
+        working-directory: app
       - run: npm test
+        working-directory: app
+      - run: npx playwright install --with-deps chromium
+        working-directory: app
+      - run: npm run e2e:smoke
         working-directory: app
       # base_path is "" for a user site and "/<repo>" for a project site.
       - run: npx vite build --base "${{ steps.pages.outputs.base_path }}/"
         working-directory: app
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           path: app/dist
 
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:

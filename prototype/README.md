@@ -4,10 +4,13 @@ An exploratory research prototype (`OWN-002`) of Pixilate's conversion algorithm
 
 ## Run
 
+Use Node.js **24.22.1** and npm **11.19.1**. Engine, worker and harness source use strict TypeScript **6.0.3**; JavaScript fixtures, tests and benchmark scripts retain their existing runtime checks.
+
 ```sh
-npm install
+npm ci
 npm run dev     # local dev server
-npm test        # Vitest unit tests
+npm run check   # strict TypeScript and Svelte checks
+npm test        # Vitest unit and quality-ratchet tests
 npm run bench   # synthetic-degradation benchmark
 npm run build   # production build into dist/
 node scripts/score.mjs out.png --target 32x32   # hard checks + intrinsic metrics for one output
@@ -25,7 +28,7 @@ The collapsed **Custom** section holds every other option: trim, fit, route, Cle
 
 ## Engine API
 
-`src/lib/core/pipeline.js`:
+`src/lib/core/pipeline.ts`:
 
 - `convert(img, opts, bytes?) -> { image, indexed, report }`. Options:
   - `targetW`, `targetH`: required integers 1..1024.

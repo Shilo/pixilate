@@ -8,17 +8,17 @@ AI "pixel art" is usually a large image with drifting, blurred, noisy blocks (mi
 
 ## Repository
 
-- [`app/`](app/README.md): the web app (Vite + Svelte 5, JavaScript, GlassKit). Every push to `main` tests it, builds it and publishes it to GitHub Pages.
+- [`app/`](app/README.md): the web app (Vite 8.3.4 + Svelte 5.57.2, TypeScript 6.0.3, GlassKit 1.22.2). Every push to `main` tests it, builds it and publishes it to GitHub Pages.
 - [`prototype/`](prototype/README.md): the conversion engine, its plain test harness, tests and benchmarks.
 - [`docs/`](docs/planning/product-requirements.md): requirements, plans, research and test results.
 
 ## Run locally
 
-Requires Node.js 22.
+Requires Node.js **24.22.1** and npm **11.19.1** (pinned by `.nvmrc`, `packageManager` and CI).
 
 ```sh
-cd prototype && npm install && npm test
-cd ../app && npm install && npm run dev   # http://localhost:5210
+cd prototype && npm ci && npm run check && npm test
+cd ../app && npm ci && npm run dev   # http://localhost:5210
 ```
 
 ## Licence

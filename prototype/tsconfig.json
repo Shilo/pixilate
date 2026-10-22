@@ -20,9 +20,7 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
-    "skipLibCheck": true,
-    "allowJs": true,
-    "checkJs": false
+    "skipLibCheck": true
   },
   "include": [
     "src/**/*.ts",

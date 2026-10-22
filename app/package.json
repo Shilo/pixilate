@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "example": "node scripts/make-example.mjs",
-    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --project tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --project tsconfig.json && tsc --project e2e/tsconfig.json",
+    "e2e": "playwright test",
+    "e2e:smoke": "playwright test"
   },
   "dependencies": {
     "@jungherz-de/glasskit": "1.22.2"
