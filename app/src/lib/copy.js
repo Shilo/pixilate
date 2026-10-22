@@ -147,6 +147,7 @@ export function reason(rec, gridClass) {
     case 'no-grid': return gridClass === 'weak'
       ? 'The pixel grid is faint, so Smooth redraws the picture at your size.'
       : 'No pixel grid found, so Smooth redraws the picture at your size.'
+    case 'manual-grid': return 'Uses the pixel grid you set.'
     case 'grid-failed': return "Faithful couldn't be made at this size, so this is the next best."
     case 'smooth-upscale-off-target': return 'This image was smoothly enlarged, and your size is far from its grid, so Smooth fits better.'
     case 'light-touch-clean': return 'Clean only tidies a few stray pixels and keeps the outlines.'

@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.1', constants: 33 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.2', constants: 33 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -701,17 +701,20 @@ function outlineCoverage(img) {
 }
 
 /** Rule table -> { id, rule, evidence }; the first matching rule wins. */
-function recommend(A, cls, candidates, alias, original) {
+function recommend(A, cls, candidates, alias, original, manual = false) {
   const r1 = (v) => Math.round(v * 10) / 10, r2 = (v) => Math.round(v * 100) / 100
   if (original) return { id: 'original', rule: 'identity', evidence: 'recommended original: the target equals the source and no stage is requested' }
-  if (cls === 'none' || cls === 'weak') return { id: 'smooth', rule: 'no-grid', evidence: `recommended smooth: grid class ${cls}` }
+  // D66: a user-set grid (manualPeriod) on a none/weak lattice skips the no-grid and off-target smooth rules; the
+  // grid/Clean choice below still runs, and convertCandidates reports it as rule 'manual-grid'
+  const vouched = manual && (cls === 'none' || cls === 'weak')
+  if (!vouched && (cls === 'none' || cls === 'weak')) return { id: 'smooth', rule: 'no-grid', evidence: `recommended smooth: grid class ${cls}` }
   if (cls === 'exact' && A.grid.confidence === 1) return { id: 'grid', rule: 'exact', evidence: 'recommended grid: exact grid' }
   const gc = candidates.find((c) => c.id === alias.grid)
   if (!gc) return { id: alias.clean ? 'clean' : 'smooth', rule: 'grid-failed', evidence: 'recommended fallback: the grid candidate failed' }
   const [bw, bh] = gc.report.fit.basis, [fw, fh] = gc.report.fit.resized
   const off = Math.max(bw / fw, fw / bw, bh / fh, fh / bh), red = Math.min(bw / fw, bh / fh)
   const ramp = A.ramp ?? rampShare(A.img), d2 = A.grid.profile === 'd2'
-  if (ramp >= REC_RAMP && !d2 && off >= REC_OFF)
+  if (!vouched && ramp >= REC_RAMP && !d2 && off >= REC_OFF)
     return { id: 'smooth', rule: 'smooth-upscale-off-target', evidence: `recommended smooth: smooth-upscale evidence (ramp share ${r2(ramp)} >= ${REC_RAMP}) and the ${bw}x${bh} lattice is ${r1(off)}x off the ${fw}x${fh} target` }
   const cc = alias.clean !== alias.grid ? candidates.find((c) => c.id === alias.clean) : null
   if (cc && !d2 && red < REC_REDUCE) {
@@ -738,7 +741,8 @@ function recommend(A, cls, candidates, alias, original) {
  * original (identity, only when the noop rule holds), grid (grid route, cleanup off; grid found),
  * clean (Clean profile on the grid route, else the raster route), smooth (raster route, cleanup off).
  * Identical outputs are deduped (the earlier id survives). Recommendation (recommend(), first match):
- * original when present; class none/weak -> smooth; exact at confidence 1 -> grid; grid failed -> clean
+ * original when present; class none/weak -> smooth, unless the user set the grid (manualPeriod: rule manual-grid,
+ * the grid/Clean choice below without the off-target rule; D66); exact at confidence 1 -> grid; grid failed -> clean
  * else smooth; smooth-upscale evidence with a d1 lattice >= 2x off the target -> smooth; Clean when it
  * is a light touch (>= 97 % pixel agreement with grid, outline coverage kept; d1, no reduction), or when
  * the grid output is noisy (noise orphans >= 4 % of opaque pixels) and agreement >= 90 % (D55); else grid.
@@ -766,7 +770,10 @@ export function convertCandidates(img, opts = {}, bytes = null) {
     candidates.push({ id, ...r })
   }
   if (!candidates.length) throw firstError
-  const rule = recommend(A, cls, candidates, alias, specs[0][0] === 'original'), id = alias[rule.id] ?? candidates[0].id
+  let rule = recommend(A, cls, candidates, alias, specs[0][0] === 'original', !!o.manualPeriod)
+  if (o.manualPeriod && (cls === 'none' || cls === 'weak') && rule.rule !== 'identity' && rule.rule !== 'grid-failed') // D66
+    rule = { id: rule.id, rule: 'manual-grid', evidence: `recommended ${rule.id}: your pixel grid (${A.grid.x.count}×${A.grid.y.count})` }
+  const id = alias[rule.id] ?? candidates[0].id
   const rec = id === rule.id ? rule : { ...rule, id, evidence: `${rule.evidence} (identical output: ${id})` }
   const { cuts, ...grid } = gridReport(A.grid, A.grid, [0, 0])
   return { candidates, recommended: id, recommendation: rec, alias, analysis: { grid, generator: generatorReport(A.gen), suggestedSize: suggestedSizeOf(A.grid) }, failed }

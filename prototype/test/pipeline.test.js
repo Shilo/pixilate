@@ -679,6 +679,17 @@ describe('convertCandidates', () => {
     expect(r.recommended).toBe('smooth')
   })
 
+  it('a manual period on a no-grid scene recommends the grid route, not smooth (D66)', () => {
+    for (const img of [gradient(256, 128), noGrid('texture', 1)]) {
+      expect(analyze(img).grid.class).toBe('none')
+      const r = convertCandidates(img, { targetW: 32, targetH: 16, manualPeriod: [8, 8] })
+      expect(['grid', 'clean']).toContain(r.recommended)
+      expect(r.recommendation.rule).toBe('manual-grid')
+      expect(r.recommendation.evidence).toMatch(/^recommended (grid|clean): your pixel grid \(\d+×\d+\)$/)
+      expect(r.candidates.find((c) => c.id === r.recommended).report.route).toBe('grid')
+    }
+  })
+
   it('exact input: grid and clean are identical and deduped, grid recommended', () => {
     const r = convertCandidates(nn(BLOB, 8), { targetW: BX, targetH: BY })
     expect(ids(r)[0]).toBe('grid')
