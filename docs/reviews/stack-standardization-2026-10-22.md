@@ -1,5 +1,7 @@
 # Stack standardization — 2026-10-22
 
+Independently re-verified in the [2026-10-22 audit](stack-standardization-audit-2026-10-22.md).
+
 Scope: `OWN-010`, architecture/dependencies/versioning/tests only. No design, algorithm, default-setting or serialized-engine-version change.
 
 ## Exact toolchain
