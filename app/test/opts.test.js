@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  DEFAULT_TOOLS, applyPreset, baseName, chips, clampScale, deriveH, deriveW, fileName, needsCase, prefill, recipe, recoverJob, showsFit, styleIdOf, toEngineOpts, typed, validate,
+  DEFAULT_TOOLS, detectedGrid, gridOfPeriod, manualPeriodOf, sizeAfterReset, sizeForGrid, validateGrid, applyPreset, baseName, chips, clampScale, deriveH, deriveW, fileName, needsCase, prefill, recipe, recoverJob, showsFit, styleIdOf, toEngineOpts, typed, validate,
 } from '../src/lib/opts.js'
 import pkg from '../package.json'
 import { T } from '../src/lib/copy.js'
@@ -131,5 +131,52 @@ describe('export scale, recovery and labels', () => {
     const report = { recipe: { engine: {}, profile: null, alphaPolicy: 'Binary(128)', options: {} }, output: { colors: 1 }, warnings: [] }
     const result = { recommended: 'grid', recommendation: { rule: 'exact', evidence: '' }, candidates: [{ id: 'grid', width: 1, height: 1, hash: null, report }] }
     expect(recipe({ result, shown: 'grid', size: S, derivation: '', info: {} }).app.version).toBe(pkg.version)
+  })
+})
+
+describe('pixel grid override (AUTO-008)', () => {
+  test('cols x rows map to the engine manualPeriod and back (recipe round-trip)', () => {
+    for (const [W, H, cols, rows] of [[1024, 1024, 32, 32], [1254, 1154, 126, 116], [337, 373, 32, 36], [100, 7, 3, 7]]) {
+      const p = manualPeriodOf({ cols, rows }, W, H)
+      expect([Math.round(W / p[0]), Math.round(H / p[1])]).toEqual([cols, rows]) // the engine's own rounding
+      expect(gridOfPeriod(p, W, H)).toEqual({ cols, rows })
+    }
+    expect(manualPeriodOf(null, 10, 10)).toBeNull()
+  })
+  test('engine options carry manualPeriod only with an override', () => {
+    expect(toEngineOpts(S, DEFAULT_TOOLS)).not.toHaveProperty('manualPeriod')
+    expect(toEngineOpts(S, DEFAULT_TOOLS, false, [8, 8]).manualPeriod).toEqual([8, 8])
+  })
+  test('validation: whole numbers 1..1024, never more blocks than pixels', () => {
+    expect(validateGrid({ cols: 32, rows: 36 }, 337, 373)).toEqual({})
+    expect(validateGrid({ cols: 0, rows: 2.5 }, 337, 373)).toEqual({ cols: 'Use a whole number from 1 to 337.', rows: 'Use a whole number from 1 to 373.' })
+    expect(validateGrid({ cols: 400, rows: 30 }, 337, 2000)).toEqual({ cols: 'Use a whole number from 1 to 337.' })
+    expect(validateGrid({ cols: 30, rows: 1025 }, 4096, 4096)).toEqual({ rows: 'Use a whole number from 1 to 1024.' })
+  })
+  test('prefill from the detected lattice; none has no grid', () => {
+    expect(detectedGrid({ grid: { class: 'grid', native: [31, 36] } })).toEqual({ cols: 31, rows: 36 })
+    expect(detectedGrid({ grid: { class: 'none', native: [1, 1] } })).toBeNull()
+  })
+  test('a detected or unset size follows the grid; a chosen size stays', () => {
+    const g = { cols: 40, rows: 30 }
+    expect(sizeForGrid(S, g)).toMatchObject({ w: 40, h: 30, source: 'grid' })
+    expect(sizeForGrid({ ...S, w: null, h: null, source: null }, g)).toMatchObject({ w: 40, h: 30, source: 'grid' })
+    const typedSize = { ...S, w: 64, h: 48, source: 'typed' }
+    expect(sizeForGrid(typedSize, g)).toBe(typedSize)
+  })
+  test('reset to detected: a grid-derived size returns to the detected one, or clears', () => {
+    const fromGrid = sizeForGrid(S, { cols: 40, rows: 30 })
+    expect(sizeAfterReset(fromGrid, S)).toBe(S)
+    expect(sizeAfterReset(fromGrid, null)).toMatchObject({ w: null, h: null, source: null })
+    const preset = { ...S, w: 64, h: 64, source: 'preset' }
+    expect(sizeAfterReset(preset, S)).toBe(preset)
+  })
+  test('the recipe records the override', () => {
+    const report = { recipe: { engine: {}, profile: null, alphaPolicy: 'Binary(128)', options: { manualPeriod: [8, 8] } }, output: { colors: 1 }, warnings: [] }
+    const result = { recommended: 'grid', recommendation: { rule: 'exact', evidence: '' }, candidates: [{ id: 'grid', width: 1, height: 1, hash: null, report }] }
+    const r = recipe({ result, shown: 'grid', size: S, derivation: '', info: { width: 256, height: 256 }, grid: { cols: 32, rows: 32 } })
+    expect(r.grid).toEqual({ cols: 32, rows: 32, source: 'override' })
+    expect(gridOfPeriod(r.options.manualPeriod, 256, 256)).toEqual({ cols: 32, rows: 32 })
+    expect(recipe({ result, shown: 'grid', size: S, derivation: '', info: {} }).grid).toBeNull()
   })
 })

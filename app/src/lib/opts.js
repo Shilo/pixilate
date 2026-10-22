@@ -1,6 +1,6 @@
 // Size logic (GEO-002), engine options and the recipe (spec §8.1, §8.7). Pure; tested in test/opts.test.js.
 import { roundHalfEven } from '$engine/core/canonical.js'
-import { MAX, T, derivedTooBig, derivedNote } from './copy.js'
+import { MAX, T, derivedTooBig, derivedNote, gridError, gridNote } from './copy.js'
 import { exportScales } from './geometry.js'
 import { version } from '../../package.json'
 
@@ -92,14 +92,47 @@ export const showsFit = (size, bw, bh) => deriveH(size.w, bw, bh) !== size.h && 
 
 /** The exact options the app passes to the engine (stages off unless chosen). With the Fit control
  * hidden (the shape matches), fit is always 'contain', so a hidden choice never changes pixels. */
-export function toEngineOpts(size, tools = DEFAULT_TOOLS, fitShown = false) {
-  return {
+export function toEngineOpts(size, tools = DEFAULT_TOOLS, fitShown = false, manualPeriod = null) {
+  const o = {
     targetW: size.w, targetH: size.h, fit: fitShown ? size.fit ?? 'contain' : 'contain',
     trim: tools.trim ? { basis: 'cells' } : false,
     background: tools.background ? 'auto' : false,
     colors: tools.colors ?? 'auto',
   }
+  if (manualPeriod) o.manualPeriod = manualPeriod // only with a grid override (AUTO-008)
+  return o
 }
+
+// ---- Pixel grid override (AUTO-008): columns x rows of the source's pixel blocks ----
+
+/** The detected lattice counts to prefill the override with, or null when no grid was found. */
+export const detectedGrid = (info) => (info?.grid && info.grid.class !== 'none' ? { cols: info.grid.native[0], rows: info.grid.native[1] } : null)
+
+/** Field errors { cols?, rows? }: whole numbers 1..1024 and never more blocks than the image has pixels. */
+export function validateGrid(grid, W, H) {
+  const errors = {}
+  for (const [k, max] of [['cols', Math.min(MAX, W)], ['rows', Math.min(MAX, H)]]) {
+    const v = grid?.[k]
+    if (!Number.isInteger(v) || v < 1 || v > max) errors[k] = gridError(max)
+  }
+  return errors
+}
+
+/** cols x rows -> the engine's manualPeriod [px, py] (source px per block); it locks round(W / px) = cols. */
+export const manualPeriodOf = (grid, W, H) => (grid ? [W / grid.cols, H / grid.rows] : null)
+/** The inverse, for reading a recipe back. */
+export const gridOfPeriod = (period, W, H) => (period ? { cols: Math.max(1, Math.round(W / period[0])), rows: Math.max(1, Math.round(H / period[1])) } : null)
+
+/** Applying an override: a detected (or grid-derived, or unset) output size follows the grid counts; a size
+ * the user chose stays. */
+export function sizeForGrid(size, grid) {
+  const follows = ['detected', 'grid'].includes(size.source) || !isValid(size)
+  if (!grid || !follows || grid.cols > MAX || grid.rows > MAX) return size
+  return { ...size, w: grid.cols, h: grid.rows, source: 'grid', chip: null, note: gridNote(grid.cols, grid.rows), derived: null, auto: false }
+}
+
+/** Reset to detected: drop the override; a grid-derived size returns to the detected one (or is cleared). */
+export const sizeAfterReset = (size, prefilled) => (size.source === 'grid' ? prefilled ?? { ...size, w: null, h: null, source: null, note: null } : size)
 
 /** File-name base: lower-case [a-z0-9-], at most 40 characters. */
 export function baseName(name) {
@@ -110,7 +143,7 @@ export function baseName(name) {
 export const fileName = (base, style, w, h, scale = 1) => `${base}-${style}-${w}x${h}${scale > 1 ? `@${scale}x` : ''}.png`
 
 /** Recipe JSON (no pixels, no file name: NFR-PRIV-005). */
-export function recipe({ result, shown, size, derivation, info }) {
+export function recipe({ result, shown, size, derivation, info, grid = null }) {
   const c = result.candidates.find((x) => x.id === shown), r = c.report
   return {
     schema: 'pixilate-app-recipe/1',
@@ -118,6 +151,7 @@ export function recipe({ result, shown, size, derivation, info }) {
     engine: r.recipe.engine, profile: r.recipe.profile, alphaPolicy: r.recipe.alphaPolicy,
     options: r.recipe.options,
     size: { w: size.w, h: size.h, source: size.source, derivation, note: size.note ?? null },
+    grid: grid ? { cols: grid.cols, rows: grid.rows, source: 'override' } : null, // options.manualPeriod holds the engine form
     style: { chosen: shown, recommended: result.recommended, rule: result.recommendation.rule, evidence: result.recommendation.evidence },
     input: { width: info.width, height: info.height, format: info.format, decode: info.decode },
     output: { width: c.width, height: c.height, colors: r.output.colors, hash: c.hash },

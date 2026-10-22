@@ -67,6 +67,12 @@ export const T = {
   chooseSize: 'Choose a size',
   maybe: 'Maybe',
   alsoFits: 'Also fits',
+  gridLink: 'Grid looks wrong? Set the pixel grid',
+  gridLabel: 'Pixel grid',
+  gridHelp: 'How many pixel blocks the original image has across and down.',
+  gridAcross: 'Across',
+  gridDown: 'Down',
+  gridReset: 'Reset to detected',
   matchSprite: 'Match subject',
   subject: 'Subject',
   presets: 'Common sizes (long side)',
@@ -292,6 +298,8 @@ export const sourceAlt = (w, h) => `Original image, ${srDims(w, h)} pixels`
 export const topDims = (name, w, h) => `${name} · ${dims(w, h)}`
 export const failedStyle = (id, code) => `${styleLabel(id)} couldn't be made: ${errorCopy(code).message}`
 export const metaClaim = (family) => `File metadata claims: ${family} (signature not checked).`
+export const gridError = (max) => `Use a whole number from 1 to ${max}.`
+export const gridNote = (c, r) => `Follows your pixel grid: ${dims(c, r)} blocks.`
 export const subjectNote = (w, h) => `The subject's own pixels: ${dims(w, h)}.`
 export const moreLabel = (k) => `${T.saveOptions}, enlarge ${k} times`
 export const bestIs = (label, why) => `Best is ${label}: ${why}`

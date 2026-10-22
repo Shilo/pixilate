@@ -110,6 +110,8 @@ Checked at HEAD `0ab3384` (engine `0.14.0`, app `eb0f056`).
 - **Time to result for the example** (`npm run build`, then `npm run preview`; click "Try an example" until "Pixel art ready", measured in the page; OBSERVED, desktop, procedural). From a freshly loaded page, so the worker starts cold: 857, 749, 753 and 656 ms (median about 750 ms). With the worker already loaded: 353 ms. The result is 32 × 36, Clean, best match. In Node, `analyze` plus `convertCandidates` for the same image takes about 80–130 ms (see the [prototype test results, Round 5](prototype-v1-test-results.md#timing-round-5)). Caveat: the session could not bring the Browser pane into view, so the pane reported itself hidden, while the page reported `document.visibilityState` `visible` and had just been used. The machine ran no benchmark during the timing, but it was not fully idle: an unrelated local dev server used about one core.
 - **Bundle (gzip).** Vite reports app JS 41.8 KB and CSS 16.2 KB. The worker is 60,452 bytes with `gzip -c` (Vite prints no gzip size for it). All three are within the spec budgets.
 
+- **2026-10-21, pixel grid override (AUTO-008).** The Size section can set the source grid as columns × rows (engine `manualPeriod`, `0.14.1`), with Reset to detected; 92 app unit tests pass, including parity of the override with engine `convertCandidates`/`convert` on a procedural fixture (OBSERVED), and the layout invariants stay clean at 390 × 844, 844 × 390 and 1440 × 900 in light and dark (OBSERVED, emulated viewports).
+
 ## Bundle sizes
 
 OBSERVED from `npm run build` in `app/` (gzip):

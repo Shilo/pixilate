@@ -2,12 +2,12 @@
 // on committed procedural fixtures only. Also: the 1x PNG decodes to the candidate's RGBA, and the xN export
 // decodes to the nearest-neighbour upscale.
 import { describe, expect, test } from 'vitest'
-import { canonicalHash, convertCandidates } from '$engine/core/pipeline.js'
+import { canonicalHash, convert, convertCandidates } from '$engine/core/pipeline.js'
 import { decodeImage, encodePng } from '$engine/decode.js'
 import { committedCases, bboxCrop } from '../../prototype/test/fixtures.js'
 import { degrade, noGrid } from '../../prototype/test/synth.js'
 import { createJobs } from '../src/lib/jobs.js'
-import { DEFAULT_TOOLS, toEngineOpts } from '../src/lib/opts.js'
+import { DEFAULT_TOOLS, manualPeriodOf, toEngineOpts } from '../src/lib/opts.js'
 import { upscale } from '../src/lib/geometry.js'
 
 const cases = committedCases()
@@ -84,3 +84,24 @@ test('decode errors carry the app codes', async () => {
   const broken = new Uint8Array(40); broken.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   expect(await ask(handle, { type: 'open', jobId: 3, bytes: broken.buffer, mime: 'image/png', analyze: true })).toMatchObject({ type: 'error', code: 'decode-damaged' })
 })
+
+test('a grid override gives the engine output for the same manualPeriod', async () => {
+  const c = pick('gpt-image-like', 'proc-blob')
+  const { img, truth } = degrade(c.sprite, c.params, c.seed)
+  const grid = { cols: truth.cellsX, rows: truth.cellsY }, period = manualPeriodOf(grid, img.width, img.height)
+  const opts = toEngineOpts({ w: grid.cols, h: grid.rows }, DEFAULT_TOOLS, false, period)
+  const bytes = encodePng(img).slice(), u8 = new Uint8Array(bytes)
+  const handle = createJobs()
+  handle({ type: 'open', jobId: 1, bytes: bytes.slice().buffer, mime: 'image/png', analyze: false }, () => {})
+  const r = await ask(handle, { type: 'convert', jobId: 2, opts })
+  expect(r.type).toBe('result')
+  const { format, decode, strict, orientation, warnings } = await decodeImage(u8, 'image/png')
+  const meta = { format, decode, strict, orientation, warnings }
+  const direct = convertCandidates(img, { ...opts, ...meta }, u8)
+  expect(r.candidates.map((x) => x.hash)).toEqual(await Promise.all(direct.candidates.map((x) => canonicalHash(x.image))))
+  expect(r.candidates[0].report.recipe.options.manualPeriod).toEqual(period)
+  // the grid candidate is exactly engine convert() on the grid route with the same manualPeriod
+  const g = r.candidates.find((x) => x.id === r.alias.grid)
+  const one = convert(img, { ...opts, ...meta, route: 'grid', cleanup: false }, u8)
+  expect(g.hash).toBe(await canonicalHash(one.image))
+}, 60000)

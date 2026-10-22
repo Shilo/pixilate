@@ -9,6 +9,7 @@
   import Tools from './components/Tools.svelte'
   import Export from './components/Export.svelte'
   import Details from './components/Details.svelte'
+  import GridOverride from './components/GridOverride.svelte'
   import { createClient } from './lib/client.js'
   import { ICONS } from './lib/icons.js'
   import {
@@ -17,7 +18,7 @@
   } from './lib/copy.js'
   import {
     DEFAULT_TOOLS, chips, prefill, needsCase, isValid, showsFit, toEngineOpts, baseName, fileName, recipe, deriveH, deriveW,
-    clampScale, recoverJob, styleIdOf,
+    clampScale, recoverJob, styleIdOf, detectedGrid, manualPeriodOf, sizeForGrid, sizeAfterReset,
   } from './lib/opts.js'
   import { countColours } from './lib/geometry.js'
 
@@ -35,6 +36,8 @@
   let info = $state.raw(null) // analysis reply
   let derivationText = $state('')
   let prefilled = $state.raw(null)
+  let grid = $state.raw(null) // pixel grid override { cols, rows } (AUTO-008), null = detected
+  let gridOpen = $state(false)
   let needs = $state(null)
   let size = $state.raw(blankSize())
   let tools = $state.raw({ ...DEFAULT_TOOLS })
@@ -148,6 +151,8 @@
     prefilled = prefill(m)
     needs = needsCase(m)
     size = prefilled ?? blankSize()
+    grid = null
+    gridOpen = ['weak', 'none', 'ambiguous'].includes(needs) // shown up front only when detection is unsure
     if (prefilled) { announce(derivationText); return run() }
     status = 'needs'
     announce(needsHeading(needs, m))
@@ -184,7 +189,7 @@
     announce(fileError(fileErr.code, fileErr.name))
     if (file) URL.revokeObjectURL(file.url)
     if (!prev) { file = null; info = null; result = null; status = 'empty'; return }
-    ;({ file, info, derivationText, prefilled, needs, size, tools, result, chosen, status } = prev)
+    ;({ file, info, derivationText, prefilled, needs, size, tools, grid, gridOpen, result, chosen, status } = prev)
     prev = null
     lastKey = result?.settings?.key ?? null
     client.restore(file.bytes, file.mime)
@@ -197,7 +202,7 @@
   // ---- jobs ----
   function run() {
     if (!info || !isValid(size)) return
-    const opts = toEngineOpts(size, tools, fitShown), key = JSON.stringify(opts)
+    const opts = toEngineOpts(size, tools, fitShown, manualPeriodOf(grid, info.width, info.height)), key = JSON.stringify(opts)
     if (key === lastKey && (status === 'result' || status === 'converting')) return
     if (key === result?.settings?.key && status !== 'failed') {
       // back to the settings of the shown result (a tool switched on and off): cancel, never re-convert
@@ -207,7 +212,7 @@
       return
     }
     lastKey = key
-    pending = { size, tools, key }
+    pending = { size, tools, grid, key }
     error = null
     status = 'converting'
     startBusy()
@@ -229,6 +234,7 @@
     if (result) {
       size = result.settings.size
       tools = result.settings.tools
+      grid = result.settings.grid
       lastKey = result.settings.key
       status = 'result'
       stoppedFlash = true
@@ -249,6 +255,15 @@
     run()
     if (fromChip && !side && openSection === 'size') toggleSection('size')
   }
+  // Grid override: a detected output size follows the grid counts; Reset to detected undoes both.
+  function setGrid(g) {
+    grid = g
+    size = g ? sizeForGrid(size, g) : sizeAfterReset(size, prefilled)
+    if (isValid(size)) return run()
+    lastKey = null
+    needs = needsCase(info)
+    status = 'needs'
+  }
   function setTools(t) {
     bgKept = false
     // the automatic subject size goes back to the detected size when Crop to subject is turned off
@@ -262,10 +277,11 @@
     if (!f) return
     let bytes
     try { bytes = await f.arrayBuffer() } catch { fileErr = { code: 'decode-damaged', name }; return }
-    if (file && !prev) prev = { file, info, derivationText, prefilled, needs, size, tools, result, chosen, status }
+    if (file && !prev) prev = { file, info, derivationText, prefilled, needs, size, tools, grid, gridOpen, result, chosen, status }
     else if (file) URL.revokeObjectURL(file.url)
     file = { name, base: baseName(name), bytes, mime: f.type || '', url: URL.createObjectURL(f) }
     info = null; result = null; chosen = null; error = null; fileErr = null; bgKept = false; size = blankSize(); tools = { ...DEFAULT_TOOLS }
+    grid = null; gridOpen = false
     lastKey = null; zoom = null; fitz = 1; mode = 'after'; showGrid = false; openSection = null; shareReady = null
     stopBusy()
     status = 'analysing'
@@ -324,7 +340,7 @@
     }) // cancelling is silent
   }
   function saveRecipe() {
-    const j = recipe({ result, shown, size: result.settings.size, derivation: derivationText, info })
+    const j = recipe({ result, shown, size: result.settings.size, derivation: derivationText, info, grid: result.settings.grid })
     download(new Blob([JSON.stringify(j, null, 2)], { type: 'application/json' }), `${file.base}-recipe.json`)
     say(savedToast(`${file.base}-recipe.json`))
   }
@@ -431,7 +447,7 @@
     <Stage
       candidate={cand}
       source={{ url: file.url, width: info?.width ?? 0, height: info?.height ?? 0 }}
-      {report} {gridReport} mode={viewMode} {showGrid} {zoom} bind:fitz bind:dpr
+      {report} {gridReport} mode={viewMode} showGrid={showGrid || (viewMode === 'before' && !!result?.settings?.grid)} {zoom} bind:fitz bind:dpr
       dim={status === 'failed'} faded={status === 'analysing'}
       label={cand ? artLabel(cand.width, cand.height, colours, shownStyle, z) : ''}
       onpeek={(v) => (peek = v)} onzoom={zoomBy} onfit={() => (zoom = null)} onstyle={styleN}
@@ -503,6 +519,8 @@
         heading={status === 'needs' ? needsHeading(needs, info) : null}
         derivation={derivationText} {fitShown} {match} onchange={setSize}
       />
+      <GridOverride {grid} detected={detectedGrid(info)} W={info.width} H={info.height} open={gridOpen}
+        ontoggle={() => { gridOpen = true; tick().then(() => document.getElementById('grid-cols')?.focus()) }} onchange={setGrid} />
     {:else}
       <div class="glass-skeleton" aria-busy="true" aria-label={T.analysing}>
         <div class="glass-skeleton__line glass-skeleton__line--title sk-45"></div>

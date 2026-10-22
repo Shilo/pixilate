@@ -6,6 +6,8 @@ The first designed app for Pixilate (owner decision OWN-007): one screen that tu
 
 Svelte 5 + Vite (not SvelteKit), JavaScript, styled with GlassKit.
 
+**Pixel grid override (PRD AUTO-008).** Inside Size, a quiet link "Grid looks wrong? Set the pixel grid" reveals columns × rows of the original's pixel blocks, prefilled with the detected lattice (empty when none was found) and shown open from the start only when detection is faint, absent or ambiguous. It maps to the engine's `manualPeriod = [width / columns, height / rows]` (the engine locks `round(width / period)` blocks, so the counts come back exactly), is recorded in the recipe as `grid` next to `options.manualPeriod`, and draws its cut lines in Before. A detected output size follows the grid counts; a size the user chose stays. "Reset to detected" removes the override.
+
 ## Commands
 
 Install the prototype first: the engine's codecs (`fast-png`, `jpeg-js`) resolve from `prototype/node_modules`.
@@ -27,7 +29,7 @@ Save and Share hand over the engine's exact PNG. Copy goes through the system cl
 ## Layout
 
 - `src/App.svelte`: state machine (empty, analysing, needs size, converting, result, failed), shortcuts, layout shell.
-- `src/components/`: Stage, ViewBar, StylePicker, SizePicker, Tools, Export, Details, Dialog.
+- `src/components/`: Stage, ViewBar, StylePicker, SizePicker, GridOverride, Tools, Export, Details, Dialog.
 - `src/lib/`: `copy.js` (every UI string), `opts.js` (size logic, engine options, recipe), `geometry.js` (Before mapping, zoom, export scales), `jobs.js` (worker handler), `client.js` (job control), `icons.js`.
 - `public/example.png`: a procedural sprite degraded by the seeded generator in `prototype/test` (no third-party pixels), noisy enough that the clean-up is visible.
 
