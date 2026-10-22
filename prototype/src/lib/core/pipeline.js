@@ -16,7 +16,7 @@ import { indexImage, q4 } from './orphans.js'
 export { PixilateError, canonicalHash } from './canonical.js'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.0', constants: 33 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.1', constants: 33 }
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage
@@ -114,35 +114,42 @@ function analysis(img0, o, bytes) {
   }
   lap('background')
   let grid, ramp = null // ramp: the d2 fallback's rampShare, kept for recommend(); null when not computed
+  let solveD2 // the second-difference lattice for the smooth-upscale fallback, detected or (manual period) locked
   if (o.manualPeriod) {
-    const [px, py] = o.manualPeriod
-    grid = lockGrid(img, Math.max(1, Math.round(W / px)), Math.max(1, Math.round(H / py)), { mask, preset: gen.preset, edges })
-    grid.evidence.unshift(`manual period ${px} x ${py}`)
-    if (grid.class === 'none') grid.class = 'weak' // the user vouches for the grid
+    // D65: only the period is imposed; the profile choice (d1 vs d2), phase and cell deconvolution stay the engine's
+    const [px, py] = o.manualPeriod, nx = Math.max(1, Math.round(W / px)), ny = Math.max(1, Math.round(H / py))
+    grid = lockGrid(img, nx, ny, { mask, preset: gen.preset, edges })
+    solveD2 = () => lockGrid(img, nx, ny, { mask, preset: gen.preset, profile: 'd2', edges })
   } else {
     // with Trim the target sizes the trimmed basis, so it is no prior for the full canvas, and the canvas
     // count is not refined over its margins (D52)
     const dopts = { targetW: o.trim ? undefined : o.targetW ?? undefined, targetH: o.trim ? undefined : o.targetH ?? undefined, mask, preset: gen.preset, noRefine: o.trim, edges }
     grid = detectGrid(img, dopts)
-    // Smooth-upscale fallback: no pure grid, but many pixels sit on straight ramps (a bilinear/bicubic
-    // upscale of pixel art) -> re-detect on second differences; adopt only a coherent pure grid. A
-    // first-difference lattice (weak or grid) is replaced only by a more coherent one, or by one with
-    // >= 4x the cells at >= 0.9x its coherence (a smooth upscale's d1 profile often locks onto a multiple).
-    // Ramp share (OBSERVED, procedural + local-only samples): natives 0-0.03, gridded AI 0.03-0.06,
-    // smooth upscales 0.25-0.89; noisy smooth upscales fall to ~0.06 and pass on rampShareNoisy (D57).
-    if (grid.class === 'none' || grid.class === 'weak' || grid.class === 'grid' || (grid.class === 'exact' && grid.confidence < 1)) {
-      ramp = rampShare(img)
-      const noisy = ramp >= 0.15 ? null : rampShareNoisy(img) // D57: noise-tolerant ramp share, only when the exact one fails
-      if (ramp >= 0.15 || noisy >= RAMP_NOISY) {
-        const g2 = detectGrid(img, { ...dopts, profile: 'd2' }), c2 = minCoherence(g2), lattice = grid.class === 'weak' || grid.class === 'grid'
-        const c1 = lattice ? minCoherence(grid) : 0
-        const finer = lattice && g2.x.count * g2.y.count >= 4 * grid.x.count * grid.y.count && c2 >= 0.9 * c1
-        if (g2.class === 'grid' && c2 >= 0.3 && (!lattice || c2 >= c1 + 0.05 || finer)) {
-          g2.evidence.unshift(`smooth-upscale fallback: second-difference lattice ${g2.x.count}x${g2.y.count} (${noisy === null ? `ramp share ${r3(ramp)} >= 0.15` : `noisy ramp share ${r3(noisy)} >= ${RAMP_NOISY}`}, min coherence ${r3(c2)} >= 0.3) replaces ${grid.class}${lattice ? ` ${grid.x.count}x${grid.y.count} (min coherence ${r3(c1)}${finer && c2 < c1 + 0.05 ? ', >= 4x the cells at >= 0.9x its coherence' : ''})` : ''}`)
-          grid = g2
-        }
+    solveD2 = () => detectGrid(img, { ...dopts, profile: 'd2' })
+  }
+  // Smooth-upscale fallback: no pure grid, but many pixels sit on straight ramps (a bilinear/bicubic
+  // upscale of pixel art) -> re-detect on second differences; adopt only a coherent pure grid. A
+  // first-difference lattice (weak or grid) is replaced only by a more coherent one, or by one with
+  // >= 4x the cells at >= 0.9x its coherence (a smooth upscale's d1 profile often locks onto a multiple).
+  // Ramp share (OBSERVED, procedural + local-only samples): natives 0-0.03, gridded AI 0.03-0.06,
+  // smooth upscales 0.25-0.89; noisy smooth upscales fall to ~0.06 and pass on rampShareNoisy (D57).
+  if (grid.class === 'none' || grid.class === 'weak' || grid.class === 'grid' || (grid.class === 'exact' && grid.confidence < 1)) {
+    ramp = rampShare(img)
+    const noisy = ramp >= 0.15 ? null : rampShareNoisy(img) // D57: noise-tolerant ramp share, only when the exact one fails
+    if (ramp >= 0.15 || noisy >= RAMP_NOISY) {
+      const g2 = solveD2(), c2 = minCoherence(g2), lattice = grid.class === 'weak' || grid.class === 'grid'
+      const c1 = lattice ? minCoherence(grid) : 0
+      const finer = lattice && g2.x.count * g2.y.count >= 4 * grid.x.count * grid.y.count && c2 >= 0.9 * c1
+      // a manual period vouches for the lattice, so its d2 lock need not classify as 'grid' (D65)
+      if ((g2.class === 'grid' || o.manualPeriod) && c2 >= 0.3 && (!lattice || c2 >= c1 + 0.05 || finer)) {
+        g2.evidence.unshift(`smooth-upscale fallback: second-difference lattice ${g2.x.count}x${g2.y.count} (${noisy === null ? `ramp share ${r3(ramp)} >= 0.15` : `noisy ramp share ${r3(noisy)} >= ${RAMP_NOISY}`}, min coherence ${r3(c2)} >= 0.3) replaces ${grid.class}${lattice ? ` ${grid.x.count}x${grid.y.count} (min coherence ${r3(c1)}${finer && c2 < c1 + 0.05 ? ', >= 4x the cells at >= 0.9x its coherence' : ''})` : ''}`)
+        grid = g2
       }
     }
+  }
+  if (o.manualPeriod) {
+    grid.evidence.unshift(`manual period ${o.manualPeriod[0]} x ${o.manualPeriod[1]}`)
+    if (grid.class === 'none') grid.class = 'weak' // the user vouches for the grid
   }
   lap('grid')
   return { img, gen, wm, bg, mask, grid, ramp, timingsMs, edges, memo: new Map() }

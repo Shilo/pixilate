@@ -589,6 +589,15 @@ describe('convert: smooth-upscale fallback (second-difference lattice)', () => {
     }
   })
 
+  it('a manual period keeps the smooth-upscale path: bilinear x8 with [8, 8] is no worse than auto (D65)', () => {
+    for (const s of proceduralSprites(1).filter((s) => ['proc-tile', 'proc-1bit', 'proc-ui'].includes(s.id))) {
+      const { img, truth } = degrade(s.img, 'bilinear-x8', 1), o = { ...CANVAS_OPTS, targetW: truth.cellsX, targetH: truth.cellsY }
+      const auto = convert(img, o), man = convert(img, { ...o, manualPeriod: [8, 8] })
+      expect(man.report.grid.evidence.slice(0, 2).join(' | '), s.id).toMatch(/^manual period 8 x 8 \| smooth-upscale fallback: second-difference lattice /)
+      expect(within12(man.image, truth.sprite), s.id).toBeGreaterThanOrEqual(within12(auto.image, truth.sprite))
+    }
+  })
+
   it('rampShareNoisy separates a noisy smooth upscale (>= 0.45) from gridded GPT-like input (< 0.45) (D57)', () => {
     for (const s of proceduralSprites(1)) for (const seed of [1, 2]) {
       const smooth = degrade(s.img, 'smooth-noisy-bilinear', seed).img
