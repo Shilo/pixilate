@@ -24,6 +24,7 @@ VERIFIED: direct dependencies are exact pins; lockfiles are committed; both pack
 - JavaScript procedural fixtures, existing tests and benchmark scripts stay in place. Their engine imports and source-inspection paths now resolve TypeScript; committed quality gates use mandatory static engine imports, so a missing source module cannot silently skip the suite.
 - Peer review found the comparison tool's `--engine` path still assumed JavaScript. The small entry resolver now accepts current TypeScript archives and historical JavaScript archives. Two subprocess tests load both from paths containing spaces.
 - Peer review required the one-shot export-worker response and request to be typed, alongside the long-lived conversion worker. Browser checks now exercise the actual fresh export worker at 2× as well as the cached 1× PNG.
+- A clean Windows integration checkout exposed an existing CSP defect: raw CRLF script hashes disagreed with browser-normalized script text. Only hash input now normalizes CRLF/lone CR to LF; HTML and policy restrictions stay intact. Parameterized LF/CRLF/CR tests invoke the actual production plugin, with the CRLF/CR cases reproduced failing before the fix. The production browser suite passes from the CRLF checkout after the fix.
 - The parent and both project peers challenged preserving browser support, CSS and markup, exact engine outputs, test execution and migration scope. GlassKit upgrades and UI changes were rejected for this task. No new runtime library, state manager, router or server was added.
 
 ## Verification
@@ -34,7 +35,7 @@ All commands used Node.js 24.22.1 and npm 11.19.1.
 |---|---|
 | Baseline engine tests | 324 passed, 2 expected failures, 24 optional local-only skips |
 | Migrated engine tests | 326 passed, 2 expected failures, 24 optional local-only skips; the two additional tests cover archive entry resolution |
-| App tests | 93 passed before and after; includes engine/worker PNG parity |
+| App tests | 93 existing tests passed before and after; integration adds three CSP line-ending regressions, for 96 passed; includes engine/worker PNG parity |
 | Both `npm run check` commands | Zero errors and zero warnings; app also checks browser-test/config TypeScript |
 | Both production builds | Passed |
 | Production browser suite | Four passed: conversion/export and rejected-upload recovery at desktop and phone viewports |

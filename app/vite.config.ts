@@ -13,8 +13,9 @@ const csp: Plugin = {
   transformIndexHtml: {
     order: 'post',
     handler(html: string) {
+      // HTML parsing normalizes CRLF and lone CR before CSP checks inline script text.
       const hashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
-        .map((m) => `'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`)
+        .map((m) => `'sha256-${createHash('sha256').update(m[1].replace(/\r\n?/g, '\n')).digest('base64')}'`)
       const policy = [
         "default-src 'self'",
         `script-src 'self' ${hashes.join(' ')}`,
