@@ -116,6 +116,8 @@ App build: cd app && npm run build
 
 [docs/research-spikes/evaluation/benchmark-methodology.md](docs/research-spikes/evaluation/benchmark-methodology.md): rules for any quality claim.
 
+[docs/github-repository.md](docs/github-repository.md): owner-chosen GitHub description and topics, with the command to apply them.
+
 ## Commits
 
 Use Conventional Commits: type(optional scope): description, for example feat(prototype): add trim.
