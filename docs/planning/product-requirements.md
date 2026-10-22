@@ -1053,7 +1053,7 @@ These entries are the documented product decisions that §21 requires before a d
 
 ### OWN-008 — MIT licence and public repository (2026-10-21)
 
-- **Decision:** Pixilate is open source under the MIT License (root `LICENSE`, Copyright (c) 2026 Shilo). The repository is public at <https://github.com/Shilo/pixelate>, and every push to `main` publishes `app/` to GitHub Pages at <https://shilo.github.io/pixelate/>.
+- **Decision:** Pixilate is open source under the MIT License (root `LICENSE`, Copyright (c) 2026 Shilo). The repository is public at <https://github.com/Shilo/pixilate>, and every push to `main` publishes `app/` to GitHub Pages at <https://shilo.github.io/pixilate/>.
 - **Rationale:** owner direction to publish the project as open source under the licence these documents intended from the start.
 - **Supersedes:** the "intended", "not yet declared" and "no `LICENSE` file" statements in this document, the master plan and the session findings, which stay as dated history.
 - **Remaining verification obligations:** `NFR-LIC-001`–`007` for each distributed artifact, including the shipped third-party notices; a public URL is not a release, and it passes no gate.

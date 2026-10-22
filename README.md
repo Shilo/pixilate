@@ -2,7 +2,7 @@
 
 Every pixel is a true pixel. Turn AI-generated or handmade images into real pixel art at the exact size you choose, with a clean palette and no generative AI needed.
 
-**Try it:** <https://shilo.github.io/pixelate/>
+**Try it:** <https://shilo.github.io/pixilate/>
 
 AI "pixel art" is usually a large image with drifting, blurred, noisy blocks (mixels) at the wrong size. Pixilate recovers the hidden pixel grid when there is one and falls back to a raster reduction when there is not. It outputs a PNG at exactly the width and height you ask for. Conversion is deterministic: the same image and settings give identical pixels. It runs entirely in your browser, and no image leaves your device. Background removal and cropping to the subject are optional and off by default.
 
