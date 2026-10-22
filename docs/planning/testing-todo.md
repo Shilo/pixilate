@@ -141,7 +141,7 @@ PixelLab outputs true pixel art at a chosen size, so it can serve as known-good 
 
 ## 8. Algorithm work
 
-Each item is linked to the open questions in the [design](prototype-algorithm-design.md#open-questions-and-next-experiments) and the [session findings](session-findings-2026-10-20.md#round-5-2026-10-21). For every behaviour change, add a Deviations row with evidence.
+Each item is linked to the open questions in the [design](prototype-algorithm-design.md#open-questions-and-next-experiments) and the [session findings](session-findings-2026-10-21.md#ranked-next-steps). For every behaviour change, add a Deviations row with evidence.
 
 - [x] [Agent] `scripts/score.mjs <output.png> [--target WxH] [--colors N] [--json]` (2026-10-20). It prints the hard checks (size, binary alpha, mixels via Q13, palette cap) and the intrinsic metrics from `test/metrics.js` (colours, near-duplicates, orphans by class, L-corner doubles, islands, pinholes). Thresholds are the provisional defaults. The noise-orphan flag fires on most real native outputs, so calibrate it against the live rubric scores. Not done: source-referenced faithfulness and showing the numbers in the UI.
 - [x] [Agent] `scripts/live-batch.mjs` (2026-10-20). It covers §3 in one command, including the determinism check (3 local samples × 2 modes × 5 sizes in about 26 s).
@@ -159,7 +159,8 @@ Each item is linked to the open questions in the [design](prototype-algorithm-de
 - [ ] [Agent] **Bilinear ×3 scale floor.** The fallback regresses at ×3 (`local-portrait` within-12 94.4 → 85.5 %). Find the floor (by period or ramp share) below which the fallback must not fire.
 - [ ] [Agent] **Wrong first-difference lattice on `proc-ui` ×4.** It blocks the fallback (the D39 replacement rule does not trigger).
 - [ ] [Agent] **Seamless veto on gradient art.** Check whether the D8 step-ratio veto rejects smoothly upscaled gradient-shaded pixel art before the fallback can help.
-- [ ] [Agent] **Second-difference profile for `manualPeriod`.** A user-given period currently always locks on first differences.
+- [x] [Agent] **Second-difference profile for `manualPeriod`** (2026-10-21; D65). A user-given period now keeps the smooth-upscale path: bilinear ×8 at the true period 0.436 → 0.952, clean bicubic 0.771 → 0.930. A user-set grid is also trusted by the recommendation (D66).
+- [x] [Agent] **Retro Diffusion pixel art fixer** (2026-10-21). Research refreshed, the clean-room reference made faithful to its writeup (`_kT` 0.838 → 0.888; manual size 0.909; ours 0.978), its cell-colour rule tested on our engine and rejected (net losses, 2.5–4× slower), and its manual columns × rows idea shipped as the app's pixel-grid override (typing the true W×H fixes only 52 % of detection misses).
 - [x] [Agent] **Soft-alpha stratum** (2026-10-20; D50, D51): synthetic soft-alpha presets, the Trim cell basis, and a gradient-background surface (D49). Still open: real soft model alpha from a live batch.
 - [x] [Agent] **Count-constrained `lockGrid` DP and chance-corrected edge support** (2026-10-20; D52, Real-PixelArt ideas, MIT, clean-room). Native size-exact 0.739 → 0.782, false grids on no-grid seeds 1–10 5 → 1 of 40.
 - [ ] [Agent] **Other detection misses:** the noisy `bicubic-x8` preset (the fallback does not fire on it; the clean bicubic preset is now recovered) still falls to the raster route. The non-integer 1-bit case and the fractional nearest-neighbour upscale of the local building sprite are found since D52.
@@ -182,19 +183,20 @@ Each item is linked to the open questions in the [design](prototype-algorithm-de
 
 - [ ] [Human] Allow agents to download public, licensed sample images for the corpus: see the [sourcing plan](../research-spikes/evaluation/ai-artifact-characterization.md#4-real-sample-sourcing-plan-do-not-download-until-approved).
 - [ ] [Human] Decide the ambiguous-grid policy (`OD-004`).
-- [ ] [Human] Declare the licence (intended MIT).
+- [x] [Human] Declare the licence: MIT (2026-10-21, `OWN-008`).
 - [ ] [Human] Decide whether Trim `{ basis: 'cells' }` becomes the grid-route default (D50; PRD §9.2 fixes τ = 0).
 - [ ] [Human] Decide whether semi-transparent glow and shadow layers become an opaque ring or drop under `Binary(128)` (D51; `OWN-005`).
 
-## MVP app: what the owner should test
+## App: what the owner should test
 
-The app's measured state and known gaps are in the [MVP app test results](../reviews/mvp-app-test-results.md). Live images and notes stay in `.local/` under opaque IDs, as above.
+The app is live at <https://shilo.github.io/pixilate/>. Its measured state and known gaps are in the [app test results](../reviews/mvp-app-test-results.md). Live images and notes stay in `.local/` under opaque IDs, as above.
 
-- [ ] [Human] **Run it.** Run `cd prototype && npm install`, then `cd app && npm install && npm run dev`. On a phone, open it over HTTPS or on `localhost` (for example through a USB port forward). A plain-HTTP LAN address converts but cannot show the hash.
+- [ ] [Human] **Run it.** Open the live app, or run `cd prototype && npm install`, then `cd app && npm install && npm run dev`. On a phone, open it over HTTPS or on `localhost` (for example through a USB port forward). A plain-HTTP LAN address converts but cannot show the hash.
 - [ ] [Human] **Real phones and tablets,** in portrait and landscape. Check that Save stays reachable, the keyboard does not cover the size fields, and Share works.
 - [ ] [Human] **Your own AI images** from GPT Image, Gemini, Grok and PixelLab. Note when Best is not the style you would pick.
 - [ ] [Human] **The casual flow.** Drop an image, then Save, with no other step. Check whether the detected size is right.
 - [ ] [Human] **Crop to subject** on transparent sprites. Check that the crop is tight and nothing is cut.
+- [ ] [Human] **Pixel grid override.** On an image where the detected size is wrong, use "Grid looks wrong? Set the pixel grid" under Size, then "Reset to detected".
 - [ ] [Human] **Small targets** (16–32 px). These are a known engine limit; record the failure modes.
 - [ ] [Human] **Dark and light** system themes.
 - [ ] [Human] **Screen-reader spot checks** (VoiceOver on iPhone, TalkBack or NVDA). Open an image, change the style and Save.

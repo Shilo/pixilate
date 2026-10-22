@@ -4,7 +4,7 @@
 **Document type:** research-backed product requirements / design contract  
 **Status:** planning baseline; no implementation is authorized by this document  
 **Date:** 2026-07-31  
-**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; 2026-10-20 — `OWN-007` (first designed MVP app); 2026-10-21 — `OWN-008` (MIT licence, public repository); earlier text is retained with dated supersession notes  
+**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; 2026-10-20 — `OWN-007` (first designed MVP app); 2026-10-21 — `OWN-008` (MIT licence, public repository), `OWN-009` (release focus); earlier text is retained with dated supersession notes  
 **License intent:** open source under MIT, subject to dependency and patent review  
 
 ## 1. Executive product contract
@@ -1057,3 +1057,10 @@ These entries are the documented product decisions that §21 requires before a d
 - **Rationale:** owner direction to publish the project as open source under the licence these documents intended from the start.
 - **Supersedes:** the "intended", "not yet declared" and "no `LICENSE` file" statements in this document, the master plan and the session findings, which stay as dated history.
 - **Remaining verification obligations:** `NFR-LIC-001`–`007` for each distributed artifact, including the shipped third-party notices; a public URL is not a release, and it passes no gate.
+
+### OWN-009 — Release focus (2026-10-21)
+
+- **Decision:** the app in `app/` is the product and work now prepares it for release; it is no longer treated as an MVP. `prototype/` stays the engine, its test harness and the place for algorithm work.
+- **Rationale:** owner direction after the app went live on GitHub Pages under `OWN-008`.
+- **Supersedes:** the "first designed MVP" framing of `OWN-007`, whose scope, design rules and verification obligations otherwise stand. Earlier documents that say "MVP" stay as dated history.
+- **Remaining verification obligations:** the `OWN-007` and `OWN-008` obligations, real-device and screen-reader testing, and the `DET-*` matrix before any strict-determinism claim. Being live is not a release gate.

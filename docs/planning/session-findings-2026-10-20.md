@@ -1,5 +1,7 @@
 # Session Findings — 2026-10-20
 
+> **Resume point moved (2026-10-21).** For the current state and ranked next steps, read the [2026-10-21 session findings](session-findings-2026-10-21.md). This page stays as the round-by-round history.
+
 ## Purpose and scope
 
 This document records the state reached in the 2026-10-20 session, so work can resume without re-reading the history. It continues the [2026-10-19 session findings](session-findings-2026-10-19.md), whose owner decisions and background still apply. It is a dated summary and resume point. Where it states a number, the canonical source governs: the [prototype design](prototype-algorithm-design.md#deviations) rows D37–D64 and the [test results](../reviews/prototype-v1-test-results.md) sections [Round 5](../reviews/prototype-v1-test-results.md#round-5-2026-10-21), [Round 3](../reviews/prototype-v1-test-results.md#round-3-2026-10-20) and [2026-10-20 round](../reviews/prototype-v1-test-results.md#2026-10-20-round). The [Round 5 update](#round-5-2026-10-21) is the current state; the [MVP app update](#mvp-app-2026-10-21) and the [Round 3 update](#round-3-update-2026-10-20) below it, and the later sections, are history. Evidence labels follow the [research index](../research-spikes/README.md#how-to-read-the-evidence). Numbers that include local samples are OBSERVED, local-only, not rights-cleared, and all of them are in-sample.
@@ -22,7 +24,7 @@ Product and company names may be trademarks of their respective owners; Pixilate
 1. **The M gap is structural: palette discovery** (`OD-005`, `OD-007`, `EX-009`). Lattice, cell colour and merge threshold are ruled out; the Potts result (M 0.879) shows spatial label coherence helps but must not grow palettes. Bench the diagonal-Potts-only lead at τ_merge 0.045 first, under the ratchet and +20 % palette rule, on the held-out split.
 2. **Eyes at 32 px** (`EX-011`): they read as a dark dash and lose the iris colour; the two `it.fails` straddling-eye fixtures stay open.
 3. **Missed `d2` adoptions** (D61 (2)): exempt well-supported `d2` lattices from the seamless veto (`sparks`, `blade` `bilinear-x8.37`) after no-grid and painted-control checks, and the `mc-face64` octave lock.
-4. **Real-device testing** (owner; [testing to-do](testing-todo.md#mvp-app-what-the-owner-should-test)): phones and tablets, screen readers, and the owner's own AI images.
+4. **Real-device testing** (owner; [testing to-do](testing-todo.md#app-what-the-owner-should-test)): phones and tablets, screen readers, and the owner's own AI images.
 5. **Owner decisions:** whether the D62 reduction steps belong in the default output (taken by the orchestrator, flagged for review), the Trim basis default (D50), glow and shadow under `Binary(128)` (D51), the licence, and pushing.
 
 ## MVP app (2026-10-21)
@@ -47,7 +49,7 @@ Nothing is pushed, and there is still no `LICENSE` file. The [Round 3 update](#r
    - Smooth noisy upscales.
    - A rule for when Clean applies to reductions.
    - Clean deleting 1-px eyes (`EX-011`; the two open `it.fails` cases).
-2. **Real-device testing** (owner; [testing to-do](testing-todo.md#mvp-app-what-the-owner-should-test)): phones and tablets, the owner's own AI images, and screen-reader spot checks.
+2. **Real-device testing** (owner; [testing to-do](testing-todo.md#app-what-the-owner-should-test)): phones and tablets, the owner's own AI images, and screen-reader spot checks.
 3. **Owner decisions.**
    - Carried over: the Trim basis default (D50), glow and shadow under `Binary(128)` (D51), the ambiguous-grid policy (`OD-004`), the licence, and pushing.
    - New: whether recipe import (FR-013) is needed next.

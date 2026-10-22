@@ -1,50 +1,42 @@
 # Pixilate
 
-Public description (GitHub, README, app meta and start screen): "Every pixel is a true pixel. Turn AI-generated or handmade images into real pixel art at the exact size you choose, with a clean palette and no generative AI needed." Repository: https://github.com/Shilo/pixilate; live app: https://shilo.github.io/pixilate/.
+Pixilate is a free, open-source (MIT) web app that turns AI-generated (GPT Image, Gemini, Grok, PixelLab and others), raster or handmade images into true pixel art at the exact width and height the user chooses, without generative AI. Public description: "Every pixel is a true pixel. Turn AI-generated or handmade images into real pixel art at the exact size you choose, with a clean palette and no generative AI needed." Live app: https://shilo.github.io/pixilate/ (every push to main tests, builds and publishes it). Repository: https://github.com/Shilo/pixilate.
 
-Pixilate is a local-first web app that converts AI-generated (GPT Image, Gemini, Grok and others), raster or hand-made artwork into true pixel art without generative AI. AI "pixel art" is usually an HD image with fake, drifting, anti-aliased, noisy blocks (mixels) at the wrong size; Pixilate must output crisp pixel art at the exact width and height the user asks for, with a clean palette and no orphans, jaggies, muddy shading or broken silhouettes. Conversion must be deterministic (same input and settings give identical pixels) and fully client-side in JavaScript (Vite + Svelte, not SvelteKit). The core idea is to recover the hidden source grid when one exists, fall back to a raster abstraction when it does not, and offer a few named interpretations (grid, clean, smooth) with one recommended, while trimming, background removal, palette and cleanup stay explicit, composable and off unless chosen. prototype/ is the owner-approved exploratory build of the algorithm and its plain test harness (OWN-002); it stays the place for algorithm work and testing. app/ is the owner-approved first designed MVP (OWN-007): a Vite + Svelte app (not SvelteKit) on the prototype engine, themed with GlassKit (required), and designed in Apple's spirit: easy, intuitive and minimal for casual users, on desktop and mobile at every resolution and orientation. The project is open source under the [MIT License](LICENSE) (OWN-008).
+AI "pixel art" is usually a large image with fake, drifting, blurred and noisy blocks (mixels) at the wrong size. Pixilate recovers the hidden source grid when one exists (exact factorization, spectral and second-difference detection, deconvolution of smooth upscales) and falls back to a raster reduction when there is none. It offers three named styles, Faithful, Clean and Smooth, recommends one with a plain-language reason, and exports a PNG at exactly the requested size. Output must be crisp: a clean palette, binary alpha, and no orphans, jaggies, mixels, muddy shading or broken silhouettes. Conversion is deterministic (same image and settings give identical pixels) and runs fully client-side in JavaScript; no image leaves the device. Background removal, crop to subject, the colour count and the pixel-grid override are explicit and off unless chosen. There is no recolouring feature: colour options exist only where they improve the converted output.
+
+The product is the app in app/: Vite + Svelte 5 (not SvelteKit), JavaScript, styled with GlassKit (required), designed in Apple's spirit, easy, intuitive and minimal for casual users, on desktop and mobile at every resolution and orientation. It imports the engine in place from prototype/, so its PNGs are byte-identical to the engine's. prototype/ holds the engine, a plain test harness, the tests and the benchmarks, and is where algorithm work happens.
 
 ## Rules
 
-Keep public work in docs/, prototype/ and app/; anything beyond them needs explicit owner approval ([master plan §15–16](docs/planning/master-plan.md), [PRD §25](docs/planning/product-requirements.md#25-owner-decision-log)).
+Follow KISS and YAGNI: no architecture, dependency, feature or abstraction without a documented requirement.
 
-Follow YAGNI: no architecture, dependencies, features or abstractions without a documented requirement.
+Keep work in app/, prototype/ and docs/; anything else needs owner approval (docs/planning/product-requirements.md §25).
 
-Read [docs/research-spikes/README.md](docs/research-spikes/README.md), then [SYNTHESIS.md](docs/research-spikes/SYNTHESIS.md), before adding research; open detailed spikes only when needed.
+Keep the engine deterministic: no Math.random, no transcendental Math (use color.js), no module-level state.
 
-Label evidence VERIFIED, CODE-DERIVED, OBSERVED, INFERRED or UNKNOWN ([definitions](docs/research-spikes/README.md#how-to-read-the-evidence)); numbers from gitignored local samples are "OBSERVED, local-only, not rights-cleared".
+Record every engine behaviour change as a Deviations row with measured evidence; rewrite baselines only with the baseline script, in a commit of their own.
 
-Keep research claims dated, traceable to public sources, and separate observations, inferences and proposals.
+Accept an engine change only if the committed and showcase ratchets hold, no case gets worse under the per-case loss rule, and the gain survives held-out seeds.
 
-Treat every tracked file as public: no credentials, personal data, private paths, user images or prompts, proprietary internals, copied unlicensed code, circumvention instructions or unsupported allegations.
+Run parallel benchmark jobs with at most 8 processes, at low priority.
 
-Use only authorized access, public documentation, licensed sources and rights-cleared test assets; respect licences, terms, privacy, attribution, trademarks and IP.
+Label evidence VERIFIED, CODE-DERIVED, OBSERVED, INFERRED or UNKNOWN; numbers from local samples are "OBSERVED, local-only, not rights-cleared".
 
-Keep comparisons factual, neutral, dated and reproducible.
+Keep research claims dated and traceable to public sources, and comparisons factual, neutral and reproducible; read docs/research-spikes/README.md and SYNTHESIS.md before adding research.
 
-.local/ is gitignored machine-local material (private samples by opaque ID, notes, bench output); never copy it into tracked files or use it for unlawfully obtained material.
+Treat every tracked file as public: no credentials, personal data, private paths, user images or prompts, copied unlicensed code or unsupported allegations.
+
+.local/ is gitignored machine-local material (private samples by opaque ID, notes, bench output); never copy it into tracked files.
+
+Follow the Conventional Commits standard, for example feat(app): add share sheet.
 
 ## Commands
 
-Install: cd prototype && npm install
+Install: cd prototype && npm install, then cd app && npm install
 
-All tests: cd prototype && npm test
+Engine tests: cd prototype && npm test
 
-One file or test: cd prototype && npx vitest run test/grid.test.js -t "test name"
-
-Dev server: cd prototype && npm run dev
-
-Build: cd prototype && npm run build
-
-Benchmark: cd prototype && npm run bench -- --seeds 1
-
-Score one output: cd prototype && node scripts/score.mjs out.png --target 32x32
-
-Live AI-image batch (.local/live/ to .local/live-out/): cd prototype && node scripts/live-batch.mjs
-
-Rewrite baseline (commit on its own): cd prototype && node scripts/update-baseline.mjs
-
-App install (after the prototype install): cd app && npm install
+One engine test: cd prototype && npx vitest run test/grid.test.js -t "test name"
 
 App tests: cd app && npm test
 
@@ -52,74 +44,98 @@ App dev server: cd app && npm run dev
 
 App build: cd app && npm run build
 
-## Engine
+Engine test harness: cd prototype && npm run dev
 
-[prototype/src/lib/core/pipeline.js](prototype/src/lib/core/pipeline.js): entry point; convert, convertCandidates, analyze, routes, trim, fit, report.
+Benchmark: cd prototype && npm run bench -- --seeds 1
 
-[prototype/src/lib/core/grid.js](prototype/src/lib/core/grid.js): exact factorization and approximate grid detection.
+Comparison with reference tools: cd prototype && node scripts/compare.mjs --seeds 1
 
-[prototype/src/lib/core/sample.js](prototype/src/lib/core/sample.js): grid cells to colours.
+Score one output: cd prototype && node scripts/score.mjs out.png --target 32x32
 
-[prototype/src/lib/core/fitcells.js](prototype/src/lib/core/fitcells.js): kernel fit and cell-colour deconvolution for smoothly upscaled (second-difference) lattices.
+Live AI-image batch (.local/live/ to .local/live-out/): cd prototype && node scripts/live-batch.mjs
 
-[prototype/src/lib/core/palette.js](prototype/src/lib/core/palette.js): palette building on cells.
-
-[prototype/src/lib/core/resample.js](prototype/src/lib/core/resample.js): raster route and native-to-target reduction.
-
-[prototype/src/lib/core/cleanup.js](prototype/src/lib/core/cleanup.js): background stage and Clean profile passes.
-
-[prototype/src/lib/core/detect.js](prototype/src/lib/core/detect.js): report-only provenance and generator signals.
-
-[prototype/src/lib/core/orphans.js](prototype/src/lib/core/orphans.js): orphan-pixel classification shared by metrics, score.mjs and the recommendation.
-
-[prototype/src/lib/decode.js](prototype/src/lib/decode.js): deterministic PNG/JPEG decode.
-
-[prototype/src/lib/core/canonical.js](prototype/src/lib/core/canonical.js): typed errors and canonical RGBA hash.
-
-[prototype/src/lib/core/color.js](prototype/src/lib/core/color.js): deterministic OKLab maths; no transcendental Math anywhere.
-
-[prototype/src/App.svelte](prototype/src/App.svelte): plain test-harness UI; work runs in [worker.js](prototype/src/worker.js).
+Rewrite baseline: cd prototype && node scripts/update-baseline.mjs
 
 ## App
 
-[app/README.md](app/README.md): MVP app overview, commands, notices and known gaps; the engine is imported through the `$engine` alias in [app/vite.config.js](app/vite.config.js).
+Overview, notices and known gaps: app/README.md
 
-[app/src/App.svelte](app/src/App.svelte): app shell and state; components in [app/src/components/](app/src/components/), conversion in [app/src/worker.js](app/src/worker.js).
+Shell and state machine: app/src/App.svelte
 
-[app/src/lib/opts.js](app/src/lib/opts.js): app settings to engine options; [app/test/parity.test.js](app/test/parity.test.js) proves app output equals the engine's.
+Components: app/src/components/
 
-[.github/workflows/pages.yml](.github/workflows/pages.yml): every push to main runs both test suites, builds app/ and publishes it to GitHub Pages (repository setting: Pages source GitHub Actions).
+Conversion worker: app/src/worker.js
+
+Settings to engine options and recipe: app/src/lib/opts.js
+
+Every UI string: app/src/lib/copy.js
+
+Engine import alias and CSP: app/vite.config.js
+
+App output equals engine output: app/test/parity.test.js
+
+Pages deploy: .github/workflows/pages.yml
+
+## Engine
+
+Entry points (convert, convertCandidates, analyze, recommendation): prototype/src/lib/core/pipeline.js
+
+Grid detection: prototype/src/lib/core/grid.js
+
+Grid cells to colours: prototype/src/lib/core/sample.js
+
+Smooth-upscale kernel fit and deconvolution: prototype/src/lib/core/fitcells.js
+
+Palette: prototype/src/lib/core/palette.js
+
+Raster route and reductions: prototype/src/lib/core/resample.js
+
+Background stage and Clean style: prototype/src/lib/core/cleanup.js
+
+Orphan-pixel classification: prototype/src/lib/core/orphans.js
+
+Provenance signals (report only): prototype/src/lib/core/detect.js
+
+Decoding: prototype/src/lib/decode.js
+
+Typed errors and canonical hash: prototype/src/lib/core/canonical.js
+
+Deterministic OKLab maths: prototype/src/lib/core/color.js
 
 ## Tests
 
-[docs/planning/testing-todo.md](docs/planning/testing-todo.md): live AI-image test plan and open algorithm work.
+Committed quality gates: prototype/test/regression.test.js
 
-[prototype/test/regression.test.js](prototype/test/regression.test.js): committed gates on procedural fixtures only.
+Ratchet baseline: prototype/test/baseline.json
 
-[prototype/test/synth.js](prototype/test/synth.js): seeded AI-artifact degradation generator.
+Quality metrics: prototype/test/metrics.js
 
-[prototype/test/metrics.js](prototype/test/metrics.js): quality metrics and ratchet.
+Synthetic AI-artifact generator: prototype/test/synth.js
 
-[prototype/test/fixtures.js](prototype/test/fixtures.js): procedural sprites and optional local samples.
+Fixtures and local samples: prototype/test/fixtures.js
+
+Clean-room reference tools: prototype/test/reference-tools.js
 
 ## Docs
 
-[docs/planning/session-findings-2026-10-20.md](docs/planning/session-findings-2026-10-20.md): current state and ranked next steps; resume here.
+Current state, next steps and how to resume: docs/planning/session-findings-2026-10-21.md
 
-[docs/planning/prototype-algorithm-design.md](docs/planning/prototype-algorithm-design.md): prototype design and Deviations log; add a row for every behaviour change.
+Open work and owner test checklist: docs/planning/testing-todo.md
 
-[docs/reviews/prototype-v1-test-results.md](docs/reviews/prototype-v1-test-results.md): measured results and known limitations.
+Engine design and Deviations log: docs/planning/prototype-algorithm-design.md
 
-[docs/planning/product-requirements.md](docs/planning/product-requirements.md): normative requirements; owner decisions in §25.
+Engine results and limitations: docs/reviews/prototype-v1-test-results.md
 
-[docs/planning/master-plan.md](docs/planning/master-plan.md): phases, gates, experiments.
+App test results and gaps: docs/reviews/mvp-app-test-results.md
 
-[docs/research-spikes/evaluation/pixel-art-quality-metrics.md](docs/research-spikes/evaluation/pixel-art-quality-metrics.md): what crisp, proper pixel art means as measurable checks.
+Requirements and owner decisions (§25): docs/planning/product-requirements.md
 
-[docs/research-spikes/evaluation/benchmark-methodology.md](docs/research-spikes/evaluation/benchmark-methodology.md): rules for any quality claim.
+Phases and experiments: docs/planning/master-plan.md
 
-[docs/github-repository.md](docs/github-repository.md): owner-chosen GitHub description and topics, with the command to apply them.
+Research index: docs/research-spikes/README.md
 
-## Commits
+Pixel-art quality metrics: docs/research-spikes/evaluation/pixel-art-quality-metrics.md
 
-Use Conventional Commits: type(optional scope): description, for example feat(prototype): add trim.
+Benchmark rules: docs/research-spikes/evaluation/benchmark-methodology.md
+
+GitHub description and topics: docs/github-repository.md
