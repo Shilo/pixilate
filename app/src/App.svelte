@@ -417,6 +417,7 @@
       <div class="drop-zone">
         <span class="glass-empty__icon"><svg viewBox="0 0 24 24" aria-hidden="true">{@html ICONS['image-plus']}</svg></span>
         <h2 class="title">{T.emptyTitle}</h2>
+        <p>{T.emptyLead}</p>
         <p class="muted">{coarse ? T.emptyCoarse : T.emptyFine}</p>
         <div class="actions">
           <button class="glass-btn glass-btn--primary glass-btn--auto" onclick={() => picker.click()}>{T.choose}</button>

@@ -14,7 +14,9 @@ export const T = {
   details: 'Details',
   close: 'Close',
   done: 'Done',
-  emptyTitle: 'Turn any image into real pixel art',
+  // The public description (README, GitHub, index.html meta), split into title and lead.
+  emptyTitle: 'Every pixel is a true pixel',
+  emptyLead: 'Turn AI-generated or handmade images into real pixel art at the exact size you choose, with a clean palette and no generative AI needed.',
   emptyFine: 'Drop an image here, paste it, or choose a file.',
   emptyCoarse: 'Choose a photo or an image file.',
   choose: 'Choose image',

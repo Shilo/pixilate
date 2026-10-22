@@ -1,6 +1,6 @@
 # GitHub repository metadata
 
-Owner-chosen 2026-10-21 and applied to <https://github.com/Shilo/pixelate> (MIT, `OWN-008`). The same description is the README tagline and the app's `<meta name="description">`; change them together.
+Owner-chosen 2026-10-21 and applied to <https://github.com/Shilo/pixelate> (MIT, `OWN-008`). The same description is the README tagline, the app's `<meta name="description">` and its start screen (`emptyTitle` and `emptyLead` in `app/src/lib/copy.js`); change them together.
 
 **Description** (165 characters):
 
