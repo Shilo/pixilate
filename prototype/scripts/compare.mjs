@@ -19,8 +19,9 @@
 // emIn masks first, then applies a common cap (a baked-in background must not take a k-means cluster); ours
 // also reports emInOn, the same score on the default background-on run.
 // Palette modes (round 3): `native` = every method at its own documented palette cap (Pixel Snapper 16, unfake
-// 32, Retro Diffusion K 16, breakfastz 16, fast-pixelizer 32/256; ours, area, nearest, PixelOE, pixeldetector,
-// Real-PixelArt, proper-pixel-art and PixelRefiner uncapped or auto), where emSnap's 0.05 snap tolerance favours
+// 32, breakfastz 16, fast-pixelizer 32/256; ours, area, nearest, PixelOE, pixeldetector, Real-PixelArt,
+// proper-pixel-art, PixelRefiner and Retro Diffusion uncapped or auto: Retro Diffusion's structure palette,
+// adaptive K in [16, 48], decides placement only and its output colours are uncapped means of source pixels), where emSnap's 0.05 snap tolerance favours
 // uncapped outputs on 25-60-colour fixtures; `common cap` = every output (ours and the oracle included) re-
 // quantized by ONE shared deterministic quantizer (reference-tools kmeansRGB: k-means++ in RGB, mulberry32(42),
 // 15 iterations; skipped when the output already has <= K colours) to K = the truth palette size (`_kT`) and
@@ -56,7 +57,7 @@ const NATIVE = [ // discovered-size references
   ['snapper', 'Pixel Snapper ref ae20461f', R.pixelSnapper],
   ['pixeldetector', 'pixeldetector ref 6267db44', R.pixelDetector],
   ['unfake', 'unfake.js v1.4 ref 66368689', R.unfake],
-  ['rd', 'Retro Diffusion Std ref ef376e57', R.retroDiffusion],
+  ['rd', 'Retro Diffusion Std ref ef376e57 (partial Stage 2)', R.retroDiffusion],
   ['rpa', 'Real-PixelArt auto ref 17ce4875', R.realPixelArt],
   ['ppa', 'proper-pixel-art ref 4de0dda5', R.properPixelArt],
   ['fastpix', 'fast-pixelizer snap ref 5c041fce', R.fastPixelizer],
@@ -66,6 +67,7 @@ const NATIVE = [ // discovered-size references
 const TARGET = [ // methods that take W x H
   ['rpaT', 'Real-PixelArt fixed-size (targetAxis) ref 17ce4875', R.realPixelArtTarget],
   ['bfzManual', 'breakfastz manual width = W ref a1a3961c (rows = round(h / cell), centre-sampled to H when they differ)', (img, tw, th) => R.adapt(R.breakfastz(img, { manualWidth: tw }).image, tw, th)],
+  ['rdManual', 'Retro Diffusion manual pixel size = w / W ref ef376e57 (rows = round(h / cell), centre-sampled to H when they differ)', (img, tw, th) => R.adapt(R.retroDiffusion(img, { manualStep: img.width / tw }).image, tw, th)],
   ['pixeloe', 'PixelOE contrast ref 7ce444b3', R.pixelOE],
   ['area', 'area baseline', R.area],
   ['nearest', 'nearest baseline', R.nearest],
@@ -303,7 +305,7 @@ writeFileSync(OUT + 'results.json', JSON.stringify({
 const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`)
 const htmlTable = (t) => { const cols = [...new Set(Object.values(t).flatMap((r) => Object.keys(r)))]; return `<table><tr><th></th>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr>${Object.entries(t).map(([k, r]) => `<tr><th>${esc(k)}</th>${cols.map((c) => `<td>${esc(r[c] ?? '-')}</td>`).join('')}</tr>`).join('')}</table>` }
 let html = `<!doctype html><meta charset="utf-8"><title>Competitor comparison</title><style>body{font:13px system-ui;background:#1d1f24;color:#ddd;margin:16px}table{border-collapse:collapse;margin:8px 0}td,th{border:1px solid #444;padding:2px 6px;text-align:right}img{image-rendering:pixelated;max-width:100%}</style>
-<h1>Competitor comparison (exploratory, local-only)</h1><p>References are clean-room re-implementations of documented algorithms, not the tools. Native-cap tables use each method's own palette cap (Snapper 16, unfake 32, RD 16, breakfastz 16; others uncapped/auto), which favours uncapped outputs; <code>_kT</code> / <code>_k16</code> tables re-quantize every output with one shared k-means to the truth palette size / 16. <b>oursBest is an oracle (truth-selected) pick.</b> Sheet columns: ${esc(SHEET_COLS.join(' | '))}; red frame = adapted (native size wrong) or error.</p>`
+<h1>Competitor comparison (exploratory, local-only)</h1><p>References are clean-room re-implementations of documented algorithms, not the tools. Native-cap tables use each method's own palette cap (Snapper 16, unfake 32, breakfastz 16; others, RD included, uncapped/auto), which favours uncapped outputs; <code>_kT</code> / <code>_k16</code> tables re-quantize every output with one shared k-means to the truth palette size / 16. <b>oursBest is an oracle (truth-selected) pick.</b> Sheet columns: ${esc(SHEET_COLS.join(' | '))}; red frame = adapted (native size wrong) or error.</p>`
 for (const [k, t] of Object.entries(summary)) if (typeof Object.values(t)[0] === 'object') html += `<h2>${esc(k)}</h2>${htmlTable(t)}`
 html += `<pre>${esc(JSON.stringify({ noGridAsserted: summary.noGridAsserted, msMedian: summary.msMedian, errors: summary.errors }, null, 1))}</pre>`
 for (const r of real) html += `<h2>real ${esc(r.id)}</h2><p>rows: ${esc(r.sheetCols.native.join(' | '))} / ${esc(r.sheetCols.target.join(' | '))}</p><img src="real/${r.id}-sheet.png">`

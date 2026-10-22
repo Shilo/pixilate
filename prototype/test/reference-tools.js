@@ -12,7 +12,7 @@
 // | pixelDetector   | Astropulse pixeldetector `6267db44`, MIT                                            | landscape/open-source-ecosystem.md "Deep source audits" §1               |
 // | unfake          | jenissimo/unfake.js v1.4.0 `66368689`, MIT (core links imagequant, GPL-3.0+/commercial: | products/unfake-js.md (scale/grid detection, downscale, auto colour     |
 // |                 | NOT re-implemented; a deterministic k-means stands in)                              | count) and 2026-10-19 addendum (fractional, elastic, inset, order)       |
-// | retroDiffusion  | Retro-Diffusion/pixel-art-fixer Standard `ef376e57` (v1.1), MIT                      | products/retro-diffusion-pixel-art-fixer.md (Detection, Reconstruction)  |
+// | retroDiffusion  | Retro-Diffusion/pixel-art-fixer Standard `ef376e57` (v1.1), MIT                      | products/retro-diffusion-pixel-art-fixer.md 2026-10-21 refresh (R1-R11) |
 // | pixelOE         | KohakuBlueleaf/PixelOE `7ce444b3`, Apache-2.0 (contrast downscale only)             | landscape addendum; planning/prototype-algorithm-design.md "Raster route" |
 // | area, nearest   | Pixilate-owned baselines (same maths as scripts/bench.mjs, which runs on import)   | —                                                                        |
 import { mulberry32 } from './synth.js'
@@ -545,21 +545,60 @@ export function unfake(src, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// 4. Retro Diffusion Standard (reference re-implementation of pixel-art-fixer `ef376e57` per spike
-// "Detection pipeline" and "Reconstruction"; the spike reads the vendor writeup, not the code).
-// Documented and used: 12-level rounded, median-filtered luminance; 0.7 x |first difference| feature summed
-// over bands of 12, 24 and all lines (autocorr); soft-GCD comb over boundary distances with S < 0.1 = no
-// lattice (runlengths); shift self-similarity, smallest peak >= max(0.40 max, 4.0) (selfsim); fast path
-// (agreement within max(1 cell, 1 %), |log aspect| < 0.35); arbitration: smallest step among candidates
-// >= 0.78 best, prefer-fine (> 0.45, support >= 0.35), harmonic-mean snap (< 0.08); JPEG suppression at
-// z > 5 (+-1 px of multiples of 8); even lattice x*cols/w; k-means labels decide placement only; colour =
-// centre-weighted (tent) mean of the original pixels carrying the winning label; transparency majority.
-// UNKNOWN, substituted: the other feature terms (omitted); autocorr peak rule (the selfsim rule, no floor);
-// comb tolerance (max(1, 0.12 p) px) and pick (largest local max >= 0.85 max); selfsim score (% reduction of
-// mean |difference| vs its mean over shifts); fused support (mean of the three normalized detector scores);
-// z-score (Welch, 8k vs 8k+4 positions); adaptive K (16, the lower clamp); detail cap and drift-aware
-// counting (not implemented); "group of >= 3 proposals" (not reachable with 3 detectors); lags up to
-// min(160, n/4).
+// 4. Retro Diffusion Standard (reference re-implementation of pixel-art-fixer `ef376e57` per the spike's
+// 2026-10-21 "Pipeline, step by step" and fidelity items R1-R11; the spike and this code read the vendor
+// writeup docs/HOW_IT_WORKS.md, never the code). Row "Retro Diffusion ref (partial Stage 2)".
+// Documented and used (VERIFIED writeup statements):
+//   feature = |2nd difference of luminance| + 0.7 x |1st difference of median-filtered, 12-level luminance|,
+//   band profiles over 12, 24 and all lines, each power-normalised (ACF / ACF(0)) and averaged; JPEG notch
+//   (z > 5, +-1 px of multiples of 8, interpolated);
+//   autocorr: comb at k*s minus anti-comb at (k +- 0.5)*s, weights exp(-k/12), fractional s by ACF
+//   interpolation (R1), subharmonic penalty 0.5 x max score of s/2..s/5, parabolic sub-pixel peaks near k*s0
+//   and a least-squares fit peak ~ k*s through the origin;
+//   runlengths (R3): boundaries by gradient non-maximum suppression per scanline, S(s) = mean_r cos(2 pi r/s)
+//   in [-1, 1], largest peak within 0.70 of the max with >= 4 % run mass at 1*s, fine re-search, S < 0.1 =
+//   no boundary lattice (this voter abstains; the writeup falls back to the other channels, it does not refuse);
+//   selfsim (R4): d(t) = mean |F(x) - F(x+t)| for F = |grad|, blurred |grad|, |Laplacian| after blur; comb
+//   t-statistic over K harmonics x min(1, (K-1)/3); smallest peak >= max(0.40 max, 4.0), then a divisor walk;
+//   fused curve (R5, R6) = equal-weight sum of per-scan max-normalised {ray_e1, tile_e1, tile_e2, spec_e1}
+//   and the fourth voter: ray_e1 projects profile peaks onto the unit circle at 2 pi pos/step, occupancy-scaled;
+//   tile_e1 / tile_e2 = Rayleigh phase-coherence z of the gradient / curvature map on 48-192 px tiles, each
+//   with its own phase, centred (z - 1) and Stouffer-combined; spec_e1 = Welch power spectrum of gradient
+//   scanline groups read at k/step;
+//   fast path: the three cheap detectors agree on cols and rows within max(1 cell, 1 %) and |log aspect| <
+//   0.35 -> median counts; else the largest aspect-sane group of >= 3 of the 4 voters -> group median (2-of-4
+//   is not enough); else Stage 2 arbitration per axis over the candidate pool (R7) = every voter's step plus
+//   autocorr's top five, de-duplicated in log space, clamped to (1.2, extent/3), no invented 2x or 1/2x;
+//   score = fused + 0.20 vc + 0.25 max(0, agree - 1) + 0.6 recon/rmax (when rmax > 0.005), x 0.35 above the
+//   detail cap (ACF central-peak half-width x 8); vc = (var_worst - var_best) / (var_best + 0.05 total) over
+//   phases, only "active" pixels (8x8 blocks with variance > 2 % of the total; blocks overlap at stride 4, INFERRED; "total" = variance of the active pixels, INFERRED); recon = max(er - eb, 0) x
+//   max(1 - eb/trend(s), 0) on K = 14 colours, PCA to 2 channels + centred alpha, er = error at best phase
+//   + s/2, trend = running median over s; smallest step >= 0.78 of the best wins; prefer-fine (|log| > 0.45,
+//   fused >= 0.35); harmonic-mean snap (< 0.08); drift-aware counting (<= 8 windows, +-18 % comb re-scan,
+//   gated at >= 96 uniform cells and |integrated - uniform| >= 2.5);
+//   reconstruction: even lattice x*cols/w; structure palette K = 4-bit colour complexity of the opaque pixels
+//   clamped to [16, 48] (R9), labels decide placement only; colour = centre-weighted mean of the original
+//   pixels carrying the winning label; transparency = per-cell majority. Manual pixel size (R10):
+//   { manualStep } skips detection, cols = round(w/step), rows = round(h/step).
+// UNKNOWN in the writeup, substituted here (simplest reading, labelled):
+//   feature units (both terms scaled to [0, 1]); median filter 3x3; JPEG z statistic (Welch t of 8k vs 8k+4
+//   profile values); step grid (log, ratio 1.004 from 1.25, the writeup cites a 1650-point grid); comb
+//   normalised by the weight sum, k while (k + 0.5) s <= extent/2; a negative subharmonic max is not a bonus;
+//   autocorr's own pick = the best penalised local maximum, top five = the next best maxima; refinement window
+//   +-0.25 s0, k <= 8, one outlier pass (|residual| > 0.1 s0); NMS threshold |dY| >= 8 and no cross-scanline
+//   coherence smoothing; run-mass tolerance max(0.5, 0.05 s) px; fine re-search +-1 % in 0.1 % steps; selfsim
+//   shifts t <= min(extent/2, 72) (the writeup costs "72 shifts"), K >= 3 harmonics (>= 2 degrees of freedom), on <= 48 sampled lines, [1,2,1] blur, features averaged, no per-tile drift
+//   votes (DISP_UNIFORM unused); divisor walk over d = 2, 3 within +-3 %; ray_e1 peaks = local maxima >= 0.2 max
+//   of the all-lines profile, score = resultant length x min(1, N s / extent); tile side clamp(min side/4, 48,
+//   192), a tile scores a step only when it spans >= 3 steps, weighted Rayleigh z = n_eff R^2; Welch: Hann, 50 % overlap, segment = largest power of two <= min(
+//   extent, 512), harmonics k/step <= 0.5 averaged, read by linear interpolation; negative terms clipped
+//   before max-normalising; fused >= 0.35 read on the 0..4 sum; vc and recon on the even lattice len/round(len/s), on 1D scanline segments, not the
+//   writeup's 2D cells, 8 phases, <= 128 sampled lines; trend window s/1.25 .. 1.25 s on every 8th grid step;
+//   recon k-means on <= 50000 samples; agree = voters within max(1 cell, 1 %); log de-duplication 2 %;
+//   drift windows = 8 equal spans, comb re-scan in 0.2 % steps; centre weights = tent (stated substitute).
+// OMITTED (described but not specified enough to rebuild): cross-axis factor-2/3 promotion (the "plain-comb
+// mass" threshold is not given); selfsim tile drift votes; runlengths coherence smoothing; the exact JPEG z
+// statistic and the `consensus` strings. The hosted web build is not reproduced (UNKNOWN which commit it runs).
 // ---------------------------------------------------------------------------------------------------
 function median3(Y, w, h) {
   const out = new Float64Array(w * h), win = new Float64Array(9)
@@ -587,102 +626,328 @@ function jpegSuppress(p) {
   }
   return q
 }
-function smallestPeak(s, lo, rel, abs) { // s indexed by period; smallest local peak >= max(rel max, abs)
-  let mx = -Infinity
-  for (let l = lo; l < s.length; l++) mx = Math.max(mx, s[l])
-  const thr = Math.max(rel * mx, abs)
-  for (let l = lo; l < s.length - 1; l++) if (s[l] > s[l - 1] && s[l] >= s[l + 1] && s[l] >= thr) return l
-  return null
+const lin = (a, x) => { if (!(x > 0)) return a[0]; const i = Math.floor(x); return i + 1 < a.length ? a[i] + (a[i + 1] - a[i]) * (x - i) : a[a.length - 1] }
+const RD_GRID = 1.004, RD_LO = 1.25, RD_EW = Float64Array.from({ length: 1024 }, (_, k) => Math.exp(-k / 12))
+function rdAcfOf(p) { // power-normalised (biased) autocorrelation of the mean-removed profile, via FFT
+  const n = p.length, m = meanOf(p)
+  let N = 1
+  while (N < 2 * n) N <<= 1
+  const re = new Float64Array(N), im = new Float64Array(N)
+  for (let i = 0; i < n; i++) re[i] = p[i] - m
+  fft(re, im)
+  for (let i = 0; i < N; i++) { re[i] = re[i] * re[i] + im[i] * im[i]; im[i] = 0 }
+  fft(re, im) // the power spectrum is real and even, so a forward FFT gives N x the autocorrelation
+  if (!(re[0] > 1e-12)) return null
+  return Float64Array.from({ length: n }, (_, l) => re[l] / re[0])
 }
-const interp = (s, p) => { const i = Math.floor(p), f = p - i; return i + 1 < s.length ? s[i] * (1 - f) + s[i + 1] * f : s[s.length - 1] }
-
-function rdAxis(F, len, lines, Q, stride) { // F[line][pos] feature (pos = boundary pos..pos+1), Q[line][pos] levels
-  const pmax = Math.min(160, Math.floor(len / 4))
-  if (pmax < 3) return null
-  // autocorr: normalized autocorrelation averaged over band profiles (12, 24, all lines)
-  const ac = new Float64Array(pmax + 2)
+function rdAcf(bands, a, b) { // band-averaged ACF of bands[i][a..b), lags 0..(b-a)/2
+  const L = Math.floor((b - a) / 2), A = new Float64Array(L + 1)
   let nb = 0
-  for (const bh of [12, 24, lines]) for (let b0 = 0; b0 < lines; b0 += bh) {
-    const prof = new Float64Array(len - 1)
-    for (let l = b0; l < Math.min(lines, b0 + bh); l++) for (let x = 0; x < len - 1; x++) prof[x] += F(l, x)
-    const p = jpegSuppress(prof), m = meanOf(p)
-    let a0 = 0
-    for (let i = 0; i < p.length; i++) a0 += (p[i] - m) ** 2
-    if (!(a0 > 0)) continue
-    for (let l = 0; l <= pmax + 1; l++) { let s = 0; for (let i = 0; i + l < p.length; i++) s += (p[i] - m) * (p[i + l] - m); ac[l] += s / a0 }
-    nb++
+  for (const p of bands) { const r = rdAcfOf(p.subarray(a, b)); if (!r) continue; for (let l = 0; l <= L; l++) A[l] += r[l]; nb++ }
+  if (!nb || L < 2) return null
+  for (let l = 0; l <= L; l++) A[l] /= nb
+  return A
+}
+function rdComb(A, s) { // comb at k*s minus anti-comb at (k +- 0.5)*s, weights exp(-k/12)
+  const L = A.length - 1
+  let c = 0, wt = 0
+  for (let k = 1; (k + 0.5) * s <= L && k < RD_EW.length; k++) { c += RD_EW[k] * (lin(A, k * s) - 0.5 * (lin(A, (k - 0.5) * s) + lin(A, (k + 0.5) * s))); wt += RD_EW[k] }
+  return wt ? c / wt : 0
+}
+const rdPeaks = (v) => { const out = []; for (let i = 1; i < v.length - 1; i++) if (v[i] > v[i - 1] && v[i] >= v[i + 1]) out.push(i); return out }
+function rdRefine(A, s0) { // parabolic sub-pixel ACF maxima near k*s0, then a robust LS fit peak ~ k*s through the origin
+  const L = A.length - 1, pts = []
+  for (let k = 1; k <= 8 && k * s0 + 0.25 * s0 < L; k++) {
+    let b = -1
+    for (let l = Math.max(1, Math.ceil(k * s0 - 0.25 * s0)); l <= Math.min(L - 1, Math.floor(k * s0 + 0.25 * s0)); l++) if (b < 0 || A[l] > A[b]) b = l
+    if (b < 1) continue
+    const den = A[b - 1] - 2 * A[b] + A[b + 1]
+    pts.push([k, b + (den < 0 ? clamp((0.5 * (A[b - 1] - A[b + 1])) / den, -0.5, 0.5) : 0)])
   }
-  if (nb) for (let l = 0; l < ac.length; l++) ac[l] /= nb
-  const pAc = nb ? smallestPeak(ac, 2, 0.4, -Infinity) : null
-  // runlengths: soft-GCD comb over distances between label boundaries
-  const hist = new Float64Array(4 * pmax + 1)
-  let nd = 0
+  const fit = (P) => P.reduce((s, [k, x]) => s + k * x, 0) / P.reduce((s, [k]) => s + k * k, 0)
+  if (!pts.length) return s0
+  let s = fit(pts)
+  const keep = pts.filter(([k, x]) => Math.abs(x - k * s) <= 0.1 * s0)
+  if (keep.length && keep.length < pts.length) s = fit(keep)
+  return Math.abs(Math.log(s / s0)) < 0.2 ? s : s0
+}
+function rdRayleigh(prof, s) { // weighted Rayleigh z = n_eff R^2 at period s (own phase)
+  const wr = cosDet((2 * Math.PI) / s), wi = sinDet((2 * Math.PI) / s)
+  let cr = 1, ci = 0, sr = 0, si = 0, W = 0, W2 = 0
+  for (let x = 0; x < prof.length; x++) { const v = prof[x]; sr += v * cr; si += v * ci; W += v; W2 += v * v; const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr }
+  return W > 0 ? (sr * sr + si * si) / W2 : null // n_eff R^2 = (W^2/W2) (|sum|/W)^2
+}
+function rdTiles(map, n1, lines, side) { // column profiles of map[lines][n1] on ~side px tiles
+  const tx = Math.max(1, Math.round(n1 / side)), ty = Math.max(1, Math.round(lines / side)), out = []
+  for (let j = 0; j < ty; j++) for (let i = 0; i < tx; i++) {
+    const x0 = Math.floor((i * n1) / tx), x1 = Math.floor(((i + 1) * n1) / tx), y0 = Math.floor((j * lines) / ty), y1 = Math.floor(((j + 1) * lines) / ty), p = new Float64Array(x1 - x0)
+    for (let l = y0; l < y1; l++) for (let x = x0; x < x1; x++) p[x - x0] += map[l * n1 + x]
+    out.push(p)
+  }
+  return out
+}
+function rdWelch(bands, n1) { // Welch power spectrum (Hann, 50 % overlap), each band normalised, averaged
+  let Lw = 1
+  while (Lw * 2 <= Math.min(n1, 512)) Lw *= 2
+  if (Lw < 16) return null
+  const win = Float64Array.from({ length: Lw }, (_, i) => 0.5 - 0.5 * cosDet((2 * Math.PI * i) / Lw)), P = new Float64Array(Lw / 2 + 1)
+  for (const b of bands) {
+    const acc = new Float64Array(Lw / 2 + 1)
+    for (let a = 0; a + Lw <= n1; a += Lw / 2) {
+      const m = meanOf(b.subarray(a, a + Lw)), re = Float64Array.from({ length: Lw }, (_, i) => (b[a + i] - m) * win[i]), im = new Float64Array(Lw)
+      fft(re, im)
+      for (let k = 0; k <= Lw / 2; k++) acc[k] += re[k] * re[k] + im[k] * im[k]
+    }
+    const t = acc.reduce((s, v) => s + v, 0)
+    if (t > 0) for (let k = 0; k <= Lw / 2; k++) P[k] += acc[k] / t
+  }
+  return { P, Lw }
+}
+function rdPrefix(chs, mask, len, lines, maxLines) { // per sampled line prefix sums of count, sum and sum of squares
+  const stride = Math.max(1, Math.ceil(lines / maxLines)), ls = []
+  for (let l = 0; l < lines; l += stride) ls.push(l)
+  const N = len + 1, C = new Float64Array(ls.length * N), S1 = chs.map(() => new Float64Array(ls.length * N)), S2 = chs.map(() => new Float64Array(ls.length * N))
+  ls.forEach((l, i) => {
+    for (let x = 0; x < len; x++) {
+      const o = l * len + x, q = i * N + x, m = mask ? mask[o] : 1
+      C[q + 1] = C[q] + m
+      chs.forEach((ch, c) => { S1[c][q + 1] = S1[c][q] + m * ch[o]; S2[c][q + 1] = S2[c][q] + m * ch[o] * ch[o] })
+    }
+  })
+  return { C, S1, S2, n: ls.length, N, len }
+}
+function rdSegErr(pf, s, ph) { // mean within-segment squared error of cuts ph + k s on every sampled line
+  const cuts = [0]
+  for (let v = ph; v < pf.len; v += s) { const c = Math.round(v); if (c > cuts[cuts.length - 1] && c < pf.len) cuts.push(c) }
+  cuts.push(pf.len)
+  let sse = 0, tot = 0
+  for (let i = 0; i < pf.n; i++) for (let k = 1; k < cuts.length; k++) {
+    const a = i * pf.N + cuts[k - 1], b = i * pf.N + cuts[k], n = pf.C[b] - pf.C[a]
+    if (n <= 0) continue
+    tot += n
+    for (let c = 0; c < pf.S1.length; c++) { const s1 = pf.S1[c][b] - pf.S1[c][a]; sse += pf.S2[c][b] - pf.S2[c][a] - (s1 * s1) / n }
+  }
+  return tot ? Math.max(0, sse) / tot : 0
+}
+// candidates are scored as the even lattice they would produce, step len / round(len / s) (INFERRED: a raw grid
+// step drifts across the extent and makes every phase straddle cells)
+const rdPhases = (pf, s) => { const e = pf.len / Math.max(1, Math.round(pf.len / s)); return Array.from({ length: 8 }, (_, j) => rdSegErr(pf, e, (j * e) / 8)) }
+
+function rdAxis(Y, Q, len, lines) { // Y in 0..255, Q in 0..11, row-major [lines][len] along this axis
+  const n1 = len - 1, hi = len / 3
+  if (n1 < 6 || hi <= RD_LO * RD_GRID) return null
+  const G = []
+  for (let s = RD_LO; s <= hi; s *= RD_GRID) G.push(s)
+  const F = new Float64Array(lines * n1), g1 = new Float64Array(lines * n1), g2 = new Float64Array(lines * n1)
+  for (let l = 0; l < lines; l++) for (let x = 0; x < n1; x++) {
+    const o = l * len + x, d2 = x >= 1 ? Math.abs(Y[o - 1] - 2 * Y[o] + Y[o + 1]) / 255 : 0
+    F[l * n1 + x] = 0.7 * (Math.abs(Q[o + 1] - Q[o]) / 11) + d2
+    g1[l * n1 + x] = Math.abs(Y[o + 1] - Y[o]) / 255; g2[l * n1 + x] = d2
+  }
+  const b12 = []
+  for (let b0 = 0; b0 < lines; b0 += 12) { const p = new Float64Array(n1); for (let l = b0; l < Math.min(lines, b0 + 12); l++) for (let x = 0; x < n1; x++) p[x] += F[l * n1 + x]; b12.push(p) }
+  const b24 = []
+  for (let i = 0; i < b12.length; i += 2) b24.push(i + 1 < b12.length ? b12[i].map((v, x) => v + b12[i + 1][x]) : b12[i])
+  const ball = b12.reduce((a, p) => a.map((v, x) => v + p[x]))
+  const bands = [...b12, ...b24, ball].map(jpegSuppress), A = rdAcf(bands, 0, n1)
+  // autocorr: penalised comb over the step grid
+  let pAc = null, top5 = []
+  if (A) {
+    const Cg = G.map((s) => rdComb(A, s)), Pg = G.map((s, i) => { let m = 0; for (let d = 2; d <= 5; d++) if (s / d >= RD_LO) m = Math.max(m, rdComb(A, s / d)); return Cg[i] - 0.5 * m })
+    const pk = rdPeaks(Pg).filter((i) => Pg[i] > 0).sort((a, b) => Pg[b] - Pg[a] || a - b)
+    if (pk.length) pAc = rdRefine(A, G[pk[0]])
+    top5 = pk.slice(1, 6).map((i) => G[i])
+  }
+  // runlengths: cosine comb over distances between gradient-NMS boundaries
+  const hist = new Float64Array(len + 1)
+  let nd = 0, rmaxD = 0
   for (let l = 0; l < lines; l++) {
     let last = -1
-    for (let x = 0; x < len - 1; x++) if (Q(l, x) !== Q(l, x + 1)) { if (last >= 0 && x - last <= 4 * pmax) { hist[x - last]++; nd++ } last = x }
+    for (let x = 0; x < n1; x++) {
+      const g = g1[l * n1 + x] * 255, gl = x > 0 ? g1[l * n1 + x - 1] * 255 : 0, gr = x < n1 - 1 ? g1[l * n1 + x + 1] * 255 : 0
+      if (g >= 8 && g >= gl && g > gr) { if (last >= 0) { hist[x - last]++; nd++; rmaxD = Math.max(rmaxD, x - last) } last = x }
+    }
   }
-  const Sgrid = [], comb = (p) => {
+  const Sof = (s) => {
     if (!nd) return 0
-    const tau = Math.max(1, 0.12 * p)
-    let s = 0
-    for (let dd = 1; dd < hist.length; dd++) { if (!hist[dd] || dd < 0.5 * p) continue; s += hist[dd] * Math.max(0, 1 - Math.abs(dd - p * Math.round(dd / p)) / tau) }
-    return s / nd
+    const wr = cosDet((2 * Math.PI) / s), wi = sinDet((2 * Math.PI) / s)
+    let cr = 1, ci = 0, t = 0
+    for (let r = 1; r <= rmaxD; r++) { const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr; if (hist[r]) t += hist[r] * cr }
+    return t / nd
   }
-  for (let p = 2; p <= pmax; p += 0.05) Sgrid.push([p, comb(p)])
-  const Smax = Math.max(0, ...Sgrid.map((v) => v[1]))
+  const runMass = (s) => { let m = 0; const tol = Math.max(0.5, 0.05 * s); for (let r = Math.max(1, Math.ceil(s - tol)); r <= Math.min(rmaxD, Math.floor(s + tol)); r++) m += hist[r]; return nd ? m / nd : 0 }
   let pRl = null, S = 0
-  for (let i = Sgrid.length - 2; i >= 1; i--) if (Sgrid[i][1] >= Sgrid[i - 1][1] && Sgrid[i][1] >= Sgrid[i + 1][1] && Sgrid[i][1] >= 0.85 * Smax) { pRl = Sgrid[i][0]; S = Sgrid[i][1]; break }
-  if (S < 0.1) pRl = null
-  // selfsim: % reduction of mean |G(x) - G(x+s)| relative to its mean over shifts
-  const D = new Float64Array(pmax + 2)
-  for (let s = 1; s <= pmax + 1; s++) { let t = 0, n = 0; for (let l = 0; l < lines; l += stride) for (let x = 0; x + s < len - 1; x++) { t += Math.abs(F(l, x) - F(l, x + s)); n++ } D[s] = n ? t / n : 0 }
-  const Dm = meanOf(Array.from(D.subarray(1))), ss = new Float64Array(pmax + 2)
-  for (let s = 1; s <= pmax + 1; s++) ss[s] = Dm > 0 ? (100 * (Dm - D[s])) / Dm : 0
-  const pSs = smallestPeak(ss, 2, 0.4, 4.0)
-  const acMax = Math.max(...ac.subarray(2)), ssMax = Math.max(...ss.subarray(2))
-  const support = (p) => (p < 2 || p > pmax ? 0 : (Math.max(0, interp(ac, p)) / (acMax > 0 ? acMax : 1) + Math.max(0, interp(ss, p)) / (ssMax > 0 ? ssMax : 1) + (Smax > 0 ? comb(p) / Smax : 0)) / 3)
-  return { props: [pAc, pRl, pSs], support, S }
+  if (nd) {
+    const Sg = G.map(Sof), Smax = Math.max(...Sg)
+    const ok = rdPeaks(Sg).filter((i) => Sg[i] >= 0.7 * Smax && runMass(G[i]) >= 0.04)
+    if (Smax > 0 && ok.length) {
+      let s0 = G[ok[ok.length - 1]], best = Sg[ok[ok.length - 1]]
+      for (let d = -10; d <= 10; d++) { const s = G[ok[ok.length - 1]] * (1 + d / 1000), v = Sof(s); if (v > best) { best = v; s0 = s } }
+      S = best
+      pRl = S >= 0.1 ? s0 : null
+    }
+  }
+  // selfsim: comb t-statistic of the shift dissimilarity d(t), three features
+  const T = Math.min(Math.floor(n1 / 2), 72), stride = Math.max(1, Math.ceil(lines / 48)), Ds = [0, 1, 2].map(() => new Float64Array(T + 1))
+  for (let l = 0; l < lines; l += stride) {
+    const g = g1.subarray(l * n1, (l + 1) * n1), bl = (v) => v.map((_, x) => (v[Math.max(0, x - 1)] + 2 * v[x] + v[Math.min(v.length - 1, x + 1)]) / 4)
+    const yb = bl(Y.subarray(l * len, (l + 1) * len)), lap = Float64Array.from({ length: n1 }, (_, x) => (x >= 1 ? Math.abs(yb[x - 1] - 2 * yb[x] + yb[x + 1]) / 255 : 0))
+    const fs = [g, bl(g), lap]
+    for (let f = 0; f < 3; f++) for (let t = 1; t <= T; t++) { let a = 0; const v = fs[f]; for (let x = 0; x + t < n1; x++) a += Math.abs(v[x] - v[x + t]); Ds[f][t] += a / Math.max(1, n1 - t) }
+  }
+  const tstat = (d, s) => {
+    const K = Math.floor(T / s - 0.5)
+    if (K < 3) return 0
+    let m = 0, q = 0
+    for (let k = 1; k <= K; k++) { const v = 0.5 * (lin(d, (k - 0.5) * s) + lin(d, (k + 0.5) * s)) - lin(d, k * s); m += v; q += v * v }
+    const mean = m / K, vr = (q - K * mean * mean) / (K - 1), t = vr > 1e-18 ? mean / Math.sqrt(vr / K) : mean > 0 ? 1e3 : 0
+    return Math.min(t, 1e3) * Math.min(1, (K - 1) / 3)
+  }
+  const ssAt = (s) => (tstat(Ds[0], s) + tstat(Ds[1], s) + tstat(Ds[2], s)) / 3
+  const SSg = G.map(ssAt), ssMax = Math.max(...SSg), thrSs = Math.max(0.4 * ssMax, 4.0)
+  let pSs = null
+  for (const i of rdPeaks(SSg)) if (SSg[i] >= thrSs) { pSs = G[i]; break }
+  for (let walked = true; pSs !== null && walked;) { // divisor walk
+    walked = false
+    for (const d of [2, 3]) {
+      const c = pSs / d
+      if (c < RD_LO) continue
+      let bs = null, bv = -Infinity
+      for (let e = -30; e <= 30; e++) { const s = c * (1 + e / 1000), v = ssAt(s); if (v > bv) { bv = v; bs = s } }
+      if (bv >= thrSs) { pSs = bs; walked = true; break }
+    }
+  }
+  // fused curve (fourth voter): {ray_e1, tile_e1, tile_e2, spec_e1}, each max-normalised over the grid
+  const pmx = Math.max(...ball), pkPos = []
+  for (let x = 0; x < n1; x++) if (ball[x] >= 0.2 * pmx && ball[x] > 0 && (x === 0 || ball[x] > ball[x - 1]) && (x === n1 - 1 || ball[x] >= ball[x + 1])) pkPos.push(x)
+  const ind = new Float64Array(n1)
+  for (const x of pkPos) ind[x] = 1
+  const ray = G.map((s) => { if (!pkPos.length) return 0; const z = rdRayleigh(ind, s); return Math.sqrt(z * pkPos.length) / pkPos.length * Math.min(1, (pkPos.length * s) / n1) }) // R = sqrt(z / N) since n_eff = N
+  const side = clamp(Math.round(Math.min(len, lines) / 4), 48, 192)
+  const tileTerm = (map) => { const tiles = rdTiles(map, n1, lines, side); return G.map((s) => { let t = 0, m = 0; for (const p of tiles) { if (p.length < 3 * s) continue; const z = rdRayleigh(p, s); if (z !== null) { t += z - 1; m++ } } return m ? t / Math.sqrt(m) : 0 }) }
+  const W = rdWelch(bands.slice(0, b12.length), n1)
+  const spec = G.map((s) => { if (!W) return 0; const H = Math.floor(s / 2); let t = 0; for (let k = 1; k <= H; k++) t += lin(W.P, (k / s) * W.Lw); return H ? t / H : 0 })
+  const fused = new Float64Array(G.length)
+  for (const term of [ray, tileTerm(g1), tileTerm(g2), spec]) { const mx = Math.max(0, ...term); if (mx > 0) for (let i = 0; i < G.length; i++) fused[i] += Math.max(0, term[i]) / mx }
+  let iFu = 0
+  for (let i = 1; i < G.length; i++) if (fused[i] > fused[iFu]) iFu = i
+  const pFu = fused[iFu] > 0 ? G[iFu] : null
+  const fusedAt = (s) => (s < RD_LO || s > hi ? 0 : lin(fused, Math.log(s / RD_LO) / Math.log(RD_GRID)))
+  // detail cap: luminance ACF central-peak half-width x 8
+  const yl = []
+  for (let l = 0; l < lines; l += Math.max(1, Math.ceil(lines / 64))) yl.push(Y.subarray(l * len, (l + 1) * len))
+  const AY = rdAcf(yl, 0, len)
+  let cap = Infinity
+  if (AY) for (let l = 1; l < AY.length; l++) if (AY[l] < 0.5) { cap = 8 * (l - 1 + (AY[l - 1] - 0.5) / (AY[l - 1] - AY[l])); break }
+  const vote = { ac: pAc, rl: pRl, ss: pSs, fu: pFu }
+  const agreeN = (s) => Object.values(vote).filter((v) => v !== null && Math.abs(len / s - len / v) <= Math.max(1, (0.01 * len) / s)).length
+  /** Stage 2 per axis: rc = recon channels (row-major [lines][len]) for distillability. */
+  const arbitrate = (rc) => {
+    const raw = [...Object.values(vote).filter((v) => v !== null), ...top5].filter((s) => s > 1.2 && s < hi).sort((a, b) => a - b), pool = []
+    for (const s of raw) if (!pool.length || Math.log(s / pool[pool.length - 1]) > 0.02) pool.push(s)
+    if (!pool.length) return null
+    const yv = Float64Array.from(Y, (v) => v / 255), mY = meanOf(yv), totV = yv.reduce((a, v) => a + (v - mY) ** 2, 0) / yv.length
+    const act = new Uint8Array(len * lines)
+    for (let by = 0; by < lines; by += 4) for (let bx = 0; bx < len; bx += 4) { // 8x8 blocks at stride 4 (INFERRED: aligned blocks never straddle cells that are multiples of 8)
+      let s1 = 0, s2 = 0, n = 0
+      for (let l = by; l < Math.min(lines, by + 8); l++) for (let x = bx; x < Math.min(len, bx + 8); x++) { const v = yv[l * len + x]; s1 += v; s2 += v * v; n++ }
+      if (s2 / n - (s1 / n) ** 2 > 0.02 * totV) for (let l = by; l < Math.min(lines, by + 8); l++) for (let x = bx; x < Math.min(len, bx + 8); x++) act[l * len + x] = 1
+    }
+    const pv = rdPrefix([yv], act, len, lines, 128), pr = rdPrefix(rc, null, len, lines, 128)
+    let a1 = 0, a2 = 0, an = 0
+    for (let p = 0; p < act.length; p++) if (act[p]) { a1 += yv[p]; a2 += yv[p] * yv[p]; an++ }
+    const totA = an ? a2 / an - (a1 / an) ** 2 : totV // "total" = variance of the active pixels (INFERRED)
+    const vc = pool.map((s) => { const e = rdPhases(pv, s); return (Math.max(...e) - Math.min(...e)) / (Math.min(...e) + 0.05 * totA) })
+    const G2 = G.filter((_, i) => i % 8 === 0), E2 = G2.map((s) => Math.min(...rdPhases(pr, s)))
+    const trend = (s) => { const v = E2.filter((_, i) => G2[i] >= s / 1.25 && G2[i] <= s * 1.25); return v.length ? medianOf(v) : null }
+    const rec = pool.map((s) => { const e = rdPhases(pr, s), j = e.indexOf(Math.min(...e)), eb = e[j], er = e[(j + 4) % 8], tr = trend(s); return tr ? Math.max(er - eb, 0) * Math.max(1 - eb / tr, 0) : 0 })
+    const rmax = Math.max(...rec)
+    const sc = pool.map((s, i) => (fusedAt(s) + 0.2 * vc[i] + 0.25 * Math.max(0, agreeN(s) - 1) + (rmax > 0.005 ? (0.6 * rec[i]) / rmax : 0)) * (s > cap ? 0.35 : 1))
+    const best = Math.max(...sc)
+    return best > 0 ? pool[sc.findIndex((v) => v >= 0.78 * best)] : null
+  }
+  /** Drift-aware count for step s, or null when the gate does not open. */
+  const drift = (s) => {
+    if (len / s < 96) return null
+    let cols = 0
+    for (let i = 0; i < 8; i++) {
+      const a = Math.floor((i * n1) / 8), b = Math.floor(((i + 1) * n1) / 8), Aw = rdAcf(bands, a, b)
+      let bs = s, bv = -Infinity
+      if (Aw) for (let e = -90; e <= 90; e++) { const t = s * (1 + e / 500), v = rdComb(Aw, t); if (v > bv) { bv = v; bs = t } }
+      cols += (b - a) / bs
+    }
+    return Math.abs(cols - n1 / s) >= 2.5 ? (cols * len) / n1 : null
+  }
+  return { vote, top5, S, cap, fusedAt, arbitrate, drift }
 }
+function rdPca(img) { // recon channels: K = 14 k-means, PCA to 2 channels (power iteration) + centred alpha, scaled 0..1
+  const { width: w, height: h, data: d } = img, n = w * h, { centers, labels } = kmeansRGB(img, 14, { maxSamples: 50000 })
+  const X = new Float64Array(n * 3), m = [0, 0, 0]
+  let cnt = 0, ma = 0
+  for (let p = 0; p < n; p++) { ma += d[p * 4 + 3] / 255; if (labels[p] < 0) continue; for (let j = 0; j < 3; j++) { X[p * 3 + j] = centers[labels[p] * 3 + j] / 255; m[j] += X[p * 3 + j] } cnt++ }
+  for (let j = 0; j < 3; j++) m[j] /= cnt || 1
+  ma /= n
+  const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+  for (let p = 0; p < n; p++) if (labels[p] >= 0) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += (X[p * 3 + i] - m[i]) * (X[p * 3 + j] - m[j])
+  const mul = (M, v) => M.map((r) => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]), nrm = (v) => { const l = Math.hypot(...v); return l > 0 ? v.map((x) => x / l) : v }
+  const power = (M, v) => { for (let it = 0; it < 60; it++) v = nrm(mul(M, v)); return v }
+  const v1 = power(C, nrm([1, 1, 1])), l1 = mul(C, v1).reduce((s, x, i) => s + x * v1[i], 0)
+  const v2 = power(C.map((r, i) => r.map((x, j) => x - l1 * v1[i] * v1[j])), nrm([1, -1, 0.5]))
+  const P1 = new Float64Array(n), P2 = new Float64Array(n), PA = new Float64Array(n)
+  for (let p = 0; p < n; p++) {
+    PA[p] = d[p * 4 + 3] / 255 - ma
+    if (labels[p] < 0) continue
+    const r = [X[p * 3] - m[0], X[p * 3 + 1] - m[1], X[p * 3 + 2] - m[2]]
+    P1[p] = r[0] * v1[0] + r[1] * v1[1] + r[2] * v1[2]; P2[p] = r[0] * v2[0] + r[1] * v2[1] + r[2] * v2[2]
+  }
+  return [P1, P2, PA]
+}
+const rdT = (a, w, h) => { const t = new Float64Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) t[x * h + y] = a[y * w + x]; return t }
 
-/** Retro Diffusion Standard reference: returns its own discovered size. */
-export function retroDiffusion(img) {
-  const { width: w, height: h, data: d } = img, Y = new Float64Array(w * h)
-  for (let p = 0; p < w * h; p++) Y[p] = d[p * 4 + 3] < 128 ? 0 : luma(d, p * 4)
-  const M = median3(Y, w, h), Q = new Uint8Array(w * h)
-  for (let p = 0; p < w * h; p++) Q[p] = Math.round((M[p] / 255) * 11)
-  const ax = rdAxis((l, x) => 0.7 * Math.abs(Q[l * w + x + 1] - Q[l * w + x]), w, h, (l, x) => Q[l * w + x], Math.max(1, Math.floor(h / 256)))
-  const ay = rdAxis((l, y) => 0.7 * Math.abs(Q[(y + 1) * w + l] - Q[y * w + l]), h, w, (l, y) => Q[y * w + l], Math.max(1, Math.floor(w / 256)))
-  let sx = null, sy = null, route = 'none'
-  const all3 = (a) => a && a.props.every((v) => v !== null)
-  if (all3(ax) && all3(ay)) { // fast path
-    const cols = ax.props.map((p) => w / p), rows = ay.props.map((p) => h / p), mc = medianOf(cols), mr = medianOf(rows)
-    const agree = (v, m) => Math.max(...v) - Math.min(...v) <= Math.max(1, 0.01 * m)
-    if (agree(cols, mc) && agree(rows, mr) && Math.abs(Math.log((mc / mr) / (w / h))) < 0.35) { sx = medianOf(ax.props); sy = medianOf(ay.props); route = 'fast' }
-  }
-  if (sx === null) { // arbitration
-    const pick = (a) => {
-      if (!a) return null
-      const cands = [...new Set(a.props.filter((v) => v !== null).flatMap((p) => [p, 2 * p, p / 2]))]
-      if (!cands.length) return null
-      const best = Math.max(...cands.map(a.support))
-      return best > 0 ? Math.min(...cands.filter((c) => a.support(c) >= 0.78 * best)) : null
+/** Retro Diffusion Standard reference: returns its own discovered size, or the manual pixel size's (R10). */
+export function retroDiffusion(img, { manualStep = null } = {}) {
+  const { width: w, height: h, data: d } = img
+  let cols, rows, route, info = {}
+  if (manualStep) {
+    cols = Math.max(1, Math.round(w / manualStep)); rows = Math.max(1, Math.round(h / manualStep)); route = 'manual'
+  } else {
+    const Y = new Float64Array(w * h)
+    for (let p = 0; p < w * h; p++) Y[p] = d[p * 4 + 3] < 128 ? 0 : luma(d, p * 4)
+    const M = median3(Y, w, h), Q = new Float64Array(w * h)
+    for (let p = 0; p < w * h; p++) Q[p] = Math.round((M[p] / 255) * 11)
+    const ax = rdAxis(Y, Q, w, h), ay = rdAxis(rdT(Y, w, h), rdT(Q, w, h), h, w)
+    const tol = (m) => Math.max(1, 0.01 * m)
+    const group = (ids) => {
+      const cs = ids.map((v) => (ax?.vote[v] && ay?.vote[v] ? [w / ax.vote[v], h / ay.vote[v]] : null))
+      if (cs.some((c) => !c)) return null
+      const cx = cs.map((c) => c[0]), cy = cs.map((c) => c[1]), mc = medianOf(cx), mr = medianOf(cy)
+      if (Math.max(...cx) - Math.min(...cx) > tol(mc) || Math.max(...cy) - Math.min(...cy) > tol(mr)) return null
+      return Math.abs(Math.log(mc / mr / (w / h))) < 0.35 ? [mc, mr] : null
     }
-    sx = pick(ax); sy = pick(ay)
-    if (sx === null) sx = sy
-    if (sy === null) sy = sx
-    route = sx === null ? 'none' : 'arbitration'
-    if (sx !== null) {
-      const r = Math.abs(Math.log(sx / sy))
-      if (r > 0.45) { const f = Math.min(sx, sy), other = sx > sy ? ax : ay; if (other && other.support(f) >= 0.35) sx = sy = f }
+    let sx = null, sy = null, g = group(['ac', 'rl', 'ss'])
+    route = 'fast'
+    if (!g) { route = 'supermajority'; for (const ids of [['ac', 'rl', 'ss', 'fu'], ['ac', 'rl', 'fu'], ['ac', 'ss', 'fu'], ['rl', 'ss', 'fu']]) if ((g = group(ids))) break }
+    if (g) { sx = w / g[0]; sy = h / g[1] } else {
+      route = 'arbitration'
+      let rc = null
+      const chans = () => (rc ??= rdPca(img))
+      sx = ax ? ax.arbitrate(chans()) : null
+      sy = ay ? ay.arbitrate(chans().map((c) => rdT(c, w, h))) : null
+      if (sx === null) sx = sy
+      if (sy === null) sy = sx
+      if (sx !== null && Math.abs(Math.log(sx / sy)) > 0.45) { const f = Math.min(sx, sy), other = sx > sy ? ax : ay; if (other && other.fusedAt(f) >= 0.35) sx = sy = f }
+      if (sx !== null && Math.abs(Math.log(sx / sy)) < 0.08) sx = sy = 2 / (1 / sx + 1 / sy)
     }
+    info = { votes: { x: ax?.vote ?? null, y: ay?.vote ?? null }, S: [ax?.S ?? null, ay?.S ?? null] }
+    if (sx === null) return { image: { width: w, height: h, data: Uint8ClampedArray.from(d) }, native: [w, h], info: { route: 'none', ...info } }
+    const dx = ax?.drift(sx) ?? null, dy = ay?.drift(sy) ?? null
+    cols = Math.max(1, Math.round(dx ?? w / sx)); rows = Math.max(1, Math.round(dy ?? h / sy))
+    info.step = [sx, sy]; info.drift = [dx, dy]
   }
-  if (sx === null) return { image: { width: w, height: h, data: Uint8ClampedArray.from(d) }, native: [w, h], info: { route } }
-  if (Math.abs(Math.log(sx / sy)) < 0.08) sx = sy = 2 / (1 / sx + 1 / sy)
-  const cols = Math.max(1, Math.round(w / sx)), rows = Math.max(1, Math.round(h / sy))
   // reconstruction: labels from k-means on opaque pixels (placement only), tent-weighted vote, label-masked mean
-  const bin = { width: w, height: h, data: Uint8ClampedArray.from(d) }
-  for (let i = 3; i < bin.data.length; i += 4) bin.data[i] = bin.data[i] >= 128 ? 255 : 0
-  const { labels } = kmeansRGB(bin, 16), out = blank(cols, rows), cw = w / cols, chh = h / rows
+  const bin = { width: w, height: h, data: Uint8ClampedArray.from(d) }, c4 = new Set()
+  for (let i = 3; i < bin.data.length; i += 4) { bin.data[i] = bin.data[i] >= 128 ? 255 : 0; if (bin.data[i]) c4.add(((d[i - 3] >> 4) << 8) | ((d[i - 2] >> 4) << 4) | (d[i - 1] >> 4)) }
+  const K = clamp(c4.size, 16, 48), { labels } = kmeansRGB(bin, K), out = blank(cols, rows), cw = w / cols, chh = h / rows
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
     const x0 = i * cw, x1 = x0 + cw, y0 = j * chh, y1 = y0 + chh, mx = (x0 + x1) / 2, my = (y0 + y1) / 2
     const votes = new Map(), acc = new Map()
@@ -704,7 +969,7 @@ export function retroDiffusion(img) {
     const a = acc.get(bl), o = (j * cols + i) * 4
     out.data[o] = a[0] / a[3]; out.data[o + 1] = a[1] / a[3]; out.data[o + 2] = a[2] / a[3]; out.data[o + 3] = 255
   }
-  return { image: out, native: [cols, rows], info: { route, step: [sx, sy] } }
+  return { image: out, native: [cols, rows], info: { route, K, ...info } }
 }
 
 // ---------------------------------------------------------------------------------------------------

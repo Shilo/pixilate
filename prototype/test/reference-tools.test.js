@@ -59,6 +59,31 @@ describe('clean integer NN upscale recovery', () => {
   })
 })
 
+describe('Retro Diffusion reference (ef376e57, writeup 2026-10-21 reading)', () => {
+  const up = (img, k) => mk(Math.round(img.width * k), Math.round(img.height * k), (x, y) => { const o = (Math.min(img.height - 1, Math.floor(y / k)) * img.width + Math.min(img.width - 1, Math.floor(x / k))) * 4; return img.data.subarray(o, o + 4) })
+  for (const k of [5.5, 6.37]) it(`recovers fractional NN upscales of proc-blob and proc-1bit x${k} (R1: sub-pixel periods)`, () => {
+    for (const id of ['proc-blob', 'proc-1bit']) { const s = sprite(id); expect(retroDiffusion(up(s, k)).native).toEqual([s.width, s.height]) }
+  })
+  it('accepts a clean x8 upscale by Stage 1 consensus: the three cheap voters or a 3-of-4 group with the fused curve (R5)', () => {
+    const r = retroDiffusion(nnUp(sprite('proc-blob'), 8))
+    expect(['fast', 'supermajority']).toContain(r.info.route)
+    for (const ax of ['x', 'y']) expect(r.info.votes[ax].fu).toBeCloseTo(8, 1)
+  })
+  it('reports the run-length comb height on the cosine scale [-1, 1] (R3)', () => {
+    for (const img of [nnUp(sprite('proc-tile'), 8), noGrid('shapes', 1)]) for (const S of retroDiffusion(img).info.S) if (S !== null) { expect(S).toBeGreaterThanOrEqual(-1); expect(S).toBeLessThanOrEqual(1) }
+  })
+  it('manual pixel size skips detection: cols = round(w / step), rows = round(h / step) (R10)', () => {
+    const s = sprite('proc-ui'), r = retroDiffusion(nnUp(s, 8), { manualStep: 8 })
+    expect(r.info.route).toBe('manual')
+    expect(same(r.image, s)).toBe(true)
+    expect(retroDiffusion(nnUp(s, 8), { manualStep: 8.5 }).native).toEqual([Math.round((s.width * 8) / 8.5), Math.round((s.height * 8) / 8.5)])
+  })
+  it('structure K is the 4-bit colour complexity clamped to [16, 48] (R9)', () => {
+    expect(retroDiffusion(nnUp(sprite('proc-1bit'), 8)).info.K).toBe(16)
+    expect(retroDiffusion(noGrid('shapes', 1)).info.K).toBeLessThanOrEqual(48)
+  })
+})
+
 describe('determinism and adapter', () => {
   it('every reference is repeatable on the same input', () => {
     const img = nnUp(sprite('proc-blob'), 8)

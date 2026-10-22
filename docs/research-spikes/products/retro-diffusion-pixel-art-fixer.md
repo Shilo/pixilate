@@ -275,6 +275,45 @@ The reference was written from the 2026-10-19 sections, which recorded only part
 
 These parts are consistent with the writeup: median-filtered 12-level luminance, the JPEG notch at z > 5, the fast-path agreement rule, the 0.78, prefer-fine and harmonic-mean rules, the even lattice, the label-masked centre-weighted mean (tent weights are a stated substitute) and the alpha majority.
 
+#### Correction applied (2026-10-21, later the same day)
+
+`retroDiffusion` in `prototype/test/reference-tools.js` was rewritten clean-room from the writeup, re-read through a web-fetch tool with verbatim-quote requests on 2026-10-21. No code from the repository was read, downloaded or run. The comparison row is now "Retro Diffusion Std ref ef376e57 (partial Stage 2)".
+
+**The re-read added these VERIFIED writeup details**, which correct the table above where they differ:
+
+- `ray_e1` is defined: it projects each profile peak onto the unit circle at 2π·pos/step, occupancy-scaled so that half-period harmonics do not tie.
+- `runlengths` takes its boundaries from gradient non-maximum suppression, not from label changes. S < 0.1 makes this voter fall back to the variance channels; it is not a refusal.
+- `selfsim` uses |grad|, blurred |grad| and |Laplacian| after blur, and the writeup costs it at 72 shifts.
+- The tile z-scores are centred (z − 1) before the Stouffer sum.
+- `vc` counts only "active" cells: 8×8 blocks whose variance is above 2 % of the total.
+- `recon` compares the best phase with the best phase + s/2, against a running median of the error over s.
+- The fast path needs at least three of the cheap detectors to agree.
+
+| # | Status after the correction |
+|---|---|
+| R1 | **Fixed.** Comb with anti-comb, exp(−k/12) weights and the 0.5 subharmonic penalty on a fractional log-step grid; parabolic sub-pixel peaks and a least-squares fit through the origin. `selfsim` is also scored at fractional steps |
+| R2 | **Fixed.** \|second difference\| added. The relative units are INFERRED (both terms scaled to [0, 1]) |
+| R3 | **Fixed.** Cosine comb S(s) = mean cos(2πr/s) over NMS boundary distances; the largest peak within 0.70 of the max with ≥ 4 % run mass; S < 0.1 now only removes this voter |
+| R4 | **Partly fixed.** Comb t-statistic over K harmonics × min(1, (K−1)/3), with a divisor walk. The exact statistic is UNKNOWN; this version needs K ≥ 3. Tile drift votes are omitted |
+| R5 | **Fixed.** The fused curve is the fourth voter. The three cheap voters agreeing gives the fast path; a 3-of-4 group gives the group median; two of four is not enough |
+| R6 | **Partly fixed.** Every documented term is present: core4 {`ray_e1`, `tile_e1`, `tile_e2`, `spec_e1`}, 0.20·`vc`, 0.25·(agree − 1), 0.6·`recon`/rmax and the ×0.35 detail cap. `vc` and `recon` use 1D scanline segments on the even lattice instead of the writeup's 2D cells. Harmonic counts, tile and Welch settings, and the meaning of "total" are labelled substitutes |
+| R7 | **Fixed.** Pool = the voters' steps plus autocorr's next five maxima, log de-duplicated (2 %, a substitute) and clamped to (1.2, extent/3); no 2× or ½× |
+| R8 | **Partly fixed.** Detail cap and drift-aware counting are implemented. Cross-axis factor-2/3 promotion is still **omitted**, because the "plain-comb mass" threshold is not given |
+| R9 | **Fixed.** K = the 4-bit colour complexity of the opaque pixels, clamped to [16, 48] |
+| R10 | **Fixed.** `retroDiffusion(img, { manualStep })`, and a `rdManual` target row with step = w/W |
+| R11 | **Fixed.** The `compare.mjs` header now lists Retro Diffusion as uncapped, with K as placement-only |
+
+**Still omitted or UNKNOWN:**
+
+- Cross-axis promotion.
+- `selfsim` tile drift votes (`DISP_UNIFORM`).
+- Cross-scanline coherence smoothing in `runlengths`.
+- The exact JPEG z statistic.
+- The `consensus` strings.
+- Every constant that the header of `reference-tools.js` lists as a substitute.
+
+**Measured behaviour of this reading** (INFERRED cause): on 22 of 450 comparison cases, mostly ×16 clean upscales, the reference returns twice the true count. The step at half the true size comes from autocorr's top five and scores ≥ 0.78 of the best in Stage 2, so the smallest-step rule takes it. The writeup's own terms may separate octaves better than these substitutes. The hosted build is still not reproduced. Numbers are in the [test results](../../reviews/prototype-v1-test-results.md#retro-diffusion-reference-corrected-2026-10-21).
+
 ### Measured: the reference reconstruction at a user-given size
 
 All numbers here are OBSERVED, local-only and not rights-cleared, because the matrix includes local-only crops and sprites. They are in-sample and exploratory, not a methodology §12 comparison.
@@ -358,7 +397,7 @@ Ranked by expected benefit over risk. Each states its evidence and its fit with 
 
 ### Proposed correction of the reference (not applied)
 
-Smallest change first. Each item names the exact change.
+**Superseded on 2026-10-21:** items 1–5 were applied, and item 6's Stage 2 terms were built as labelled substitutes; see [Correction applied](#correction-applied-2026-10-21-later-the-same-day). The proposal is kept as written. Smallest change first. Each item names the exact change.
 
 1. **`compare.mjs` (R10, R11).**
    - Give `retroDiffusion(img, { manualStep })` a manual surface: when `manualStep` is set, skip detection, set sx = sy = `manualStep`, cols = round(w/step), rows = round(h/step).

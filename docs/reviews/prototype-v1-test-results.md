@@ -134,6 +134,45 @@ At K = 16, ours is 0.887 / 0.992 / 0.860 / 0.833 / 0.831 (oracle 0.901), Real-Pi
 
 `nonint-nn`: Real-PixelArt fixed-size 3 / 2, both medians 1.000.
 
+#### Retro Diffusion reference corrected (2026-10-21)
+
+**What changed.** The Retro Diffusion reference was rewritten from the vendor writeup to fix fidelity items R1–R11 of the [spike](../research-spikes/products/retro-diffusion-pixel-art-fixer.md#correction-applied-2026-10-21-later-the-same-day). Cross-axis promotion and a few other details are still omitted. A manual pixel-size row (`rdManual`, step = w/W) was added.
+
+**How it was run.**
+
+- `node scripts/compare.mjs --seeds 1`, with "ours" pinned through `--engine` to `git archive` of `a6522b8`.
+- 450 cases, 0 errors, run as resumable shards (10, then 16) and merged.
+- Ours is unchanged from the table above.
+- Timings are not comparable: the machine was shared during the run.
+- Same caveats as above: re-implementations, not the tool; in-sample; **OBSERVED, local-only, not rights-cleared**.
+
+Median `emIn` is given as all / G / I / M / B. Wins and losses are against ours at `_kT`, by more than 0.02.
+
+| Method | `_kT` | Native cap | Native size-exact | Wins / losses |
+|---|---|---|---|---|
+| Ours (recommended) | 0.978 / 1.000 / 0.960 / 0.835 / 0.860 | 0.976 / 1.000 / 0.956 / 0.835 / 0.831 | 0.780 / 1.000 / 0.743 / 0.733 / 0.567 | — |
+| RD ref, before | 0.838 / 1.000 / 0.788 / 0.703 / 0.634 | 0.846 / 1.000 / 0.808 / 0.734 / 0.642 | 0.233 / 0.956 / 0.071 / 0.033 / 0.000 | 90 / 223 |
+| RD ref, corrected | 0.888 / 1.000 / 0.867 / 0.808 / 0.641 | 0.903 / 1.000 / 0.878 / 0.821 / 0.664 | 0.569 / 0.844 / 0.495 / 0.583 / 0.200 | 95 / 183 |
+| RD ref, manual pixel size | 0.909 / 1.000 / 0.910 / 0.809 / 0.785 | 0.934 / 1.000 / 0.939 / 0.834 / 0.803 | — | 126 / 140 |
+
+**Size and grids.**
+
+- The corrected reference's within-one-cell rate is 0.644 (was 0.338).
+- It now asserts a lattice on all four no-grid scenes (was 0.75; ours 0). The writeup's S < 0.1 rule falls back to other channels rather than refusing.
+- G size-exact fell from 0.956 to 0.844. On 22 of 450 cases, mostly ×16 clean upscales, it returns twice the true count (INFERRED cause in the spike).
+
+**Where it beats ours.** On M at `_kT`, the corrected reference wins 49 cases and loses 50. Per preset at `_kT` (30 cases each):
+
+- **Detected size:**
+  - `jpeg-heavy`: 0.909 against 0.885, 15 / 8 (native cap 0.961).
+  - `gemini-like`: 0.877 against 0.873, 15 / 9 (native cap 0.899).
+- **Manual pixel size:**
+  - `jpeg-heavy`: 0.916, 14 / 7.
+  - `gemini-like`: 0.890, 15 / 9.
+  - `bicubic-x8-clean`: 0.900 against 0.866, 13 / 8.
+  - `bicubic-x8`: 0.460 against 0.369, 22 / 4.
+- **Where it loses:** it trails ours on `nonint-*`, `bilinear-x8` and `bilinear-x8.37` (detected size 0.707 / 0.752 against 0.952 / 0.951).
+
 **Private AI samples at the pitch-estimate target** (OBSERVED, local-only, not rights-cleared): colours / noise orphans of our recommended output, round 3 → round 5. Recommendations are unchanged (`clean` on the five gridded samples, `smooth` on `ai-wizard`).
 
 | Sample | Target | Ours, round 3 | Ours, round 5 |
