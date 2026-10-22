@@ -1,5 +1,7 @@
 # Pixilate app (MVP)
 
+Every pixel is a true pixel. Turn AI-generated or handmade images into real pixel art at the exact size you choose, with a clean palette and no generative AI needed. Live at <https://shilo.github.io/pixelate/>.
+
 The first designed app for Pixilate (owner decision OWN-007): one screen that turns an image into true pixel art at the size you choose. It only downscales and converts; the colour count is its single colour control. Everything runs on your device: decoding and conversion happen in a Web Worker that calls the prototype engine in place (`../prototype/src/lib`, imported through the `$engine` alias), so the saved PNG is byte-for-byte the engine's output for the shown settings. There are no runtime network requests beyond the app's own files, and only system fonts are used. The production build enforces this with a Content Security Policy `<meta>` (FR-021) added by a small plugin in `vite.config.js`: same-origin scripts, styles, fetches and workers only, `blob:`/`data:` images, and the inline theme script allowed by a sha256 computed at build time. The dev server has no policy, because Vite injects `<style>` elements and an HMR socket there. Component markup must not use static `style="..."` attributes (the policy blocks them); dynamic `style:` directives are fine.
 
 Svelte 5 + Vite (not SvelteKit), JavaScript, styled with GlassKit.
@@ -29,7 +31,9 @@ Save and Share hand over the engine's exact PNG. Copy goes through the system cl
 - `src/lib/`: `copy.js` (every UI string), `opts.js` (size logic, engine options, recipe), `geometry.js` (Before mapping, zoom, export scales), `jobs.js` (worker handler), `client.js` (job control), `icons.js`.
 - `public/example.png`: a procedural sprite degraded by the seeded generator in `prototype/test` (no third-party pixels), noisy enough that the clean-up is visible.
 
-## Third-party notices
+## Licence and third-party notices
+
+Pixilate is licensed under the [MIT License](../LICENSE).
 
 GlassKit 1.22.2 (`@jungherz-de/glasskit`, pinned exactly), MIT License, Copyright (c) 2026 Jungherz GmbH, <https://github.com/JUNGHERZ/GlassKit>. Only `glasskit.css` is used; the package has no install scripts and the stylesheet has no `@import` or remote `url()`. GlassKit is not affiliated with Pixilate.
 

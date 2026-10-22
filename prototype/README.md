@@ -85,7 +85,7 @@ Scope of the evidence: output was observed byte-identical between Chromium and N
 
 ## Licences and credits
 
-Pixilate-owned code is intended to be MIT-licensed; no licence is declared in the repository yet (owner decision pending), so nothing here is licensed for reuse until it is.
+Pixilate-owned code is licensed under the [MIT License](../LICENSE) (owner decision `OWN-008`, 2026-10-21).
 
 Dependencies (versions from `package-lock.json`, licences from each package's `package.json`):
 

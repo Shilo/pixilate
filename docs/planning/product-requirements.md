@@ -4,7 +4,7 @@
 **Document type:** research-backed product requirements / design contract  
 **Status:** planning baseline; no implementation is authorized by this document  
 **Date:** 2026-07-31  
-**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; 2026-10-20 — `OWN-007` (first designed MVP app); earlier text is retained with dated supersession notes  
+**Amended:** 2026-10-19 — owner decisions `OWN-001`–`OWN-006` are recorded in §25; 2026-10-20 — `OWN-007` (first designed MVP app); 2026-10-21 — `OWN-008` (MIT licence, public repository); earlier text is retained with dated supersession notes  
 **License intent:** open source under MIT, subject to dependency and patent review  
 
 ## 1. Executive product contract
@@ -1050,3 +1050,10 @@ These entries are the documented product decisions that §21 requires before a d
 - **Supersedes:** for `app/` only, the rule that implementation beyond the prototype needs separate approval (master plan §15–16) and `OWN-002`'s "not product work" scope. It closes no `OD-*` or `EX-*` and passes no gate.
 - **Remaining verification obligations:** GlassKit licence and dependency review (`NFR-PERF-005`); interface requirements in this document (Trim preview, recorded recipe, explicit opt-in stages, `GEO-002` for a suggested size); design and usability testing across viewports; the `DET-*` obligations before any strict-determinism claim.
   - 2026-10-21: verified so far are the pinned GlassKit 1.22.2 (MIT, no dependencies or install scripts), tools off by default, Crop to subject as Trim `cells`, the always-shown `GEO-002` derivation, engine-identical PNGs and replayable recipes (OBSERVED, procedural), and five test passes plus a re-verification on emulated viewports in light and dark; real devices, screen readers and `DET-*` remain open ([MVP app test results](../reviews/mvp-app-test-results.md)).
+
+### OWN-008 — MIT licence and public repository (2026-10-21)
+
+- **Decision:** Pixilate is open source under the MIT License (root `LICENSE`, Copyright (c) 2026 Shilo). The repository is public at <https://github.com/Shilo/pixelate>, and every push to `main` publishes `app/` to GitHub Pages at <https://shilo.github.io/pixelate/>.
+- **Rationale:** owner direction to publish the project as open source under the licence these documents intended from the start.
+- **Supersedes:** the "intended", "not yet declared" and "no `LICENSE` file" statements in this document, the master plan and the session findings, which stay as dated history.
+- **Remaining verification obligations:** `NFR-LIC-001`–`007` for each distributed artifact, including the shipped third-party notices; a public URL is not a release, and it passes no gate.
