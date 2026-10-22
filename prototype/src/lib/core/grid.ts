@@ -1,8 +1,14 @@
+import type { Image, Grid, Axis, Numbers, Pair, GridCandidate } from './types.ts'
+type EdgeProfile = ReturnType<typeof edgeProfiles>
+type Spectrum = ReturnType<typeof spectrum>
+type AxisSetup = ReturnType<typeof setupAxis>
+export interface EdgeState { pr: EdgeProfile; axes: AxisSetup[] }
+export interface GridOptions { targetW?: number; targetH?: number; mask?: Uint8Array | null; preset?: { jpegStrict?: boolean }; profile?: string; noRefine?: boolean; edges?: Map<string, EdgeState> | null }
 // Grid detection (contract Step 3): recover the fake-pixel lattice per axis — period, phase and
 // (optionally drifting) cut positions — plus a gridded/illustration verdict with evidence.
 // Deterministic: + - * / sqrt floor round abs only; twiddles come from color.js sinDet/cosDet;
 // every argmax keeps the first (lowest-index) maximum.
-import { srgbToOklab, sinDet, cosDet } from './color.js'
+import { srgbToOklab, sinDet, cosDet } from './color.ts'
 
 const TWO_PI = 6.283185307179586
 const FLOOR = 8 // per-term L1 noise floor (sum of 4 premultiplied channels): flat-area grain/JPEG noise
@@ -13,7 +19,7 @@ const LINES = 96 // sampled rows/columns for the within-cell uniformity guard
 // ---------------------------------------------------------------- FFT (radix-2, table twiddles)
 
 const twiddles = new Map() // N -> { c, s }; built once per size, deterministic values
-function tw(N) {
+function tw(N: number) {
   let t = twiddles.get(N)
   if (!t) {
     const c = new Float64Array(N / 2), s = new Float64Array(N / 2)
@@ -24,7 +30,7 @@ function tw(N) {
 }
 
 /** In-place forward FFT (e^{-i}), N a power of two. */
-function fft(re, im) {
+function fft(re: Float64Array, im: Float64Array) {
   const n = re.length, { c, s } = tw(n)
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1
@@ -55,7 +61,7 @@ function fft(re, im) {
  * replace them: a smooth (bilinear/bicubic) upscale has no steps, its lattice is in the slope kinks
  * at the sample centres (no blockiness then).
  */
-function edgeProfiles(img, mask, profile = 'd1') {
+function edgeProfiles(img: Image, mask?: Uint8Array | null, profile = 'd1') {
   const W = img.width, H = img.height, d = img.data, n = W * H
   const pm = new Uint8Array(n * 4)
   for (let o = 0; o < n * 4; o += 4) {
@@ -68,9 +74,9 @@ function edgeProfiles(img, mask, profile = 'd1') {
   let terms = 0
   // Blockiness: mean small difference by position mod 7/8/9 (period 8 = JPEG, 7/9 = controls).
   const bs = [new Float64Array(7), new Float64Array(8), new Float64Array(9)], bc = bs.map((a) => new Float64Array(a.length))
-  const block = (pos, v) => { for (let m = 0; m < 3; m++) { const r = pos % (7 + m); bs[m][r] += v; bc[m][r]++ } }
+  const block = (pos: number, v: number) => { for (let m = 0; m < 3; m++) { const r = pos % (7 + m); bs[m][r] += v; bc[m][r]++ } }
   const d2 = profile === 'd2' // its terms read pixels -2..+1 along the axis; the mask test covers all four
-  const sd = (o, s) => { // second difference at the boundary before pixel offset o (s = pixel stride in bytes), clamped
+  const sd = (o: number, s: number) => { // second difference at the boundary before pixel offset o (s = pixel stride in bytes), clamped
     let v = 0
     for (let c = 0; c < 4; c++) v += Math.abs(pm[o + s + c] - pm[o + c] - pm[o - s + c] + pm[o - 2 * s + c])
     return v < 1020 + FLOOR ? v : 1020 + FLOOR
@@ -137,7 +143,7 @@ function edgeProfiles(img, mask, profile = 'd1') {
 // ---------------------------------------------------------------- spectra and scores
 
 /** Hann-windowed, mean-removed, >= 8x zero-padded FFT magnitude of P[a..b). */
-function spectrum(P, a, b) {
+function spectrum(P: Float64Array, a: number, b: number) {
   const n = b - a
   let N = 1
   while (N < n) N <<= 1
@@ -153,13 +159,13 @@ function spectrum(P, a, b) {
   return { M, N, n }
 }
 
-const magAt = (sp, f) => {
+const magAt = (sp: Pick<Spectrum, "M" | "N">, f: number) => {
   const x = f * sp.N, i = Math.floor(x), t = x - i
   return i + 1 < sp.M.length ? sp.M[i] * (1 - t) + sp.M[i + 1] * t : sp.M[sp.M.length - 1]
 }
 
 /** Median magnitude over the searched band (noise level for prominence and the harmonic sum). */
-function bandMedian(sp, qmax) {
+function bandMedian(sp: Spectrum, qmax: number) {
   const lo = Math.max(1, Math.floor(sp.N / qmax)), hi = Math.min(sp.M.length - 1, Math.ceil(sp.N / QMIN))
   const v = Float64Array.from(sp.M.subarray(lo, hi + 1)).sort()
   return v.length ? v[v.length >> 1] : 0
@@ -170,7 +176,7 @@ function bandMedian(sp, qmax) {
  * shapes scores ~1; only line-like lattice harmonics stand out), then a running max over +-1.5
  * natural bins so the 0.25% period grid and drift sidebands do not miss a smeared line.
  */
-function whiten(sp) {
+function whiten(sp: Spectrum) {
   const { M, N, n } = sp, K = M.length, bin = N / n, r = Math.max(1, Math.round(24 * bin)), pre = new Float64Array(K + 1)
   for (let k = 0; k < K; k++) pre[k + 1] = pre[k] + M[k]
   const Wh = new Float64Array(K), Pk = new Float64Array(K), rm = Math.max(1, Math.round(1.5 * bin))
@@ -190,7 +196,7 @@ function whiten(sp) {
  * Harmonic sum over h/q below Nyquist of the line excess (<= 2 x local mean adds nothing), weighted
  * 1/h: a multiple kq of the true period then scores ~S(q)/k instead of a superset of S(q).
  */
-function harmonicSum(wh, q) {
+function harmonicSum(wh: ReturnType<typeof whiten>, q: number) {
   let s = 0
   for (let h = 1; h / q < 0.5; h++) { const m = magAt(wh, h / q) - 2; if (m > 0) s += m / h }
   return s
@@ -201,7 +207,7 @@ function harmonicSum(wh, q) {
  * plus optional extra periods (target prior). Returns the smallest scoring >= 0.78 x best
  * (allowed(q) may veto a candidate, e.g. JPEG-like periods) and every qualified [q, score] by q.
  */
-function smallestQualified(sp, qmax, extra = [], allowed = null) {
+function smallestQualified(sp: Spectrum, qmax: number, extra: number[] = [], allowed: ((q: number) => boolean) | null = null) {
   if (qmax < QMIN) return null
   const wh = whiten(sp), qs = [], ss = []
   for (let q = QMIN; q <= qmax; q *= 1.0025) { qs.push(q); ss.push(harmonicSum(wh, q)) }
@@ -216,7 +222,7 @@ function smallestQualified(sp, qmax, extra = [], allowed = null) {
   if (best <= 0) return null
   let pick = Infinity
   for (const [q, s] of ok) if (s >= QUAL * best && q < pick) pick = q
-  const qualified = (q) => { // within +-1% (the 0.25% grid's peaks are sharp)
+  const qualified = (q: number) => { // within +-1% (the 0.25% grid's peaks are sharp)
     for (let k = -4; k <= 4; k++) if (harmonicSum(wh, q * (1 + 0.0025 * k)) >= QUAL * best) return true
     return false
   }
@@ -225,7 +231,7 @@ function smallestQualified(sp, qmax, extra = [], allowed = null) {
 }
 
 /** Exact DFT of the mean-removed profile x at frequency f (rotation recurrence, one sinDet). */
-function dft(x, f) {
+function dft(x: Float64Array, f: number) {
   const c = cosDet(TWO_PI * f), s = sinDet(TWO_PI * f)
   let wr = 1, wi = 0, re = 0, im = 0
   for (let i = 0; i < x.length; i++) {
@@ -237,7 +243,7 @@ function dft(x, f) {
 }
 
 /** Cosine-comb score, maximized over phase: sum of DFT magnitudes at harmonics h <= H below Nyquist. */
-function combScore(x, q) {
+function combScore(x: Float64Array, q: number) {
   const H = Math.min(8, Math.ceil(q / 2) - 1)
   let s = 0
   for (let h = 1; h <= H && h / q < 0.5; h++) s += dft(x, h / q)
@@ -248,7 +254,7 @@ function combScore(x, q) {
  * Refine the period around q0 maximizing combScore: 5 zoom rounds of 17 points over +-2% or
  * +-1.5 natural FFT bins, whichever is wider (few cells = coarse spectral peaks).
  */
-function refinePeriod(x, q0) {
+function refinePeriod(x: Float64Array, q0: number) {
   let q = q0, hw = q0 * Math.max(0.02, (1.5 * q0) / x.length), best = combScore(x, q0)
   for (let r = 0; r < 5; r++) {
     const c = q
@@ -264,7 +270,7 @@ function refinePeriod(x, q0) {
 }
 
 /** Mean-removed copy of the profile interior (boundaries 1..len-1; ends set to 0). */
-function centered(P) {
+function centered(P: Float64Array) {
   const len = P.length - 1, x = new Float64Array(len + 1)
   let m = 0
   for (let i = 1; i < len; i++) m += P[i]
@@ -274,7 +280,7 @@ function centered(P) {
 }
 
 /** Normalized edge signal for comb/DP: max(own, half the stronger neighbour) / p90, capped at 1. */
-function edgeSignal(P) {
+function edgeSignal(P: Float64Array) {
   const len = P.length - 1, e = new Float64Array(len + 1)
   for (let i = 1; i < len; i++) e[i] = Math.max(P[i], 0.5 * Math.max(P[i - 1], P[i + 1]))
   const s = Float64Array.from(e.subarray(1, len).filter((v) => v > 0)).sort() // nonzero: sparse sprites keep a real scale
@@ -283,7 +289,7 @@ function edgeSignal(P) {
   return e
 }
 
-const interp = (e, t) => {
+const interp = (e: Float64Array, t: number) => {
   const i = Math.floor(t)
   if (i < 0) return e[0]
   if (i >= e.length - 1) return e[e.length - 1]
@@ -291,7 +297,7 @@ const interp = (e, t) => {
 }
 
 /** Phase by quarter-pixel comb search: argmax over phi of the mean interpolated edge at phi + k p. */
-function phaseOf(e, len, p) {
+function phaseOf(e: Float64Array, len: number, p: number) {
   let best = -1, phase = 0
   for (let j = 0; j < 4 * p; j++) {
     const phi = j / 4
@@ -305,14 +311,14 @@ function phaseOf(e, len, p) {
 // ---------------------------------------------------------------- cuts
 
 /** Regular cuts phase + k p, with cuts[0] = 0, cuts[N] = len; edge slivers < half a cell merge inward. */
-function regularCuts(len, p, phase) {
+function regularCuts(len: number, p: number, phase: number) {
   const c = [0]
   for (let k = phase > 1e-9 ? 0 : 1; phase + k * p < len - 1e-9; k++) c.push(phase + k * p)
   c.push(len)
   return mergeSlivers(c, p)
 }
 
-function mergeSlivers(c, p) {
+function mergeSlivers(c: number[], p: number) {
   if (c.length > 2 && c[1] < 0.5 * p) c.splice(1, 1)
   if (c.length > 2 && c[c.length - 1] - c[c.length - 2] <= 0.5 * p) c.splice(c.length - 2, 1)
   return c
@@ -322,7 +328,7 @@ function mergeSlivers(c, p) {
  * Elastic cuts: DP on a quarter-pixel lattice maximizing sum of edge strength at cuts minus
  * lambda (s - p)^2, lambda = 1 / (0.25 p)^2, widths in [0.75p, 1.3p]; free partial first/last cell.
  */
-function elasticCuts(e, len, p) {
+function elasticCuts(e: Float64Array, len: number, p: number) {
   const L = len * 4, lam = 1 / (0.25 * p * (0.25 * p))
   const smin = Math.ceil(3 * p), smax = Math.floor(5.2 * p)
   const pen = new Float64Array(smax + 1)
@@ -350,9 +356,9 @@ function elasticCuts(e, len, p) {
  * 1.2 ((c - anchor) / p)^2 plus sum over interior cells of 3.5 ((width - p) / p)^2; the two edge cells
  * are free within [0.5p, 1.5p]. Null when no path exists.
  */
-function countCuts(e, len, n, phase) {
+function countCuts(e: Float64Array, len: number, n: number, phase: number) {
   const p = len / n, R = 0.45 * p, d = phase > p / 2 ? phase - p : phase
-  const gapC = (g, edge) => { if (edge) return g < 0.5 * p || g > 1.5 * p ? Infinity : 0; const t = (g - p) / p; return 3.5 * t * t }
+  const gapC = (g: number, edge: boolean) => { if (edge) return g < 0.5 * p || g > 1.5 * p ? Infinity : 0; const t = (g - p) / p; return 3.5 * t * t }
   let prevPos = [0], prevCost = [0]
   const levels = []
   for (let k = 1; k < n; k++) {
@@ -382,14 +388,14 @@ function countCuts(e, len, n, phase) {
   return cuts
 }
 
-function capture(e, cuts) {
+function capture(e: Float64Array, cuts: Numbers) {
   let s = 0
   for (let k = 1; k < cuts.length - 1; k++) s += interp(e, cuts[k])
   return s
 }
 
 /** |sum x_i e^{-2 pi i u(i)}| / sum |x_i|, u = cell coordinate warped through the cuts (= DFT coherence when regular). */
-function coherence(x, cuts) {
+function coherence(x: Float64Array, cuts: Numbers) {
   const N = cuts.length - 1, len = x.length - 1
   let re = 0, im = 0, tot = 0, k = 0
   for (let i = 1; i < len; i++) {
@@ -404,7 +410,7 @@ function coherence(x, cuts) {
   return tot > 0 ? Math.sqrt(re * re + im * im) / tot : 0
 }
 
-const expNeg = (x) => { if (x >= 40) return 0; let v = 1 - x / 1024; for (let i = 0; i < 10; i++) v *= v; return v } // ~e^-x with * only
+const expNeg = (x: number) => { if (x >= 40) return 0; let v = 1 - x / 1024; for (let i = 0; i < 10; i++) v *= v; return v } // ~e^-x with * only
 
 /**
  * Chance-corrected edge support (idea: Real-PixelArt, MIT; clean-room, D52): peaks of the edge signal
@@ -413,7 +419,7 @@ const expNeg = (x) => { if (x >= 40) return 0; let v = 1 - x / 1024; for (let i 
  * chance = min(0.85, 2.5066 tol / p) (the share uniform edges would reach); support =
  * clip((match - chance) / (1 - chance), 0, 1). Null below 4 peaks.
  */
-function edgeSupport(A, cuts, p) {
+function edgeSupport(A: AxisSetup, cuts: Numbers, p: number) {
   const e = A.e, len = A.len
   let lo = Infinity, hi = -Infinity
   for (let i = 1; i < len; i++) { if (e[i] < lo) lo = e[i]; if (e[i] > hi) hi = e[i] }
@@ -440,7 +446,7 @@ function edgeSupport(A, cuts, p) {
 // ---------------------------------------------------------------- within-cell uniformity (anti-octave guard)
 
 /** OKLab prefix sums along LINES sampled rows (axis 0) or columns (axis 1). */
-function sampleLines(pr, axis) {
+function sampleLines(pr: EdgeProfile, axis: number) {
   const { W, H, pm } = pr, len = axis ? H : W, other = axis ? W : H, nl = Math.min(other, LINES)
   const pre = new Float64Array(nl * (len + 1) * 4), t = new Float64Array(3)
   for (let l = 0; l < nl; l++) {
@@ -462,7 +468,7 @@ function sampleLines(pr, axis) {
  * 25%-inset interior. A fixed window keeps in-cell gradients from favouring small cells; a
  * window straddling a true seam (wrong period) shows up as variance. Edge cells are skipped.
  */
-function uniformity(lines, cuts, w0) {
+function uniformity(lines: ReturnType<typeof sampleLines>, cuts: number[], w0: number) {
   const { pre, nl } = lines, stride = (lines.len + 1) * 4
   let sum = 0, cnt = 0
   for (let k = 1; k < cuts.length - 2; k++) {
@@ -485,7 +491,7 @@ function uniformity(lines, cuts, w0) {
 }
 
 /** Line at q's fundamental / line at 2/q: ~0 when q is twice the true period (its odd harmonics are empty). */
-const fundRatio = (A, q) => linePeak(A.sp, 1 / q) / Math.max(1e-12, linePeak(A.sp, 2 / q))
+const fundRatio = (A: AxisSetup, q: number) => linePeak(A.sp, 1 / q) / Math.max(1e-12, linePeak(A.sp, 2 / q))
 
 /**
  * Anti-octave guard over p, 2p, p/2 (each refined, on its own cuts, elastic when adopted).
@@ -495,7 +501,7 @@ const fundRatio = (A, q) => linePeak(A.sp, 1 / q) / Math.max(1e-12, linePeak(A.s
  * clearly better. Fundamental ratio measured on the real samples + synthetic: true period >= 0.88,
  * twice the true period <= 0.32 (threshold 0.6).
  */
-function octaveGuard(lines, A, p, qualified, ev, name) {
+function octaveGuard(lines: ReturnType<typeof sampleLines>, A: AxisSetup, p: number, qualified: (q: number) => boolean, ev: string[], name: string) {
   for (let it = 0; it < 3; it++) {
     const w0 = Math.max(2, Math.floor(0.25 * p)), u = uniformity(lines, cutsFor(A, p).cuts, w0)
     if (2 * p <= A.qmax && qualified(2 * p) && fundRatio(A, 2 * p) >= 0.6) {
@@ -528,10 +534,10 @@ function octaveGuard(lines, A, p, qualified, ev, name) {
  * (seamless) fields such as painted waves, low for flat cells with real seams. Measured: gridded
  * real samples 0.12-0.69, the painted wizard 1.00, a sinusoid field 1.32.
  */
-function purity(pr, cx, cy) {
+function purity(pr: EdgeProfile, cx: Float64Array, cy: Float64Array) {
   const { W, pm } = pr, nx = cx.length - 1, ny = cy.length - 1, t = new Float64Array(3)
   const sx = Math.max(1, Math.floor(nx / 40)), sy = Math.max(1, Math.floor(ny / 40))
-  const stat = (i, j) => {
+  const stat = (i: number, j: number) => {
     const x0 = cx[i], x1 = cx[i + 1], y0 = cy[j], y1 = cy[j + 1], m = new Float64Array(15) // mean, left, right, top, bottom (3 each)
     let S2 = 0
     for (let v = 0; v < 4; v++) {
@@ -546,7 +552,7 @@ function purity(pr, cx, cy) {
     }
     return { m, sd: Math.sqrt(Math.max(0, S2 - m[0] * m[0] - m[1] * m[1] - m[2] * m[2])) }
   }
-  const de = (A, a, B, b) => { const l = A[a] - B[b], u = A[a + 1] - B[b + 1], v = A[a + 2] - B[b + 2]; return Math.sqrt(l * l + u * u + v * v) }
+  const de = (A: Float64Array<ArrayBuffer>, a: number, B: Float64Array<ArrayBuffer>, b: number) => { const l = A[a] - B[b], u = A[a + 1] - B[b + 1], v = A[a + 2] - B[b + 2]; return Math.sqrt(l * l + u * u + v * v) }
   const sds = [], cons = [], steps = []
   for (let j = 0; j + 1 < ny; j += sy) {
     for (let i = 0; i + 1 < nx; i += sx) {
@@ -561,17 +567,17 @@ function purity(pr, cx, cy) {
   return { ratio: median(sds) / median(cons), step: median(steps) }
 }
 
-const median = (a) => { const s = Float64Array.from(a).sort(); return s.length ? s[s.length >> 1] : 0 }
+const median = (a: Iterable<number>) => { const s = Float64Array.from(a).sort(); return s.length ? s[s.length >> 1] : 0 }
 
 /**
  * Energy-weighted share of overlapping windows (3 bands x 50%-overlap segments of max(256, 8p) px)
  * whose local pitch is within 12% of p or where p is still a qualified pitch. Below 256 px there is no room for windows: returns 1 (n/a).
  */
-function agreement(bands, len, p) {
+function agreement(bands: Float64Array[], len: number, p: number) {
   if (len < 256) return 1
   const Lw = Math.min(len, Math.max(256, Math.ceil(8 * p))), step = Math.max(1, Lw >> 1)
   let tot = 0, ok = 0, maxE = 0
-  const wins = []
+  const wins: [Float64Array, number, number, number][] = []
   for (const band of bands) {
     for (let a = 0; a + Lw <= len || a === 0; a += step) {
       const b = Math.min(len + 1, a + Lw + 1)
@@ -593,16 +599,16 @@ function agreement(bands, len, p) {
 
 // ---------------------------------------------------------------- assembly
 
-const f2 = (v) => (Math.round(v * 100) / 100).toString()
-const f5 = (v) => v.toExponential(2)
-const r3 = (v) => Math.round(v * 1000) / 1000
-const near16k = (p) => { for (let k = 1; k <= 8; k++) if (Math.abs(p - 16 / k) <= 0.005 * (16 / k)) return true; return false }
+const f2 = (v: number | null | undefined) => (Math.round(v! * 100) / 100).toString()
+const f5 = (v: number) => v.toExponential(2)
+const r3 = (v: number) => Math.round(v * 1000) / 1000
+const near16k = (p: number) => { for (let k = 1; k <= 8; k++) if (Math.abs(p - 16 / k) <= 0.005 * (16 / k)) return true; return false }
 
 /**
  * Phase, then regular cuts or elastic DP cuts (p >= 4, adopted at >= 1.5x capture and, if given, the fixed count).
  * Second-difference profile: peaks sit at cell centres, so the phase moves by p/2; regular cuts only.
  */
-function cutsFor(A, p, fixedCount) {
+function cutsFor(A: AxisSetup, p: number, fixedCount?: number) {
   let phase = phaseOf(A.e, A.len, p)
   if (A.d2) { phase = (phase + p / 2) % p; if (p - phase < 0.125) phase = 0 }
   let cuts = regularCuts(A.len, p, phase), elastic = false, gain = 1
@@ -615,7 +621,7 @@ function cutsFor(A, p, fixedCount) {
 }
 
 /** Build one axis from a period: cuts, prominence (line peak / band median), coherence over the cuts. */
-function buildAxis(A, p, fixedCount) {
+function buildAxis(A: AxisSetup, p: number, fixedCount?: number) {
   const { phase, cuts, elastic, gain } = cutsFor(A, p, fixedCount)
   return {
     period: p, phase, cuts: Float64Array.from(cuts), count: cuts.length - 1, elastic,
@@ -624,20 +630,20 @@ function buildAxis(A, p, fixedCount) {
 }
 
 /** Max raw magnitude within +-1.5 natural bins of f (drift splits a line into sidebands). */
-function linePeak(sp, f) {
+function linePeak(sp: Spectrum, f: number) {
   const c = f * sp.N, r = 1.5 * (sp.N / sp.n)
   let m = 0
   for (let k = Math.max(0, Math.ceil(c - r)); k <= Math.min(sp.M.length - 1, Math.floor(c + r)); k++) if (sp.M[k] > m) m = sp.M[k]
   return m
 }
 
-function setupAxis(P, len, bands, d2) {
+function setupAxis(P: Float64Array, len: number, bands: Float64Array[], d2: boolean) {
   const qmax = Math.min(len / 4, 128), sp = spectrum(P, 0, len + 1)
   return { P, len, bands, qmax, sp, med: bandMedian(sp, qmax), x: centered(P), e: edgeSignal(P), d2 }
 }
 
 /** Edge profiles and both axes of (img, mask, profile); `edges` (a Map owned by the caller, one img and mask only) keeps them per profile. */
-function edgeSetup(img, mask, profile, edges) {
+function edgeSetup(img: Image, mask: Uint8Array | null | undefined, profile: string, edges?: Map<string, EdgeState> | null): EdgeState {
   let s = edges?.get(profile)
   if (!s) {
     const pr = edgeProfiles(img, mask, profile)
@@ -647,13 +653,13 @@ function edgeSetup(img, mask, profile, edges) {
   return s
 }
 
-function regularAxis(len, p) {
+function regularAxis(len: number, p: number) {
   const n = Math.max(1, Math.round(len / p)), cuts = new Float64Array(n + 1)
   for (let i = 0; i <= n; i++) cuts[i] = (i * len) / n
   return { period: len / n, phase: 0, cuts, count: n, elastic: false, prominence: Infinity, coherence: 1 }
 }
 
-const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a }
+const gcd = (a: number, b: number) => { while (b) [a, b] = [b, a % b]; return a }
 
 // Exact constant-block factorization (canonical-rgba-geometry-spike.md "Exact factorization and
 // ambiguity"). Serialized policy: cuts at phase + k*scale with partial edge cells kept as cells; a
@@ -666,7 +672,7 @@ const EXACT_POLICY = 'cuts at phase + k*scale, partial edge cells kept; an axis 
  * scales = divisors of G = gcd of the gaps between change positions; phase = first change mod scale.
  * streak: longest run of consecutive change positions. O(N) worst case, per-line early exit otherwise.
  */
-function exactAxis(u32, W, H, axis) {
+function exactAxis(u32: Uint32Array, W: number, H: number, axis: number) {
   const len = axis ? H : W, other = axis ? W : H, step = axis ? W : 1, stride = axis ? 1 : W
   let first = -1, prev = -1, G = 0, changes = 0, run = 0, streak = 0
   for (let i = 1; i < len; i++) {
@@ -683,17 +689,17 @@ function exactAxis(u32, W, H, axis) {
   if (changes < 2) G = changes ? gcd(first, len) : len
   const scales = []
   for (let s = G; s >= 1; s--) if (G % s === 0) scales.push(s)
-  return { scales, streak, phase: (s) => (first < 0 ? 0 : first % s), under: changes < 2 && len > 1 }
+  return { scales, streak, phase: (s: number) => (first < 0 ? 0 : first % s), under: changes < 2 && len > 1 }
 }
 
-const cellCount = (len, s, phase) => (phase ? 1 + Math.ceil((len - phase) / s) : Math.ceil(len / s))
+const cellCount = (len: number, s: number, phase: number) => (phase ? 1 + Math.ceil((len - phase) / s) : Math.ceil(len / s))
 
 /**
  * Every valid factorization {sx, sy, phaseX, phaseY, countX, countY}, independent axes, coarsest first
  * (area desc, then sx desc); always includes the trivial 1:1 candidate. ambiguous: more than one
  * non-trivial candidate, or an underdetermined axis. No candidate is the original grid by itself.
  */
-function factorize(img) {
+function factorize(img: Image) {
   const W = img.width, H = img.height, d = img.data, n = W * H
   const raw = new Uint32Array(d.buffer, d.byteOffset, n), u32 = new Uint32Array(n)
   for (let p = 0; p < n; p++) u32[p] = d[p * 4 + 3] ? raw[p] : 0 // RGB under alpha 0 is not evidence
@@ -710,7 +716,7 @@ function factorize(img) {
 }
 
 /** Integer cuts of an exact lattice: 0, phase (if > 0), phase + k s, len. */
-function latticeAxis(len, s, phase) {
+function latticeAxis(len: number, s: number, phase: number) {
   const cuts = [0]
   for (let c = phase || s; c < len; c += s) cuts.push(c)
   cuts.push(len)
@@ -723,7 +729,7 @@ function latticeAxis(len, s, phase) {
  * anti-aliased over <= 1 px) changes at most 2 lines in a row. ponytail: NN upscales below 3x can
  * pass; they then rely on the spectral path ('grid' overrides this heuristic).
  */
-function nativeLooking(img, u32, [sx, sy]) {
+function nativeLooking(img: Image, u32: Uint32Array, [sx, sy]: number[]) {
   if (Math.max(sx, sy) < 3 || Math.min(sx, sy) < 2) return null
   const seen = new Set()
   for (let p = 0; p < u32.length; p++) {
@@ -739,22 +745,22 @@ function nativeLooking(img, u32, [sx, sy]) {
  * D52: an axis below the prominence gate still counts when its lattice is coherent and its edges sit on
  * the cuts far above chance (sparse 1-bit art and fractional NN upscales have weak spectral lines).
  */
-const admitted = (a) => a.prominence >= 2.5 && a.coherence >= 0.4 && a.agreement >= 0.5 && a.support != null && a.support >= 0.7
+const admitted = (a: Pick<Axis, "prominence" | "coherence" | "agreement" | "support">) => a.prominence >= 2.5 && a.coherence >= 0.4 && a.agreement! >= 0.5 && a.support != null && a.support >= 0.7
 
 /** Shared gate: class, confidence, evidence from two finished axes. */
-function classify(pr, X, Y, jpeg, ev, forced) {
-  const thr = (a) => (jpeg && near16k(a.period) ? 0.3 : 0.15)
-  const ok = (a) => (a.prominence >= 5 && a.coherence >= thr(a) && a.agreement >= 0.5) || admitted(a)
+function classify(pr: EdgeProfile, X: Axis, Y: Axis, jpeg: boolean, ev: string[], forced: string | null) {
+  const thr = (a: Axis) => (jpeg && near16k(a.period) ? 0.3 : 0.15)
+  const ok = (a: Axis) => (a.prominence >= 5 && a.coherence >= thr(a) && a.agreement! >= 0.5) || admitted(a)
   const { ratio: pur, step } = purity(pr, X.cuts, Y.cuts)
-  for (const [n, a] of [['x', X], ['y', Y]]) {
+  for (const [n, a] of [['x', X], ['y', Y]] as const) {
     ev.push(`${n}: period ${f2(a.period)} phase ${f2(a.phase)} count ${a.count} prominence ${f2(a.prominence)} coherence ${f2(a.coherence)} (min ${thr(a)}) agreement ${f2(a.agreement)} elastic ${a.countDP ? 'no, count-constrained DP' : a.elastic ? 'yes' : 'no'} (gain ${f2(a.gain)})`)
-    if (!(a.prominence >= 5 && a.coherence >= thr(a) && a.agreement >= 0.5) && admitted(a)) ev.push(`${n}: admitted by edge support ${f2(a.support)} (>= 0.7) below the prominence gate (D52)`)
+    if (!(a.prominence >= 5 && a.coherence >= thr(a) && a.agreement! >= 0.5) && admitted(a)) ev.push(`${n}: admitted by edge support ${f2(a.support)} (>= 0.7) below the prominence gate (D52)`)
   }
   ev.push(`purity ratio ${f2(pur)} (grid < 0.5), cell step ratio ${f2(step)} (seamless >= 0.85)`)
-  const sup = (a) => (a.support == null ? '-' : f2(a.support))
+  const sup = (a: Axis) => (a.support == null ? '-' : f2(a.support))
   ev.push(`edge support x ${sup(X)} y ${sup(Y)} (chance-corrected; an axis is admitted at >= 0.7, a coarse lattice needs a mean >= 0.15)`)
   const both = ok(X) && ok(Y), any = forced ? ok(forced === 'x' ? Y : X) : both
-  let cls = 'none'
+  let cls: Grid['class'] = 'none'
   if (any && step < 0.85) cls = pur < 0.5 && !forced ? 'grid' : 'weak'
   else if (any) ev.push('none: periodic but seamless (in-cell slopes explain the cell-to-cell change)')
   // D52: a coarse lattice (< 12 cells on an axis) whose edges barely beat chance is a shapes scene, not a grid
@@ -762,12 +768,12 @@ function classify(pr, X, Y, jpeg, ev, forced) {
     ev.push(`none: mean edge support ${f2((X.support + Y.support) / 2)} < 0.15 on a coarse ${X.count}x${Y.count} lattice`)
     cls = 'none'
   }
-  const q = (a) => Math.min(1, a.prominence / 15) * Math.min(1, a.coherence / (2 * thr(a))) * Math.min(1, a.agreement)
+  const q = (a: Axis) => Math.min(1, a.prominence / 15) * Math.min(1, a.coherence / (2 * thr(a))) * Math.min(1, a.agreement!)
   const confidence = Math.max(0, Math.min(1, Math.min(q(X), q(Y)) * Math.min(1, Math.max(0.1, 1 - pur))))
   return { cls, confidence: Math.round(confidence * 1000) / 1000 }
 }
 
-function emptyGrid(img, ev, why, alternatives = { x: [], y: [] }) {
+function emptyGrid(img: Image, ev: string[], why: string, alternatives: NonNullable<Grid["alternatives"]> = { x: [], y: [] }): Grid {
   ev.push(why)
   return { x: regularAxis(img.width, img.width), y: regularAxis(img.height, img.height), class: 'none', confidence: 0, evidence: ev, alternatives }
 }
@@ -785,12 +791,12 @@ function emptyGrid(img, ev, why, alternatives = { x: [], y: [] }) {
  * else the coarsest) or the 1:1 heuristic (confidence < 1); it is original-grid recovery only when
  * instructed or not ambiguous.
  */
-export function detectGrid(img, opts = {}) {
+export function detectGrid(img: Image, opts: GridOptions = {}): Grid {
   const W = img.width, H = img.height, f = factorize(img), top = f.candidates[0]
   // D56: no pixel with alpha > 0 is no evidence of any grid (not a 1 x 1 exact lattice)
   if (!f.u32.some((v) => v)) return Object.assign(emptyGrid(img, [], 'none: no pixel with alpha > 0'), { candidates: [], ambiguous: false, suggestedSize: null })
-  const done = (g, suggestedSize) => Object.assign(g, { candidates: f.candidates, ambiguous: f.ambiguous, suggestedSize, alternatives: g.alternatives ?? { x: [], y: [] } })
-  const exactOf = (c, confidence, ev, suggested) => done({ x: latticeAxis(W, c.sx, c.phaseX), y: latticeAxis(H, c.sy, c.phaseY), class: 'exact', confidence, evidence: ev }, suggested)
+  const done = (g: Grid, suggestedSize: Pair | null) => Object.assign(g, { candidates: f.candidates, ambiguous: f.ambiguous, suggestedSize, alternatives: g.alternatives ?? { x: [], y: [] } })
+  const exactOf = (c: GridCandidate, confidence: number, ev: string[], suggested: Pair | null) => done({ x: latticeAxis(W, c.sx, c.phaseX), y: latticeAxis(H, c.sy, c.phaseY), class: 'exact', confidence, evidence: ev }, suggested)
   // A scale-1 axis must itself look native (>= 3 changing lines in a row); otherwise it is a
   // non-integer upscale on that axis and the approximate detector decides (candidates still listed).
   const mixedNonint = (top.sx === 1 && f.streaks[0] < 3) || (top.sy === 1 && f.streaks[1] < 3)
@@ -810,18 +816,18 @@ export function detectGrid(img, opts = {}) {
   // <= 256 colours + binary alpha, no pure grid: the trivial candidate, reported as a heuristic.
   return exactOf(top, 0.9, [`1:1 candidate (heuristic, not proof): ${native}`], [W, H])
 }
-function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noRefine = false, edges = null } = {}) {
-  const ev = [], alternatives = { x: [], y: [] }
+function spectralGrid(img: Image, { targetW, targetH, mask, preset, profile = 'd1', noRefine = false, edges = null }: GridOptions = {}): Grid {
+  const ev: string[] = [], alternatives: NonNullable<Grid["alternatives"]> = { x: [], y: [] }
   if (img.width < 16 || img.height < 16) return emptyGrid(img, ev, 'none: image smaller than 16 px')
   const { pr, axes } = edgeSetup(img, mask, profile, edges)
   const [b7, b8, b9] = pr.blockiness
   const jpeg = !!preset?.jpegStrict || b8 >= 1.2 * Math.max(b7, b9)
   ev.push(`JPEG evidence: ${jpeg ? 'yes' : 'no'} (container ${preset?.jpegStrict ? 'jpeg' : 'n/a'}, blockiness 8: ${f2(b8)} vs 7/9: ${f2(b7)}/${f2(b9)})`)
-  const targets = [targetW, targetH], names = ['x', 'y'], periods = []
+  const targets = [targetW, targetH], names = ['x', 'y'] as const, periods: number[] = []
   for (let a = 0; a < 2; a++) {
     const A = axes[a], T = targets[a]
     // JPEG-like periods (8, 16/k within 0.5%) need coherence >= 0.30 to compete when JPEG evidence exists.
-    const allowed = jpeg ? (q) => !near16k(q) || coherence(A.x, regularCuts(A.len, q, phaseOf(A.e, A.len, q))) >= 0.3 : null
+    const allowed = jpeg ? (q: number) => !near16k(q) || coherence(A.x, regularCuts(A.len, q, phaseOf(A.e, A.len, q))) >= 0.3 : null
     const sq = smallestQualified(A.sp, A.qmax, T ? [A.len / T] : [], allowed)
     if (!sq) return emptyGrid(img, ev, `none: no periodic edge energy on ${names[a]}`, alternatives)
     alternatives[names[a]] = sq.alternatives.map(([q, s]) => ({ period: r3(q), count: Math.round(A.len / q), score: r3(s / sq.score) }))
@@ -831,7 +837,7 @@ function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noR
   }
   // Unify to the geometric mean only if neither axis's count moves by >= 0.25 cell.
   const gm = Math.sqrt(periods[0] * periods[1])
-  if (axes.every((A, a) => Math.abs(A.len / gm - A.len / periods[a]) < 0.25)) {
+  if (axes.every((A: { len: number }, a: number) => Math.abs(A.len / gm - A.len / periods[a]) < 0.25)) {
     if (periods[0] !== periods[1]) ev.push(`axes unified to ${f2(gm)}`)
     periods[0] = periods[1] = gm
   }
@@ -848,7 +854,7 @@ function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noR
   // the period over the margins); reverted below when the refined axis loses confidence.
   const unrefined = periods.slice()
   if (!noRefine) for (let a = 0; a < 2; a++) {
-    const A = axes[a], reg = (q) => {
+    const A = axes[a], reg = (q: number) => {
       let ph = phaseOf(A.e, A.len, q)
       if (A.d2) { ph = (ph + q / 2) % q; if (q - ph < 0.125) ph = 0 }
       return regularCuts(A.len, q, ph)
@@ -868,7 +874,7 @@ function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noR
   }
   let [X, Y] = axes.map((A, a) => ({ ...buildAxis(A, periods[a]), agreement: agreement(A.bands, A.len, periods[a]) }))
   // An unconfident axis borrows the confident axis's period.
-  const conf = (a) => (a.prominence >= 5 && a.coherence >= 0.15 && a.agreement >= 0.5) || admitted(a)
+  const conf = (a: Axis) => (a.prominence >= 5 && a.coherence >= 0.15 && a.agreement! >= 0.5) || admitted(a)
   for (let a = 0; a < 2; a++) {
     if (periods[a] === unrefined[a] || conf(a ? Y : X)) continue
     const A = axes[a], o = { ...buildAxis(A, unrefined[a]), agreement: agreement(A.bands, A.len, unrefined[a]) }
@@ -894,7 +900,7 @@ function spectralGrid(img, { targetW, targetH, mask, preset, profile = 'd1', noR
  * lockGrid(img, countX, countY, { mask?, preset?, profile?, edges? }) -> Grid with period len/count; phase and
  * elastic cuts re-solved (on the given edge profile, see detectGrid).
  */
-export function lockGrid(img, countX, countY, { mask, preset, profile = 'd1', edges = null } = {}) {
+export function lockGrid(img: Image, countX: number, countY: number, { mask, preset, profile = 'd1', edges = null }: GridOptions = {}): Grid {
   const ev = [`locked to ${countX}x${countY} cells`]
   const { pr, axes } = edgeSetup(img, mask, profile, edges)
   const [b7, b8, b9] = pr.blockiness

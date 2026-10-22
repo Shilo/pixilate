@@ -1,28 +1,30 @@
+import type { Options } from '$engine/core/types.ts'
+import type { Size, Tools, Info, GridOverride, Result, ResultReply, Candidate } from './types.ts'
 // Size logic (GEO-002), engine options and the recipe (spec §8.1, §8.7). Pure; tested in test/opts.test.js.
-import { roundHalfEven } from '$engine/core/canonical.js'
-import { MAX, T, derivedTooBig, derivedNote, gridError, gridNote } from './copy.js'
-import { exportScales } from './geometry.js'
+import { roundHalfEven } from '$engine/core/canonical.ts'
+import { MAX, T, derivedTooBig, derivedNote, gridError, gridNote } from './copy.ts'
+import { exportScales } from './geometry.ts'
 import { version } from '../../package.json'
 
 export const PRESETS = [16, 32, 48, 64, 96, 128]
-export const COLOURS = ['auto', 4, 8, 16, 32, 64]
-export const DEFAULT_TOOLS = Object.freeze({ background: false, trim: false, colors: 'auto' })
+export const COLOURS: Tools["colors"][] = ['auto', 4, 8, 16, 32, 64]
+export const DEFAULT_TOOLS: Readonly<Tools> = Object.freeze({ background: false, trim: false, colors: 'auto' })
 
 // Derived sides are never clamped above, so validation can name a derived value over 1024.
-export const deriveH = (w, W, H) => Math.max(1, roundHalfEven(w * H, W))
-export const deriveW = (h, W, H) => Math.max(1, roundHalfEven(h * W, H))
+export const deriveH = (w: number, W: number, H: number) => Math.max(1, roundHalfEven(w * H, W))
+export const deriveW = (h: number, W: number, H: number) => Math.max(1, roundHalfEven(h * W, H))
 
-const fits = (s) => s && s[0] <= MAX && s[1] <= MAX
+const fits = (s: number[] | null | undefined) => s && s[0] <= MAX && s[1] <= MAX
 
 /** Detected size: only for an exact or grid class with a suggested size within 1024 on both sides. */
-export function prefill(info) {
+export function prefill(info: Info | null): (Size & { w: number; h: number }) | null {
   const g = info?.grid, s = g?.suggestedSize
   if (!g || !['exact', 'grid'].includes(g.class) || !fits(s)) return null
-  return { w: s[0], h: s[1], lock: true, fit: 'contain', source: 'detected', chip: 'detected', note: null, derived: null }
+  return { w: s![0], h: s![1], lock: true, fit: 'contain', source: 'detected', chip: 'detected', note: null, derived: null }
 }
 
 /** Why the size must be chosen: 'over' | 'weak' | 'ambiguous' | 'none' (null when prefilled). */
-export function needsCase(info) {
+export function needsCase(info: Info) {
   const s = info.grid.suggestedSize
   if (s && !fits(s)) return 'over'
   if (prefill(info)) return null
@@ -31,11 +33,11 @@ export function needsCase(info) {
 }
 
 /** Size chips in order (§8.1). Each: { key, label, w, h, source }. */
-export function chips(info, prefilled) {
+export function chips(info: Info | null, prefilled: Size | null) {
   const out = []
   const g = info?.grid
   if (prefilled) out.push({ key: 'detected', label: T.detected, w: prefilled.w, h: prefilled.h, source: 'detected' })
-  if (g?.class === 'weak' && fits(g.suggestedSize)) out.push({ key: 'maybe', label: T.maybe, w: g.suggestedSize[0], h: g.suggestedSize[1], source: 'suggestion' })
+  if (g?.class === 'weak' && fits(g.suggestedSize)) out.push({ key: 'maybe', label: T.maybe, w: g.suggestedSize![0], h: g.suggestedSize![1], source: 'suggestion' })
   if (g?.ambiguous && g.candidates) {
     const seen = new Set(prefilled ? [`${prefilled.w}x${prefilled.h}`] : [])
     for (const c of g.candidates) {
@@ -51,15 +53,15 @@ export function chips(info, prefilled) {
 }
 
 /** Preset N: the long side, the other derived (lock on), or N x N (lock off). */
-export function applyPreset(size, n, W, H) {
-  const base = { ...size, source: 'preset', chip: `preset-${n}`, note: null, derived: null }
+export function applyPreset(size: Size, n: number, W: number, H: number) {
+  const base: Size = { ...size, source: 'preset', chip: `preset-${n}`, note: null, derived: null }
   if (!size.lock) return { ...base, w: n, h: n }
   return W >= H ? { ...base, w: n, h: deriveH(n, W, H) } : { ...base, w: deriveW(n, W, H), h: n }
 }
 
 /** A typed value for one field; with the lock on the other side is derived (and noted). */
-export function typed(size, field, value, W, H) {
-  const s = { ...size, [field]: value, source: 'typed', chip: null, note: null, derived: null }
+export function typed(size: Size, field: "w" | "h", value: number, W: number, H: number) {
+  const s: Size = { ...size, [field]: value, source: 'typed', chip: null, note: null, derived: null }
   if (!size.lock || !Number.isInteger(value) || value < 1) return s
   const other = field === 'w' ? 'h' : 'w'
   s[other] = field === 'w' ? deriveH(value, W, H) : deriveW(value, W, H)
@@ -70,12 +72,12 @@ export function typed(size, field, value, W, H) {
 }
 
 /** Field errors { w?, h? }; an empty object means valid. */
-export function validate(size) {
-  const errors = {}
-  for (const k of ['w', 'h']) {
+export function validate(size: Size) {
+  const errors: Partial<Record<"w" | "h" | "cols" | "rows", string>> = {}
+  for (const k of ['w', 'h'] as const) {
     const v = size[k]
-    if (!Number.isInteger(v) || v < 1) errors[k] = T.errWhole
-    else if (v > MAX) errors[k] = size.derived === k ? derivedTooBig(k, v) : T.errOver
+    if (!Number.isInteger(v) || v! < 1) errors[k] = T.errWhole
+    else if (v! > MAX) errors[k] = size.derived === k ? derivedTooBig(k, v) : T.errOver
   }
   // a derived error belongs under the field the user typed
   if (size.derived && errors[size.derived]) {
@@ -85,15 +87,15 @@ export function validate(size) {
   }
   return errors
 }
-export const isValid = (size) => !!size && Object.keys(validate(size)).length === 0
+export const isValid = (size: Size | null | undefined): size is Size & { w: number; h: number } => !!size && Object.keys(validate(size)).length === 0
 
 /** Fit/Fill/Stretch matter only when the size's shape differs from the basis shape. */
-export const showsFit = (size, bw, bh) => deriveH(size.w, bw, bh) !== size.h && deriveW(size.h, bw, bh) !== size.w
+export const showsFit = (size: Size, bw: number, bh: number) => deriveH(size.w!, bw, bh) !== size.h && deriveW(size.h!, bw, bh) !== size.w
 
 /** The exact options the app passes to the engine (stages off unless chosen). With the Fit control
  * hidden (the shape matches), fit is always 'contain', so a hidden choice never changes pixels. */
-export function toEngineOpts(size, tools = DEFAULT_TOOLS, fitShown = false, manualPeriod = null) {
-  const o = {
+export function toEngineOpts(size: Size, tools: Tools = DEFAULT_TOOLS, fitShown = false, manualPeriod: number[] | null = null) {
+  const o: Options = {
     targetW: size.w, targetH: size.h, fit: fitShown ? size.fit ?? 'contain' : 'contain',
     trim: tools.trim ? { basis: 'cells' } : false,
     background: tools.background ? 'auto' : false,
@@ -106,45 +108,45 @@ export function toEngineOpts(size, tools = DEFAULT_TOOLS, fitShown = false, manu
 // ---- Pixel grid override (AUTO-008): columns x rows of the source's pixel blocks ----
 
 /** The detected lattice counts to prefill the override with, or null when no grid was found. */
-export const detectedGrid = (info) => (info?.grid && info.grid.class !== 'none' ? { cols: info.grid.native[0], rows: info.grid.native[1] } : null)
+export const detectedGrid = (info: Info | null) => (info?.grid && info.grid.class !== 'none' ? { cols: info.grid.native[0], rows: info.grid.native[1] } : null)
 
 /** Field errors { cols?, rows? }: whole numbers 1..1024 and never more blocks than the image has pixels. */
-export function validateGrid(grid, W, H) {
-  const errors = {}
-  for (const [k, max] of [['cols', Math.min(MAX, W)], ['rows', Math.min(MAX, H)]]) {
+export function validateGrid(grid: GridOverride | null, W: number, H: number) {
+  const errors: Partial<Record<"cols" | "rows", string>> = {}
+  for (const [k, max] of [['cols', Math.min(MAX, W)], ['rows', Math.min(MAX, H)]] as const) {
     const v = grid?.[k]
-    if (!Number.isInteger(v) || v < 1 || v > max) errors[k] = gridError(max)
+    if (!Number.isInteger(v) || v! < 1 || v! > max) errors[k] = gridError(max)
   }
   return errors
 }
 
 /** cols x rows -> the engine's manualPeriod [px, py] (source px per block); it locks round(W / px) = cols. */
-export const manualPeriodOf = (grid, W, H) => (grid ? [W / grid.cols, H / grid.rows] : null)
+export const manualPeriodOf = (grid: GridOverride | null, W: number, H: number) => (grid ? [W / grid.cols, H / grid.rows] : null)
 /** The inverse, for reading a recipe back. */
-export const gridOfPeriod = (period, W, H) => (period ? { cols: Math.max(1, Math.round(W / period[0])), rows: Math.max(1, Math.round(H / period[1])) } : null)
+export const gridOfPeriod = (period: number[] | null, W: number, H: number) => (period ? { cols: Math.max(1, Math.round(W / period[0])), rows: Math.max(1, Math.round(H / period[1])) } : null)
 
 /** Applying an override: a detected (or grid-derived, or unset) output size follows the grid counts; a size
  * the user chose stays. */
-export function sizeForGrid(size, grid) {
-  const follows = ['detected', 'grid'].includes(size.source) || !isValid(size)
+export function sizeForGrid(size: Size, grid: GridOverride | null) {
+  const follows = ['detected', 'grid'].includes(size.source!) || !isValid(size)
   if (!grid || !follows || grid.cols > MAX || grid.rows > MAX) return size
   return { ...size, w: grid.cols, h: grid.rows, source: 'grid', chip: null, note: gridNote(grid.cols, grid.rows), derived: null, auto: false }
 }
 
 /** Reset to detected: drop the override; a grid-derived size returns to the detected one (or is cleared). */
-export const sizeAfterReset = (size, prefilled) => (size.source === 'grid' ? prefilled ?? { ...size, w: null, h: null, source: null, note: null } : size)
+export const sizeAfterReset = (size: Size, prefilled: Size | null) => (size.source === 'grid' ? prefilled ?? { ...size, w: null, h: null, source: null, note: null } : size)
 
 /** File-name base: lower-case [a-z0-9-], at most 40 characters. */
-export function baseName(name) {
+export function baseName(name: string | null) {
   if (!name) return 'pasted'
   const b = name.replace(/\.[^.]*$/, '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
   return b || 'image'
 }
-export const fileName = (base, style, w, h, scale = 1) => `${base}-${style}-${w}x${h}${scale > 1 ? `@${scale}x` : ''}.png`
+export const fileName = (base: string, style: string, w: number, h: number, scale = 1) => `${base}-${style}-${w}x${h}${scale > 1 ? `@${scale}x` : ''}.png`
 
 /** Recipe JSON (no pixels, no file name: NFR-PRIV-005). */
-export function recipe({ result, shown, size, derivation, info, grid = null }) {
-  const c = result.candidates.find((x) => x.id === shown), r = c.report
+export function recipe({ result, shown, size, derivation, info, grid = null }: { result: Result; shown: string; size: Size; derivation: string; info: Info; grid?: GridOverride | null }) {
+  const c = result.candidates.find((x) => x.id === shown)!, r = c.report
   return {
     schema: 'pixilate-app-recipe/1',
     app: { name: 'pixilate-app', version },
@@ -160,17 +162,17 @@ export function recipe({ result, shown, size, derivation, info, grid = null }) {
 }
 
 /** The export scale actually used: the chosen one, or the largest that keeps each side within 4096. */
-export function clampScale(scale, w, h) {
+export function clampScale(scale: number, w?: number, h?: number) {
   if (!w) return 1
-  const ok = exportScales(w, h)
+  const ok = exportScales(w, h!)
   return ok.includes(scale) ? scale : ok.filter((k) => k <= scale).pop() ?? 1
 }
 
 /** After a failed open restores the previous image: which job must be posted again so nothing hangs. */
-export const recoverJob = (status) => (status === 'analysing' ? 'analyse' : status === 'converting' ? 'convert' : null)
+export const recoverJob = (status: string) => (status === 'analysing' ? 'analyse' : status === 'converting' ? 'convert' : null)
 
 /** The style a candidate is shown as: Clean that changed nothing and absorbed Smooth is labelled Smooth. */
-export function styleIdOf(c, result) {
+export function styleIdOf(c: Candidate | null, result: ResultReply | null) {
   if (c?.id !== 'clean' || result?.alias?.smooth !== 'clean') return c?.id ?? null
   const n = Object.values(c.report?.cleanup?.changed ?? {}).reduce((a, b) => a + b, 0)
   return n ? 'clean' : 'smooth'

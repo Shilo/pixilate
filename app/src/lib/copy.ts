@@ -1,11 +1,12 @@
+import type { Report, Recommendation, Info } from './types.ts'
 // Every user-facing string (spec §7). UI text never uses the engine's jargon (see BANNED); raw engine
 // strings appear only under Details › Technical. British spelling; dimensions with a thin-spaced ×.
 
 export const BANNED = ['route', 'raster', 'quantize', 'lattice', 'period', 'factorization', 'alpha', 'profile', 'candidate']
 
 export const MAX = 1024
-export const dims = (w, h) => `${w} × ${h}`
-export const srDims = (w, h) => `${w} by ${h}`
+export const dims = (w: number | null | undefined, h: number | null | undefined) => `${w} × ${h}`
+export const srDims = (w: number | null | undefined, h: number | null | undefined) => `${w} by ${h}`
 
 export const T = {
   app: 'Pixilate',
@@ -127,9 +128,9 @@ export const T = {
 
 // ---- Styles (§7.1) ----
 export const STYLE_ORDER = ['original', 'grid', 'clean', 'smooth']
-const LABEL = { original: 'Original', grid: 'Faithful', clean: 'Clean', smooth: 'Smooth' }
-export const styleLabel = (id) => LABEL[id] ?? id
-export function styleDesc(id, route) {
+const LABEL: Record<string, string> = { original: 'Original', grid: 'Faithful', clean: 'Clean', smooth: 'Smooth' }
+export const styleLabel = (id: string | null | undefined) => LABEL[id!] ?? id
+export function styleDesc(id: string | null, route?: string | null) {
   if (id === 'original') return 'Already pixel art at this size. Nothing changed.'
   if (id === 'grid') return "Keeps the picture's own pixels, as drawn."
   if (id === 'clean') return 'Removes stray pixels.'
@@ -139,7 +140,7 @@ export function styleDesc(id, route) {
 
 // ---- Reason line (§7.2) ----
 export const UNKNOWN_REASON = "Pixilate's best match for this image."
-export function reason(rec, gridClass) {
+export function reason(rec: Pick<Recommendation, "rule" | "evidence"> | null, gridClass?: string | null) {
   const ev = rec?.evidence ?? ''
   switch (rec?.rule) {
     case 'identity': return "It's already pixel art at this size, so nothing needs changing."
@@ -161,7 +162,7 @@ export function reason(rec, gridClass) {
   }
 }
 
-export function cleanLine(report) {
+export function cleanLine(report: Report | null) {
   const n = Object.values(report?.cleanup?.changed ?? {}).reduce((a, b) => a + b, 0)
   return n ? `Clean tidied ${n} ${n === 1 ? 'pixel' : 'pixels'}.` : T.cleanNone
 }
@@ -184,20 +185,20 @@ const WARN = [
   ['non-strict browser decode', 'This file type was opened in compatibility mode, so colours can differ slightly between browsers.'],
 ]
 const HIDDEN = ['no reliable source grid', 'grid route refused', 'weak grid evidence']
-const hidden = (w) => w === 'approximate' || HIDDEN.some((p) => w.startsWith(p))
+const hidden = (w: string) => w === 'approximate' || HIDDEN.some((p) => w.startsWith(p))
 
 /** Sentence for one engine warning: mapped, null when hidden, or the raw text when unmapped. */
-export function warningSentence(w) {
+export function warningSentence(w: string) {
   if (hidden(w)) return null
   return WARN.find(([p]) => w.startsWith(p))?.[1] ?? w
 }
 /** The one warning line under the reason (mapped warnings only, first in table order). */
-export function warningLine(warnings = []) {
+export function warningLine(warnings: string[] = []) {
   for (const [p, s] of WARN) if (warnings.some((w) => !hidden(w) && w.startsWith(p))) return s
   return null
 }
 /** Every warning for Details › Notes, deduplicated. */
-export const warningSentences = (warnings = []) => [...new Set(warnings.map(warningSentence).filter(Boolean))]
+export const warningSentences = (warnings: string[] = []) => [...new Set(warnings.map(warningSentence).filter(Boolean))]
 
 // ---- Background (§7.4) ----
 const BG = [
@@ -210,7 +211,7 @@ const BG = [
   ['gradient surface refused', 'the background is a gradient.'],
 ]
 export const BG_OTHER = "it isn't a plain background."
-export function bgLine(bg) {
+export function bgLine(bg: Report["background"] | null) {
   if (!bg || !bg.mode) return null
   if (bg.applied) return `Background removed (${bg.removed} ${bg.removed === 1 ? 'pixel' : 'pixels'}).`
   const r = bg.reason ?? 'no background estimate'
@@ -218,19 +219,19 @@ export function bgLine(bg) {
 }
 
 // ---- Fit to sprite (§7.5) ----
-export function trimCaption(report) {
+export function trimCaption(report: Report | null) {
   const t = report?.trim
   if (!t?.enabled || !t.box) return null
-  const { width: W, height: H } = report.input
+  const { width: W, height: H } = report!.input
   const [x0, y0, x1, y1] = t.box
   if (x0 === 0 && y0 === 0 && x1 === W && y1 === H) return 'Nothing to crop: the picture has no see-through edges.'
-  const edge = t.fallback ? 'any visible pixel' : t.basis === 'cells' ? (report.route === 'grid' ? 'solid pixels' : 'pixels more than half visible') : 'any visible pixel'
-  const [ox, oy] = report.fit.offset
+  const edge = t.fallback ? 'any visible pixel' : t.basis === 'cells' ? (report!.route === 'grid' ? 'solid pixels' : 'pixels more than half visible') : 'any visible pixel'
+  const [ox, oy] = report!.fit.offset
   return `Subject area ${dims(x1 - x0, y1 - y0)} px at ${x0}, ${y0} · edge: ${edge} · padding ${ox}, ${oy} px`
 }
 
 /** A file that couldn't be opened, named (shown in a dismissible banner over the stage). */
-export function fileError(code, name) {
+export function fileError(code: string | null, name: string | null) {
   const n = name ?? 'The pasted image'
   if (code === 'decode-too-large') return `${n} is too big (over 4096 × 4096). Try a smaller copy.`
   if (code === 'decode-damaged') return `${n} looks damaged and couldn't be opened.`
@@ -238,7 +239,7 @@ export function fileError(code, name) {
 }
 
 // ---- Errors (§7.6): message + one-tap fix id ----
-const ERR = {
+const ERR: Record<string, [string, string, string]> = {
   'decode-unsupported': ["Pixilate can't open this file. Try a PNG or JPEG.", 'choose', 'Choose another'],
   'decode-too-large': ['This image is too big (over 4096 × 4096). Try a smaller copy.', 'choose', 'Choose another'],
   'decode-damaged': ["This image looks damaged and couldn't be opened.", 'choose', 'Choose another'],
@@ -248,21 +249,21 @@ const ERR = {
   'internal-invariant': ['Something went wrong inside Pixilate. Your image is safe.', 'retry', 'Try again'],
   worker: ["Pixilate couldn't start. Reload the page.", 'reload', 'Reload'],
 }
-export function errorCopy(code) {
-  const [message, fix, label] = ERR[code] ?? ERR['internal-invariant']
+export function errorCopy(code: string | null) {
+  const [message, fix, label] = ERR[code!] ?? ERR['internal-invariant']
   return { message, fix, label }
 }
 
 // ---- Size: derivation sentence (§5.3), headings (§5.2), validation (§8.1) ----
-const n1 = (v) => String(Math.round(v * 100) / 100) // the engine reports blocks to 0.01 px
-const per = ([px, py]) => (px === py ? n1(px) : `${n1(px)} × ${n1(py)}`)
+const n1 = (v: number) => String(Math.round(v * 100) / 100) // the engine reports blocks to 0.01 px
+const per = ([px, py]: number[]) => (px === py ? n1(px) : `${n1(px)} × ${n1(py)}`)
 
-export function derivation(info) {
+export function derivation(info: Info) {
   const g = info.grid, s = g.suggestedSize, W = info.width, H = info.height
-  if (s && (s[0] > MAX || s[1] > MAX)) return `Found ${dims(s[0], s[1])}, over the 1024 limit.`
+  if (s && (s[0] > MAX || s[1] > MAX)) return `Found ${dims(s![0], s![1])}, over the 1024 limit.`
   if (g.class === 'exact' && s) {
-    if (g.period[0] === 1 && g.period[1] === 1) return `This already looks like pixel art at ${dims(s[0], s[1])}.`
-    return `Found a ${dims(s[0], s[1])} pixel grid (blocks of ${per(g.period)} px) in this ${dims(W, H)} image.`
+    if (g.period[0] === 1 && g.period[1] === 1) return `This already looks like pixel art at ${dims(s![0], s![1])}.`
+    return `Found a ${dims(s![0], s![1])} pixel grid (blocks of ${per(g.period)} px) in this ${dims(W, H)} image.`
   }
   if (g.class === 'grid' && s) return `Found a pixel grid of about ${per(g.period)} px blocks, ${s[0]} wide and ${s[1]} high.`
   if (g.class === 'exact') return 'Several pixel grid sizes fit, so there is no detected size.'
@@ -270,38 +271,38 @@ export function derivation(info) {
   return 'No clear pixel grid found.'
 }
 
-export function needsHeading(kase, info) {
+export function needsHeading(kase: string | null, info: Info | null) {
   const s = info?.grid?.suggestedSize
   switch (kase) {
     case 'weak': return 'The pixel grid is faint. Pick the size you want.'
-    case 'over': return `This looks like pixel art at ${dims(s[0], s[1])}, which is bigger than the 1024 limit. Pick the size you want.`
+    case 'over': return `This looks like pixel art at ${dims(s![0], s![1])}, which is bigger than the 1024 limit. Pick the size you want.`
     case 'stopped': return 'Stopped. Pick a size to try again.'
     case 'ambiguous': return 'Several pixel grid sizes fit. Pick the size you want.'
     default: return "Couldn't find a clear pixel grid. Pick the size you want."
   }
 }
 
-export const derivedNote = (field, value, W, H) => `${field === 'h' ? 'Height' : 'Width'} ${value} keeps the ${dims(W, H)} shape.`
-export const derivedTooBig = (field, value) => `That makes the ${field === 'h' ? 'height' : 'width'} ${value}. The largest is 1024, so use a smaller ${field === 'h' ? 'width' : 'height'}.`
+export const derivedNote = (field: string, value: number | null, W: number, H: number) => `${field === 'h' ? 'Height' : 'Width'} ${value} keeps the ${dims(W, H)} shape.`
+export const derivedTooBig = (field: string, value: number | null) => `That makes the ${field === 'h' ? 'height' : 'width'} ${value}. The largest is 1024, so use a smaller ${field === 'h' ? 'width' : 'height'}.`
 
 // ---- Status and toasts ----
-export const readyStatus = (w, h, id, best) => `Pixel art ready. ${srDims(w, h)} pixels, ${styleLabel(id)}${best ? ', best match' : ''}.`
-export const savedToast = (name) => `Saved ${name}.`
-export const copiedToast = (w, h) => `Copied ${dims(w, h)} PNG.`
-export const saveLabel = (w, h, s = 1) => `Save PNG · ${dims(w, h)}${s > 1 ? ` at ${s}×` : ''}`
-export const scaleLine = (w, h) => `→ ${dims(w, h)} px`
-export const coloursUsed = (used, allowed) => `${used} ${used === 1 ? 'colour' : 'colours'} used${allowed ? ` of ${allowed} allowed` : ''}`
-export const toolsButton = (n) => (n ? `Tools · ${n}` : 'Tools')
-export const sizeName = (w, h, caption) => `Size, ${srDims(w, h)} pixels, ${caption.toLowerCase()}`
-export const zoomTip = (z) => `Each pixel is ${z} screen pixels`
-export const artLabel = (w, h, colors, id, z) => `Pixel art, ${srDims(w, h)} pixels${colors ? `, ${colors} colours` : ''}, ${styleLabel(id)}, zoom ${Math.round(z * 100) / 100} times`
-export const sourceAlt = (w, h) => `Original image, ${srDims(w, h)} pixels`
-export const topDims = (name, w, h) => `${name} · ${dims(w, h)}`
-export const failedStyle = (id, code) => `${styleLabel(id)} couldn't be made: ${errorCopy(code).message}`
-export const metaClaim = (family) => `File metadata claims: ${family} (signature not checked).`
-export const gridError = (max) => `Use a whole number from 1 to ${max}.`
-export const gridNote = (c, r) => `Follows your pixel grid: ${dims(c, r)} blocks.`
-export const subjectNote = (w, h) => `The subject's own pixels: ${dims(w, h)}.`
-export const moreLabel = (k) => `${T.saveOptions}, enlarge ${k} times`
-export const bestIs = (label, why) => `Best is ${label}: ${why}`
-export const styleName = (id, route, best) => `${styleLabel(id)}${best ? ', best match' : ''}. ${styleDesc(id, route)}`
+export const readyStatus = (w: number, h: number, id: string | null, best: boolean) => `Pixel art ready. ${srDims(w, h)} pixels, ${styleLabel(id)}${best ? ', best match' : ''}.`
+export const savedToast = (name: string) => `Saved ${name}.`
+export const copiedToast = (w: number, h: number) => `Copied ${dims(w, h)} PNG.`
+export const saveLabel = (w: number, h: number, s = 1) => `Save PNG · ${dims(w, h)}${s > 1 ? ` at ${s}×` : ''}`
+export const scaleLine = (w: number, h: number) => `→ ${dims(w, h)} px`
+export const coloursUsed = (used: number, allowed: number | null) => `${used} ${used === 1 ? 'colour' : 'colours'} used${allowed ? ` of ${allowed} allowed` : ''}`
+export const toolsButton = (n: number) => (n ? `Tools · ${n}` : 'Tools')
+export const sizeName = (w: number | null, h: number | null, caption: string) => `Size, ${srDims(w, h)} pixels, ${caption.toLowerCase()}`
+export const zoomTip = (z: number) => `Each pixel is ${z} screen pixels`
+export const artLabel = (w: number, h: number, colors: number | null, id: string | null, z: number) => `Pixel art, ${srDims(w, h)} pixels${colors ? `, ${colors} colours` : ''}, ${styleLabel(id)}, zoom ${Math.round(z * 100) / 100} times`
+export const sourceAlt = (w: number, h: number) => `Original image, ${srDims(w, h)} pixels`
+export const topDims = (name: string, w: number, h: number) => `${name} · ${dims(w, h)}`
+export const failedStyle = (id: string, code: string) => `${styleLabel(id)} couldn't be made: ${errorCopy(code).message}`
+export const metaClaim = (family: string) => `File metadata claims: ${family} (signature not checked).`
+export const gridError = (max: number) => `Use a whole number from 1 to ${max}.`
+export const gridNote = (c: number, r: number) => `Follows your pixel grid: ${dims(c, r)} blocks.`
+export const subjectNote = (w: number, h: number) => `The subject's own pixels: ${dims(w, h)}.`
+export const moreLabel = (k: number) => `${T.saveOptions}, enlarge ${k} times`
+export const bestIs = (label: string, why: string) => `Best is ${label}: ${why}`
+export const styleName = (id: string | null, route: string | null, best: boolean) => `${styleLabel(id)}${best ? ', best match' : ''}. ${styleDesc(id, route)}`

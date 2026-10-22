@@ -2,13 +2,13 @@
 // on committed procedural fixtures only. Also: the 1x PNG decodes to the candidate's RGBA, and the xN export
 // decodes to the nearest-neighbour upscale.
 import { describe, expect, test } from 'vitest'
-import { canonicalHash, convert, convertCandidates } from '$engine/core/pipeline.js'
-import { decodeImage, encodePng } from '$engine/decode.js'
+import { canonicalHash, convert, convertCandidates } from '$engine/core/pipeline.ts'
+import { decodeImage, encodePng } from '$engine/decode.ts'
 import { committedCases, bboxCrop } from '../../prototype/test/fixtures.js'
 import { degrade, noGrid } from '../../prototype/test/synth.js'
-import { createJobs } from '../src/lib/jobs.js'
-import { DEFAULT_TOOLS, manualPeriodOf, toEngineOpts } from '../src/lib/opts.js'
-import { upscale } from '../src/lib/geometry.js'
+import { createJobs } from '../src/lib/jobs.ts'
+import { DEFAULT_TOOLS, manualPeriodOf, toEngineOpts } from '../src/lib/opts.ts'
+import { upscale } from '../src/lib/geometry.ts'
 
 const cases = committedCases()
 const pick = (group, spriteId) => cases.find((c) => c.group === group && (!spriteId || c.spriteId === spriteId))

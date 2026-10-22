@@ -1,9 +1,10 @@
+import type { Cells, Numbers } from './types.ts'
 // Step 6: palette from cell colors (contract: algorithm-design.md; literature C.6).
 // Dedupe by RGB8 -> Wu (1991) box cuts on OKLab -> weighted Lloyd -> Ward merge -> medoids.
 // Deconvolved smooth-upscale cells with a near-exact kernel keep close colours apart unless the pair
 // looks like one colour (D48).
 // All distances use toe-corrected L (toeL); palette entries keep the true OKLab of their medoid.
-import { oklabToSrgb, srgbToOklab, toe, toeL } from './color.js'
+import { oklabToSrgb, srgbToOklab, toe, toeL } from './color.ts'
 
 const TAU_MERGE = 0.045, TAU_PROTECT = 0.12, MAX_LLOYD = 20, K_MAX = 64
 // D48 split gate: kernel residual below SPLIT_RMS_MAX (fitcells EARLY_RMS, premultiplied RGB RMS);
@@ -14,7 +15,7 @@ const SPLIT_RMS_MAX = 1, TAU_FLOOR = 0.015, TAU_DUP = 0.03, SPLIT_MIN_CELLS = 10
 // Wu lattice: 32 bins per axis over the sRGB gamut in OKLab (out-of-range values clamp to edge bins)
 const BINS = 32, S1 = BINS + 1, LO = [0, -0.25, -0.33], HI = [1, 0.28, 0.21]
 
-function nearest(P, k, x, y, z) {
+function nearest(P: Numbers, k: number, x: number, y: number, z: number) {
   let best = 0, bd = Infinity
   for (let q = 0; q < k; q++) {
     let dd = x - P[q * 3]
@@ -28,9 +29,9 @@ function nearest(P, k, x, y, z) {
 }
 
 /** Wu's variance-minimizing box cuts on a cumulative-moment lattice; returns a bin-id -> box map. */
-function wu(U, wt, nu, k) {
+function wu(U: Numbers, wt: Numbers, nu: number, k: number) {
   const bin = new Int32Array(nu), M = [0, 1, 2, 3, 4].map(() => new Float64Array(S1 * S1 * S1))
-  const at = (r, g, b) => (r * S1 + g) * S1 + b
+  const at = (r: number, g: number, b: number) => (r * S1 + g) * S1 + b
   for (let i = 0; i < nu; i++) {
     const q = [0, 1, 2].map((a) => 1 + Math.min(BINS - 1, Math.max(0, Math.floor(((U[i * 3 + a] - LO[a]) / (HI[a] - LO[a])) * BINS))))
     const o = at(q[0], q[1], q[2]), w = wt[i], x = U[i * 3], y = U[i * 3 + 1], z = U[i * 3 + 2]
@@ -44,10 +45,10 @@ function wu(U, wt, nu, k) {
     }
   }
   // box = [r0, r1, g0, g1, b0, b1], lower bound exclusive
-  const vol = (bx, m) => m[at(bx[1], bx[3], bx[5])] - m[at(bx[0], bx[3], bx[5])] - m[at(bx[1], bx[2], bx[5])] - m[at(bx[1], bx[3], bx[4])]
+  const vol = (bx: number[], m: number[]|Float64Array<ArrayBuffer>) => m[at(bx[1], bx[3], bx[5])] - m[at(bx[0], bx[3], bx[5])] - m[at(bx[1], bx[2], bx[5])] - m[at(bx[1], bx[3], bx[4])]
     + m[at(bx[0], bx[2], bx[5])] + m[at(bx[0], bx[3], bx[4])] + m[at(bx[1], bx[2], bx[4])] - m[at(bx[0], bx[2], bx[4])]
-  const gain = (bx) => { const w = vol(bx, M[0]); if (w <= 0) return 0; const x = vol(bx, M[1]), y = vol(bx, M[2]), z = vol(bx, M[3]); return (x * x + y * y + z * z) / w }
-  const variance = (bx) => (vol(bx, M[0]) > 0 ? vol(bx, M[4]) - gain(bx) : 0)
+  const gain = (bx: number[]) => { const w = vol(bx, M[0]); if (w <= 0) return 0; const x = vol(bx, M[1]), y = vol(bx, M[2]), z = vol(bx, M[3]); return (x * x + y * y + z * z) / w }
+  const variance = (bx: number[]) => (vol(bx, M[0]) > 0 ? vol(bx, M[4]) - gain(bx) : 0)
   const boxes = [[0, BINS, 0, BINS, 0, BINS]], vars = [variance(boxes[0])]
   while (boxes.length < k) {
     let bi = 0
@@ -90,10 +91,10 @@ function wu(U, wt, nu, k) {
  * `kernelRms`: the cell-deconvolution kernel residual of a smooth-upscale grid (null otherwise); below
  * SPLIT_RMS_MAX the near-pair merge is gated (D48), so close true colours of clean upscales survive.
  */
-export function buildPalette(cells, { colors = 'auto', palette, exact = false, kernelRms = null } = {}) {
+export function buildPalette(cells: Cells, { colors = 'auto', palette, exact = false, kernelRms = null }: { colors?: 'auto' | number; palette?: Numbers | null; exact?: boolean; kernelRms?: number | null } = {}) {
   const { w, h, lab, alpha } = cells, n = w * h, masked = cells.masked, exactRgb = cells.rgb
-  const index = new Int16Array(n).fill(-1), warnings = []
-  const snap = (pal, keys) => {
+  const index = new Int16Array(n).fill(-1), warnings: string[] = []
+  const snap = (pal: Numbers, keys: number[]) => {
     const k = pal.length / 3
     const P = toe(pal), rgb = new Uint8Array(k * 3)
     for (let q = 0; q < k; q++) { rgb[q * 3] = keys[q] >> 16; rgb[q * 3 + 1] = (keys[q] >> 8) & 255; rgb[q * 3 + 2] = keys[q] & 255 }
@@ -134,7 +135,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false, k
   if (colors !== 'auto' && maxK > K_MAX && nu > K_MAX) warnings.push(`palette capped at ${K_MAX} colors (requested ${maxK})`)
 
   // Wu init -> weighted Lloyd (empty clusters dropped, ties to the lowest index)
-  let { assign, k } = wu(U, wt, nu, Math.min(K_MAX, nu)), C = null, N = null
+  let { assign, k } = wu(U, wt, nu, Math.min(K_MAX, nu)), C: Float64Array = null!, N: Float64Array = null!
   const centroids = () => {
     const S = new Float64Array(k * 3), Mw = new Float64Array(k)
     for (let i = 0; i < nu; i++) {
@@ -176,7 +177,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false, k
 
   // Ward merging: pairs closer than TAU_MERGE (never touching protected clusters), then down to maxK
   const alive = new Uint8Array(k).fill(1), parent = Int32Array.from({ length: k }, (_, q) => q)
-  const d2 = (i, j) => { const dL = C[i * 3] - C[j * 3], da = C[i * 3 + 1] - C[j * 3 + 1], db = C[i * 3 + 2] - C[j * 3 + 2]; return dL * dL + da * da + db * db }
+  const d2 = (i: number, j: number) => { const dL = C[i * 3] - C[j * 3], da = C[i * 3 + 1] - C[j * 3 + 1], db = C[i * 3 + 2] - C[j * 3 + 2]; return dL * dL + da * da + db * db }
   let live = k
   const split = kernelRms !== null && kernelRms < SPLIT_RMS_MAX ? splitGate(cells, cellU, assign, U, wt, C, N, nu, k) : null
   while (live > 1) {
@@ -187,7 +188,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false, k
       for (let j = 0; j < k; j++) if (j !== i && alive[j]) nn = Math.min(nn, d2(i, j))
       prot[i] = nn > TAU_PROTECT * TAU_PROTECT ? 1 : 0
     }
-    const pick = (needClose, allowProt) => {
+    const pick = (needClose: boolean, allowProt: boolean) => {
       let bi = -1, bj = -1, bc = Infinity
       for (let i = 0; i < k; i++) {
         if (!alive[i] || (!allowProt && prot[i])) continue
@@ -209,7 +210,7 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false, k
     for (let a = 0; a < 3; a++) C[i * 3 + a] = (N[i] * C[i * 3 + a] + N[j] * C[j * 3 + a]) / s
     N[i] = s; alive[j] = 0; parent[j] = i; live--
   }
-  const root = (q) => { while (parent[q] !== q) q = parent[q]; return q }
+  const root = (q: number) => { while (parent[q] !== q) q = parent[q]; return q }
   // final clusters in order of first alive index; entry = medoid (member nearest the merged centroid)
   const slot = new Int32Array(k).fill(-1)
   let K = 0
@@ -233,9 +234,9 @@ export function buildPalette(cells, { colors = 'auto', palette, exact = false, k
  * edge counts between clusters on the cell grid, and a verdict cache cleared for both clusters of a merge.
  * mergeable(i, j, dd) reads the live centroids C and weights N (cells per cluster) of buildPalette.
  */
-function splitGate(cells, cellU, assign, U, wt, C, N, nu, k) {
+function splitGate(cells: Cells, cellU: Int32Array, assign: Int32Array, U: Float64Array, wt: Float64Array, C: Float64Array, N: Float64Array, nu: number, k: number) {
   const { w, h } = cells, E = new Float64Array(k * k), verdict = new Int8Array(k * k).fill(-1)
-  const mem = Array.from({ length: k }, () => [])
+  const mem = Array.from({ length: k }, (): number[] => [])
   for (let u = 0; u < nu; u++) mem[assign[u]].push(u)
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const u = cellU[y * w + x]
@@ -246,7 +247,7 @@ function splitGate(cells, cellU, assign, U, wt, C, N, nu, k) {
       E[a * k + assign[v]]++; E[assign[v] * k + a]++
     }
   }
-  const midShare = (i, j) => {
+  const midShare = (i: number, j: number) => {
     const ax = C[j * 3] - C[i * 3], ay = C[j * 3 + 1] - C[i * 3 + 1], az = C[j * 3 + 2] - C[i * 3 + 2], L2 = ax * ax + ay * ay + az * az
     let mid = 0, tot = 0
     for (const list of [mem[i], mem[j]]) for (const u of list) {
@@ -257,7 +258,7 @@ function splitGate(cells, cellU, assign, U, wt, C, N, nu, k) {
     return mid / tot
   }
   return {
-    mergeable(i, j, dd) {
+    mergeable(i: number, j: number, dd: number) {
       if (dd < TAU_FLOOR * TAU_FLOOR) return true
       const key = i * k + j
       if (verdict[key] < 0) {
@@ -266,7 +267,7 @@ function splitGate(cells, cellU, assign, U, wt, C, N, nu, k) {
       }
       return verdict[key] === 1
     },
-    fold(i, j) { // j merges into i
+    fold(i: number, j: number) { // j merges into i
       for (const u of mem[j]) mem[i].push(u)
       mem[j] = []
       for (let x = 0; x < k; x++) {

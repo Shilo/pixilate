@@ -6,9 +6,9 @@
 // Usage: node scripts/live-batch.mjs [--in DIR] [--out DIR] [--sizes 64x64,48x48,32x32,16x16] [--modes default,sprite]
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { decodeImage, encodePng } from '../src/lib/decode.js'
-import { analyze, convertCandidates } from '../src/lib/core/pipeline.js'
-import { canonicalHash } from '../src/lib/core/canonical.js'
+import { decodeImage, encodePng } from '../src/lib/decode.ts'
+import { analyze, convertCandidates } from '../src/lib/core/pipeline.ts'
+import { canonicalHash } from '../src/lib/core/canonical.ts'
 import { scoreImage } from './score.mjs'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))

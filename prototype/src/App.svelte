@@ -1,27 +1,29 @@
-<script>
-  // Plain functional test harness for the engine: no visual design, the algorithm is the product.
-  import { MAX_PIXELS, encodePng } from './lib/decode.js'
+<script lang="ts">
+  import type { Options, Numbers } from './lib/core/types.ts'
+  import type { HarnessJob, HarnessInfo, HarnessResult, HarnessReply, HarnessError } from './lib/harness-types.ts'
+// Plain functional test harness for the engine: no visual design, the algorithm is the product.
+  import { MAX_PIXELS, encodePng } from './lib/decode.ts'
 
   const PRESETS = [16, 24, 32, 48, 64, 96, 128]
   const ZOOMS = Array.from({ length: 16 }, (_, i) => i + 1)
 
-  let file = $state.raw(null) // { name, mime, bytes, url }
-  let info = $state.raw(null) // analyze(): { width, height, format, decode, grid, generator, suggestedSize }
-  let W = $state(null) // required; never filled from detection without a click
-  let H = $state(null)
+  let file = $state.raw<{name: string; mime: string; bytes: ArrayBuffer; url: string} | null>(null) // { name, mime, bytes, url }
+  let info = $state.raw<HarnessInfo | null>(null) // analyze(): { width, height, format, decode, grid, generator, suggestedSize }
+  let W = $state<number | null>(null) // required; never filled from detection without a click
+  let H = $state<number | null>(null)
   let lock = $state(true)
   // Custom (engine defaults: everything off)
   let trim = $state(false)
   let trimCells = $state(false) // trim basis 'cells' (explicit engine option, D50)
-  let fit = $state('contain')
-  let route = $state('candidates') // 'candidates' = convertCandidates; otherwise one convert() with route/cleanup
+  let fit = $state<NonNullable<Options['fit']>>('contain')
+  let route = $state<NonNullable<Options['route']> | 'candidates'>('candidates') // 'candidates' = convertCandidates; otherwise one convert() with route/cleanup
   let cleanup = $state(false)
   let bg = $state('off') // off | auto | key
   let key = $state('#ffffff')
   let tolerance = $state(0.03)
-  let connectivity = $state(4)
+  let connectivity = $state<4 | 8>(4)
   let halo = $state(false)
-  let colors = $state(null) // blank = auto
+  let colors = $state<number | null>(null) // blank = auto
   let manual = $state(false)
   let px = $state(16)
   let py = $state(16)
@@ -29,24 +31,24 @@
   let zoom = $state(8)
   let showGrid = $state(false)
   let showCuts = $state(true)
-  let result = $state.raw(null) // { candidates, recommended, analysis, failed, name }
-  let sel = $state(null)
-  let error = $state.raw(null) // { code, message }
+  let result = $state.raw<HarnessResult | null>(null) // { candidates, recommended, analysis, failed, name }
+  let sel = $state<string | null>(null)
+  let error = $state.raw<HarnessError | null>(null) // { code, message }
   let busy = $state(false)
-  let canvas = $state()
-  let analyzer = null
-  let converter = null
+  let canvas = $state<HTMLCanvasElement>(undefined!)
+  let analyzer: Worker | null = null
+  let converter: Worker | null = null
 
   /** One job per worker; the callback gets the worker's single reply. */
-  function spawn(msg, done) {
-    const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
-    w.onmessage = ({ data }) => { w.terminate(); done(data) }
-    w.onerror = (e) => { w.terminate(); done({ error: { code: null, message: e.message || 'Worker failed to load' } }) }
+  function spawn<T>(msg: HarnessJob, done: (reply: HarnessReply<T>) => void) {
+    const w = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+    w.onmessage = ({ data }: MessageEvent<HarnessReply<T>>) => { w.terminate(); done(data) }
+    w.onerror = (e) => { w.terminate(); done({ error: { code: null, message: e.message || 'Worker failed to load' } } as HarnessReply<T>) }
     w.postMessage(msg)
     return w
   }
 
-  function opts() {
+  function opts(): Options {
     const rgb = [1, 3, 5].map((i) => parseInt(key.slice(i, i + 2), 16))
     return {
       targetW: W ?? null, targetH: H ?? null, // the engine validates and throws invalid-input
@@ -60,10 +62,10 @@
 
   function run() {
     converter?.terminate() // cancel a stale run
-    const name = file.name
+    const name = file!.name
     busy = true
     error = null
-    converter = spawn({ kind: route === 'candidates' ? 'candidates' : 'convert', bytes: file.bytes, mime: file.mime, opts: opts() }, (d) => {
+    converter = spawn<HarnessResult>({ kind: route === 'candidates' ? 'candidates' : 'convert', bytes: file!.bytes, mime: file!.mime, opts: opts() }, (d) => {
       converter = null
       busy = false
       if (d.error) return (error = d.error)
@@ -72,7 +74,7 @@
     })
   }
 
-  async function load(f, name = f?.name) {
+  async function load(f: (Blob & { name?: string }) | null | undefined, name = f?.name) {
     if (!f || (f.type && !f.type.startsWith('image/'))) return (error = { code: null, message: 'Not an image file.' })
     analyzer?.terminate()
     converter?.terminate()
@@ -82,23 +84,23 @@
     info = null
     error = null
     file = { name: (name || 'image').replace(/\.[^.]+$/, ''), mime: f.type, bytes: await f.arrayBuffer(), url: URL.createObjectURL(f) }
-    analyzer = spawn({ kind: 'analyze', bytes: file.bytes, mime: file.mime }, (d) => {
+    analyzer = spawn<HarnessInfo>({ kind: 'analyze', bytes: file.bytes, mime: file.mime }, (d) => {
       analyzer = null
       if (d.error) error = d.error
       else info = d
     })
   }
 
-  const num = (e) => (e.currentTarget.value === '' ? null : e.currentTarget.valueAsNumber)
-  function setW(v) {
+  const num = (e: Event & {currentTarget: HTMLInputElement}) => (e.currentTarget.value === '' ? null : e.currentTarget.valueAsNumber)
+  function setW(v: number | null) {
     W = v
-    if (lock && info && v > 0) H = Math.max(1, Math.round((v * info.height) / info.width))
+    if (lock && info && v! > 0) H = Math.max(1, Math.round((v! * info.height) / info.width))
   }
-  function setH(v) {
+  function setH(v: number | null) {
     H = v
-    if (lock && info && v > 0) W = Math.max(1, Math.round((v * info.width) / info.height))
+    if (lock && info && v! > 0) W = Math.max(1, Math.round((v! * info.width) / info.height))
   }
-  function preset(p) {
+  function preset(p: number) {
     if (!lock || !info) [W, H] = [p, p]
     else if (info.width >= info.height) setW(p)
     else setH(p)
@@ -113,36 +115,36 @@
     if (!canvas || !cand) return
     canvas.width = cand.width
     canvas.height = cand.height
-    canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(cand.rgba), cand.width, cand.height), 0, 0)
+    canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(cand.rgba), cand.width, cand.height), 0, 0)
   })
 
   let cuts = $derived(report?.grid?.cuts?.x?.length ? report.grid.cuts : null)
   let swatches = $derived.by(() => {
     if (!cand) return []
-    const d = cand.rgba, seen = new Set()
+    const d = cand.rgba, seen = new Set<number>()
     for (let i = 0; i < d.length; i += 4) if (d[i + 3]) seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2])
     return [...seen].sort((a, b) => a - b).slice(0, 256).map((v) => '#' + v.toString(16).padStart(6, '0'))
   })
-  const json = (v) => JSON.stringify(v, (k, x) => (ArrayBuffer.isView(x) ? Array.from(x) : x), 2)
-  const fmt = (v) =>
+  const json = (v: unknown) => JSON.stringify(v, (k, x) => (ArrayBuffer.isView(x) ? Array.from(x as Numbers) : x), 2)
+  const fmt = (v: unknown): string =>
     v == null ? '—'
     : typeof v === 'number' ? String(+v.toFixed(3))
-    : Array.isArray(v) || ArrayBuffer.isView(v) ? Array.from(v, fmt).join(', ')
+    : Array.isArray(v) || ArrayBuffer.isView(v) ? Array.from(v as Numbers, fmt).join(', ')
     : typeof v === 'object' ? JSON.stringify(v)
     : String(v)
 
-  function save(bytes, name) {
+  function save(bytes: Uint8Array, name: string) {
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+    a.href = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/png' }))
     a.download = name
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 1000)
   }
-  const base = () => `${result.name}-${cand.id}-${cand.width}x${cand.height}`
+  const base = () => `${result!.name}-${cand!.id}-${cand!.width}x${cand!.height}`
 
   // Nearest-neighbour upscale on the output pixels (no canvas smoothing involved).
-  function saveUpscaled(n) {
-    const { width: w, height: h, rgba } = cand
+  function saveUpscaled(n: number) {
+    const { width: w, height: h, rgba } = cand!
     const ow = w * n, oh = h * n, out = new Uint8ClampedArray(ow * oh * 4)
     for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
       const s = (((y / n) | 0) * w + ((x / n) | 0)) * 4
@@ -151,11 +153,11 @@
     save(encodePng({ width: ow, height: oh, data: out }), `${base()}-x${n}.png`)
   }
 
-  function onDrop(e) {
+  function onDrop(e: DragEvent) {
     e.preventDefault()
     load(e.dataTransfer?.files?.[0])
   }
-  function onPaste(e) {
+  function onPaste(e: ClipboardEvent) {
     const f = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith('image/'))
     if (f) load(f, 'pasted')
   }
@@ -169,7 +171,7 @@
 
   <label class="drop">
     Image (PNG, JPEG, WebP) — choose a file, drop it anywhere, or paste it:
-    <input type="file" accept="image/*" onchange={(e) => load(e.currentTarget.files[0])} />
+    <input type="file" accept="image/*" onchange={(e) => load(e.currentTarget.files![0])} />
   </label>
 
   <fieldset>
@@ -189,7 +191,7 @@
       {#if !file}Load an image to see a detected size.
       {:else if !info}Analysing…
       {:else if info.suggestedSize}
-        <button type="button" onclick={() => ([W, H] = info.suggestedSize)}>Use detected size {info.suggestedSize[0]}×{info.suggestedSize[1]}</button>
+        <button type="button" onclick={() => ([W, H] = info!.suggestedSize! as [number, number])}>Use detected size {info.suggestedSize[0]}×{info.suggestedSize[1]}</button>
         (grid class: {info.grid.class}, confidence {fmt(info.grid.confidence)}; evidence only)
       {:else}No size suggested (grid class: {info.grid.class}).
       {/if}
@@ -249,7 +251,7 @@
         <label>
           <input type="radio" name="cand" value={c.id} bind:group={sel} />
           <b>{c.id}</b>{c.id === result.recommended ? ` (Recommended${result.recommendation ? `: ${result.recommendation.evidence}` : ""})` : ""}
-          — {c.width}×{c.height}, {fmt(c.report.output?.colors)} colours, {c.report.warnings.length} warning(s)
+          — {c.width}×{c.height}, {fmt(c.report!.output?.colors)} colours, {c.report!.warnings.length} warning(s)
         </label>
       {/each}
       {#each result.failed as f}<p class="error">{f.id} failed: {f.code} — {f.message}</p>{/each}
@@ -290,8 +292,8 @@
             {#if showGrid && zoom >= 3}<div class="gridlines" style:background-size="{zoom}px {zoom}px"></div>{/if}
           </div>
         </div>
-        <p>{cand.width}×{cand.height}, {fmt(report.output?.colors)} colours. Warnings:{#if !report.warnings.length} none{/if}</p>
-        {#if report.warnings.length}<ul>{#each report.warnings as w}<li>{w}</li>{/each}</ul>{/if}
+        <p>{cand.width}×{cand.height}, {fmt(report!.output?.colors)} colours. Warnings:{#if !report!.warnings.length} none{/if}</p>
+        {#if report!.warnings.length}<ul>{#each report!.warnings as w}<li>{w}</li>{/each}</ul>{/if}
         <p>
           <button type="button" onclick={() => save(cand.pngBytes, `${base()}.png`)}>Download PNG</button>
           <button type="button" onclick={() => saveUpscaled(zoom)} disabled={zoom < 2 || cand.width * cand.height * zoom * zoom > MAX_PIXELS}>Download ×{zoom} upscaled</button>
@@ -304,7 +306,7 @@
 
   {#if report}
     <section aria-label="Report">
-      <h2>Report ({cand.id})</h2>
+      <h2>Report ({cand!.id})</h2>
       <dl>
         <dt>Input</dt>
         <dd>{fmt(report.input?.width)}×{fmt(report.input?.height)}, {fmt(report.input?.format)}, decode: {fmt(report.input?.decode)}</dd>
@@ -351,12 +353,12 @@
         <dd>{fmt(report.alphaPolicy)}</dd>
         <dt>Output</dt>
         <dd>
-          {fmt(report.output?.width)}×{fmt(report.output?.height)}, {fmt(report.output?.colors)} colours (allowed {fmt(report.output?.colorsAllowed)}),
-          transparency: {report.output?.transparent ? 'yes' : 'no'}
+          {fmt(report!.output?.width)}×{fmt(report!.output?.height)}, {fmt(report!.output?.colors)} colours (allowed {fmt(report!.output?.colorsAllowed)}),
+          transparency: {report!.output?.transparent ? 'yes' : 'no'}
           <div>{#each swatches as s}<span class="swatch" style:background={s} title={s}></span>{/each}</div>
         </dd>
         <dt>Canonical hash</dt>
-        <dd><code>{cand.hash}</code></dd>
+        <dd><code>{cand!.hash}</code></dd>
         <dt>Timings (ms)</dt>
         <dd>{Object.entries(report.timingsMs ?? {}).map(([k, v]) => `${k}: ${fmt(v)}`).join(', ') || '—'}</dd>
       </dl>

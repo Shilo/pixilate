@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { convertCandidates } from '$engine/core/pipeline.js'
-import { beforeRect, countColours, exportScales, fitZoom, upscale } from '../src/lib/geometry.js'
+import { convertCandidates } from '$engine/core/pipeline.ts'
+import { beforeRect, countColours, exportScales, fitZoom, upscale } from '../src/lib/geometry.ts'
 
 // 16 x 16 cells at 8 px (128 x 128): a 2-colour cell checker in cells 4..11, transparent around it.
 function sprite() {

@@ -5,7 +5,7 @@
 // Usage: node scripts/score.mjs <output.png> [--target WxH] [--colors N] [--json]
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { decodeImage } from '../src/lib/decode.js'
+import { decodeImage } from '../src/lib/decode.ts'
 import { intrinsic } from '../test/metrics.js'
 
 export const THRESHOLDS = { hidden2: 0.3, dupRatio: 0.05, noiseRate: 0.002 } // PROVISIONAL-PILOT

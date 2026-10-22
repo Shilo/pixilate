@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { sampleCells } from '../src/lib/core/sample.js'
-import { srgbToOklab } from '../src/lib/core/color.js'
+import { sampleCells } from '../src/lib/core/sample.ts'
+import { srgbToOklab } from '../src/lib/core/color.ts'
 
 const rng = (s) => () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296)
 // near-black, not #000: ±6 sRGB noise on pure black spans ~0.1 ΔEOK, which no per-cell sampler can undo

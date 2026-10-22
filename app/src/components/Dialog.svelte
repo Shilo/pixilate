@@ -1,11 +1,13 @@
-<script>
-  // Native modal <dialog> styled as a GlassKit modal: showModal() traps focus, makes the page inert and
+<script lang="ts">
+  import type { Snippet } from 'svelte'
+  interface Props { open: boolean; labelledby: string; variant?: string; onclose: () => void; children: Snippet }
+// Native modal <dialog> styled as a GlassKit modal: showModal() traps focus, makes the page inert and
   // returns focus to the trigger on close. Escape fades out like the Close button. A solid surface keeps
   // muted text readable over any art behind it.
-  let { open, labelledby, variant = 'center', onclose, children } = $props()
-  let el = $state()
+  let { open, labelledby, variant = 'center', onclose, children }: Props = $props()
+  let el = $state<HTMLDialogElement>(undefined!)
   let active = $state(false)
-  let closing = 0
+  let closing: ReturnType<typeof setTimeout> | number = 0
   const instant = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
   $effect(() => {

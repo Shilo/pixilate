@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   DEFAULT_TOOLS, detectedGrid, gridOfPeriod, manualPeriodOf, sizeAfterReset, sizeForGrid, validateGrid, applyPreset, baseName, chips, clampScale, deriveH, deriveW, fileName, needsCase, prefill, recipe, recoverJob, showsFit, styleIdOf, toEngineOpts, typed, validate,
-} from '../src/lib/opts.js'
+} from '../src/lib/opts.ts'
 import pkg from '../package.json'
-import { T } from '../src/lib/copy.js'
+import { T } from '../src/lib/copy.ts'
 
 const info = (cls, suggestedSize, extra = {}) => ({ width: 1024, height: 1024, grid: { class: cls, suggestedSize, ...extra } })
 const S = { w: 32, h: 32, lock: true, fit: 'contain', source: 'detected', chip: 'detected', note: null, derived: null }

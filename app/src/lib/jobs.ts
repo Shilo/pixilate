@@ -1,20 +1,23 @@
+import type { Job, Reply, Candidate } from './types.ts'
+import type { DecodedImage } from '$engine/decode.ts'
+interface ErrorDetails { code?: string; message?: string }
 // Worker job handler (spec §9), pure enough to run in Node tests: decode once, cache, analyse, convert,
 // export. The engine is imported in place from the prototype ($engine); nothing here changes pixels.
-import { decodeImage, encodePng, sniffFormat } from '$engine/decode.js'
-import { analyze, canonicalHash, convertCandidates } from '$engine/core/pipeline.js'
-import { upscale } from './geometry.js'
+import { decodeImage, encodePng, sniffFormat } from '$engine/decode.ts'
+import { analyze, canonicalHash, convertCandidates } from '$engine/core/pipeline.ts'
+import { upscale } from './geometry.ts'
 
-function decodeCode(e, u8) {
-  if (/Image too large/.test(e?.message)) return 'decode-too-large'
+function decodeCode(e: ErrorDetails | null, u8: Uint8Array) {
+  if (/Image too large/.test((e as ErrorDetails)?.message!)) return 'decode-too-large'
   const f = sniffFormat(u8) // magic bytes only: a renamed text file is 'other', not the MIME hint
   return f === 'png' || f === 'jpeg' ? 'decode-damaged' : 'decode-unsupported'
 }
 
 /** One handler per worker; it keeps the decoded image between messages. post(msg, transfer?) replies. */
 export function createJobs() {
-  let ready = null // Promise<{ u8, img, meta }>
+  let ready: Promise<{ u8: Uint8Array; img: DecodedImage["img"]; meta: Omit<DecodedImage, "img"> }> | null = null // Promise<{ u8, img, meta }>
 
-  return async function handle(msg, post) {
+  return async function handle(msg: Job, post: (reply: Reply, transfer?: Transferable[]) => void) {
     const { type, jobId } = msg
     try {
       if (type === 'open') {
@@ -35,7 +38,7 @@ export function createJobs() {
         if (!ready) throw Object.assign(new Error('no image open'), { code: 'invalid-input' })
         const { u8, img, meta } = await ready
         const res = convertCandidates(img, { ...msg.opts, ...meta }, u8)
-        const candidates = [], transfer = []
+        const candidates: Candidate[] = [], transfer: Transferable[] = []
         for (const { id, image, report } of res.candidates) {
           const png = encodePng(image).slice() // own buffer, exact length
           // the hash needs crypto.subtle, which plain-HTTP pages (a phone on the LAN) lack: then null, shown as unavailable
@@ -51,7 +54,7 @@ export function createJobs() {
       }
       throw new Error(`unknown message ${type}`)
     } catch (e) {
-      post({ type: 'error', jobId, code: e?.code ?? null, message: e?.message ?? String(e) })
+      post({ type: 'error', jobId, code: (e as ErrorDetails)?.code ?? null, message: (e as ErrorDetails)?.message ?? String(e) })
     }
   }
 }

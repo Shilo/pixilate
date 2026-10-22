@@ -4,8 +4,8 @@
 import { writeFileSync } from 'node:fs'
 import { proceduralSprites } from '../../prototype/test/fixtures.js'
 import { degrade, PRESETS } from '../../prototype/test/synth.js'
-import { analyze } from '../../prototype/src/lib/core/pipeline.js'
-import { encodePng } from '../../prototype/src/lib/decode.js'
+import { analyze } from '../../prototype/src/lib/core/pipeline.ts'
+import { encodePng } from '../../prototype/src/lib/decode.ts'
 
 const sprite = proceduralSprites(1).find((s) => s.id === 'proc-blob').img
 // stronger than the preset so the messy-to-crisp change is visible at a glance: blurred edges, shading drift,

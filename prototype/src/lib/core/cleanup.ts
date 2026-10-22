@@ -1,15 +1,16 @@
+import type { Image, Numbers, Surface, Cells, Indexed } from './types.ts'
 // Steps 2, 7, 9: background analysis, indexed-grid cleanup, background removal (contract: algorithm-design.md).
 // Every grid pass is Jacobi-style: read the old index array, write a new one.
 // ΔE tests use toe-corrected L (toeL) on working copies; stored colors keep true OKLab.
 
-import { dist2 as d2, srgbToOklab, toe, toeL } from './color.js'
+import { dist2 as d2, srgbToOklab, toe, toeL } from './color.ts'
 
 const NB8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
 const ACCENT_L = 0.1125 // D58, D63: toe-L contrast of a protected 1-px accent against each 4-neighbour
 const SPECK_AREA = 0.005, SPECK_DE = 0.09 // background-speck rule: share of opaque cells, ΔE to a bg color
 
 /** Squared distance from point P[p..] to segment A[a..]-B[b..] in OKLab. */
-function segD2(P, p, A, a, B, b) {
+function segD2(P: Numbers, p: number, A: Numbers, a: number, B: Numbers, b: number) {
   let num = 0, den = 0
   for (let k = 0; k < 3; k++) { const ab = B[b + k] - A[a + k]; num += (P[p + k] - A[a + k]) * ab; den += ab * ab }
   const t = den > 0 ? Math.min(1, Math.max(0, num / den)) : 0
@@ -19,7 +20,7 @@ function segD2(P, p, A, a, B, b) {
 }
 
 /** Most frequent value in `vals[0..m)`, ties to the lowest value. */
-function mode(vals, m) {
+function mode(vals: Numbers, m: number) {
   let best = 0, bc = 0
   for (let i = 0; i < m; i++) {
     let c = 0
@@ -32,10 +33,10 @@ function mode(vals, m) {
 // Smooth-gradient background (D49): a per-channel quadratic surface in OKLab over normalized canvas
 // coordinates u = x / W, v = y / H, fitted to border-block means by trimmed least squares.
 const SURF_TERMS = 6, SURF_INLIER = 0.03, SURF_MIN_SHARE = 0.6, SURF_MAX_MED = 0.035, SURF_MIN_RANGE = 0.03
-const surfBasis = (u, v, f) => { f[0] = 1; f[1] = u; f[2] = v; f[3] = u * v; f[4] = u * u; f[5] = v * v }
+const surfBasis = (u: number, v: number, f: Float64Array) => { f[0] = 1; f[1] = u; f[2] = v; f[3] = u * v; f[4] = u * u; f[5] = v * v }
 
 /** Solve the K x K normal equations M x = r in place (partial pivoting); null when (near-)singular. */
-function solve(M, r, K) {
+function solve(M: Float64Array, r: Float64Array, K: number) {
   const tol = 1e-9 * M[0] // relative pivot threshold: M[0] = point count, the Gram matrix's largest diagonal
   for (let c = 0; c < K; c++) {
     let piv = c
@@ -57,14 +58,14 @@ function solve(M, r, K) {
 }
 
 /** surfaceAt(surface, u, v, out, o): true OKLab of a background surface at normalized (u, v), into out[o..o+2]. */
-export function surfaceAt(S, u, v, out, o = 0) {
+export function surfaceAt(S: Surface, u: number, v: number, out: Numbers, o = 0) {
   const f = new Float64Array(SURF_TERMS)
   surfBasis(u, v, f)
   for (let k = 0; k < 3; k++) { let t = 0; for (let j = 0; j < SURF_TERMS; j++) t += S.coef[k * SURF_TERMS + j] * f[j]; out[o + k] = t }
   return out
 }
 
-const toeDist = (a, b) => { const dL = toeL(a[0]) - toeL(b[0]), da = a[1] - b[1], db = a[2] - b[2]; return Math.sqrt(dL * dL + da * da + db * db) }
+const toeDist = (a: Numbers, b: Numbers) => { const dL = toeL(a[0]) - toeL(b[0]), da = a[1] - b[1], db = a[2] - b[2]; return Math.sqrt(dL * dL + da * da + db * db) }
 
 /**
  * fitSurface(us, vs, L, m) -> { coef, inliers, med, range } | null for m points (u, v, true OKLab). Three
@@ -72,7 +73,7 @@ const toeDist = (a, b) => { const dL = toeL(a[0]) - toeL(b[0]), da = a[1] - b[1]
  * < max(SURF_INLIER, 2.5 x median residual). med = median inlier residual; range = largest toe-ΔE from the
  * canvas centre to its corners and edge midpoints.
  */
-export function fitSurface(us, vs, L, m) {
+export function fitSurface(us: Numbers, vs: Numbers, L: Float64Array | Float32Array, m: number) {
   const K = SURF_TERMS, f = new Float64Array(K), inl = new Uint8Array(m).fill(1), res = new Float64Array(m), q = new Float64Array(3)
   let S = null
   for (let it = 0; it < 3; it++) {
@@ -88,17 +89,17 @@ export function fitSurface(us, vs, L, m) {
     const coef = new Float64Array(3 * K)
     for (let k = 0; k < 3; k++) { const x = solve(Float64Array.from(M), R[k], K); if (!x) return null; coef.set(x, k * K) }
     S = { coef }
-    for (let i = 0; i < m; i++) res[i] = toeDist(L.subarray(i * 3, i * 3 + 3), surfaceAt(S, us[i], vs[i], q))
+    for (let i = 0; i < m; i++) res[i] = toeDist(L.subarray(i * 3, i * 3 + 3), surfaceAt(S!, us[i], vs[i], q))
     const sorted = Float64Array.from(res).sort(), thr = Math.max(SURF_INLIER, 2.5 * sorted[m >> 1])
     for (let i = 0; i < m; i++) inl[i] = res[i] < thr ? 1 : 0
   }
   const r = []
   for (let i = 0; i < m; i++) if (inl[i]) r.push(res[i])
   r.sort((a, b) => a - b)
-  const ref = surfaceAt(S, 0.5, 0.5, new Float64Array(3))
+  const ref = surfaceAt(S!, 0.5, 0.5, new Float64Array(3))
   let range = 0
-  for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0], [0.5, 1], [0, 0.5], [1, 0.5]]) range = Math.max(range, toeDist(surfaceAt(S, u, v, q), ref))
-  return { coef: S.coef, inliers: r.length / m, med: r.length ? r[r.length >> 1] : Infinity, range }
+  for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0], [0.5, 1], [0, 0.5], [1, 0.5]]) range = Math.max(range, toeDist(surfaceAt(S!, u, v, q), ref))
+  return { coef: S!.coef, inliers: r.length / m, med: r.length ? r[r.length >> 1] : Infinity, range }
 }
 
 /**
@@ -111,7 +112,7 @@ export function fitSurface(us, vs, L, m) {
  * inlier residual < 0.035 and range >= 0.03 (>= 3 distinct block rows and columns, else `reason`); `bg` is then
  * the surface colour at the canvas centre.
  */
-export function analyzeBackground(img) {
+export function analyzeBackground(img: Image): { bg: Float32Array | null; checkerboard: { period: number } | null; mask: Uint8Array | null; surface?: Surface | null; reason?: string } {
   const W = img.width, H = img.height, d = img.data
   const ring = []
   for (let x = 0; x < W; x++) ring.push(x)
@@ -120,7 +121,7 @@ export function analyzeBackground(img) {
   for (let y = H - 2; y > 0 && W > 1; y--) ring.push(y * W)
   const none = { bg: null, checkerboard: null, mask: null, surface: null }
   const lab = new Float64Array(ring.length * 3), label = new Int32Array(ring.length).fill(-1)
-  const leads = [], counts = [], sums = [], tt = new Float64Array(3)
+  const leads = [], counts: number[] = [], sums: number[][] = [], tt = new Float64Array(3)
   let opaque = 0
   for (let r = 0; r < ring.length; r++) {
     const p = ring[r] * 4
@@ -136,8 +137,8 @@ export function analyzeBackground(img) {
   }
   if (opaque < ring.length * 0.4) return none // border mostly transparent already
   const surf = () => { // no solid colour or checkerboard: a smooth gradient over the border-block means?
-    const B = Math.max(4, Math.round(Math.min(W, H) / 48)), t = new Float64Array(3), us = [], vs = [], L = []
-    const block = (x0, y0) => {
+    const B = Math.max(4, Math.round(Math.min(W, H) / 48)), t = new Float64Array(3), us: number[] = [], vs: number[] = [], L: number[] = []
+    const block = (x0: number, y0: number) => {
       const x1 = Math.min(W, x0 + B), y1 = Math.min(H, y0 + B)
       let n = 0, l = 0, a = 0, b = 0
       for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
@@ -154,10 +155,10 @@ export function analyzeBackground(img) {
     if (new Set(us).size < 3 || new Set(vs).size < 3) return { ...none, reason: 'gradient surface refused: border blocks span < 3 distinct rows or columns' }
     const S = fitSurface(us, vs, Float64Array.from(L), us.length)
     if (!S || S.inliers < SURF_MIN_SHARE || S.med >= SURF_MAX_MED || S.range < SURF_MIN_RANGE) return none
-    return { ...none, bg: Float32Array.from(surfaceAt(S, 0.5, 0.5, new Float64Array(3))), surface: { coef: S.coef } }
+    return { ...none, bg: Float32Array.from(surfaceAt(S!, 0.5, 0.5, new Float64Array(3))), surface: { coef: S.coef } }
   }
   const byCount = counts.map((_, q) => q).sort((a, b) => counts[b] - counts[a] || a - b)
-  const mean = (q) => sums[q].map((s) => s / counts[q])
+  const mean = (q: number) => sums[q].map((s: number) => s / counts[q])
   const [c0, c1] = byCount
   if (counts[c0] >= 0.6 * opaque) return { ...none, bg: Float32Array.from(mean(c0)) }
   if (c1 === undefined || counts[c0] + counts[c1] < 0.6 * opaque) return surf()
@@ -183,7 +184,7 @@ export function analyzeBackground(img) {
   if (period < 2 || stable < 0.7 * runs.length) return surf()
   // mask: flood from the border over pixels near the segment between the two checker colors
   const mask = new Uint8Array(W * H), queue = new Int32Array(W * H), t = new Float64Array(3)
-  const near = (i) => {
+  const near = (i: number) => {
     const p = i * 4
     if (d[p + 3] < 128) return true
     srgbToOklab(d[p], d[p + 1], d[p + 2], t, 0)
@@ -203,7 +204,7 @@ export function analyzeBackground(img) {
 }
 
 /** Cells in a strict 3x3 two-color checker (both colors opaque). */
-function ditherMask(index, w, h) {
+function ditherMask(index: Int16Array, w: number, h: number) {
   const prot = new Uint8Array(w * h)
   for (let y = 0; y + 3 <= h; y++) {
     for (let x = 0; x + 3 <= w; x++) {
@@ -229,13 +230,13 @@ function ditherMask(index, w, h) {
  *    except true right angles (both arms continue) and stroke ends (an arm with no onward pixel);
  *    of 8-adjacent candidates only the lowest raster.
  */
-export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
-  const { w, h, palette } = indexed, n = w * h, dom = cells.dominance, P = toe(palette)
+export function cleanup(indexed: Indexed, cells: { dominance?: Float32Array; pure?: Uint8Array }, { pixelPerfect = true } = {}) {
+  const { w, h, palette } = indexed, n = w * h, dom = cells.dominance!, P = toe(palette)
   const prot = ditherMask(indexed.index, w, h)
   if (cells.pure) for (let p = 0; p < n; p++) prot[p] |= cells.pure[p] // exact cells are content, not noise
   const vals = new Int32Array(8)
   // neighbor indices of p (in bounds) into vals; returns count
-  const neigh = (idx, x, y) => {
+  const neigh = (idx: Int16Array, x: number, y: number) => {
     let m = 0
     for (const [dx, dy] of NB8) {
       const nx = x + dx, ny = y + dy
@@ -243,13 +244,13 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
     }
     return m
   }
-  const opaqueOnly = (m) => { let k = 0; for (let i = 0; i < m; i++) if (vals[i] >= 0) vals[k++] = vals[i]; return k }
+  const opaqueOnly = (m: number) => { let k = 0; for (let i = 0; i < m; i++) if (vals[i] >= 0) vals[k++] = vals[i]; return k }
   const changed = { orphan: 0, rareLone: 0, pinhole: 0, island: 0, pixelPerfect: 0 }
-  const diff = (a, b) => { let k = 0; for (let p = 0; p < n; p++) if (a[p] !== b[p]) k++; return k }
+  const diff = (a: Int16Array, b: Int16Array) => { let k = 0; for (let p = 0; p < n; p++) if (a[p] !== b[p]) k++; return k }
 
   // D58 accent: a cell with 8 opaque neighbours that is lighter (or darker) than each 4-neighbour by more than
   // ACCENT_L in toe L is a 1-px eye or pupil, not noise; the orphan and rareLone passes keep it.
-  const accent = (idx, x, y, v) => {
+  const accent = (idx: Int16Array, x: number, y: number, v: number) => {
     let sgn = 0
     for (const u of [idx[y * w + x + 1], idx[y * w + x - 1], idx[(y + 1) * w + x], idx[(y - 1) * w + x]]) {
       const dl = P[v * 3] - P[u * 3], s = dl > ACCENT_L ? 1 : dl < -ACCENT_L ? -1 : 0
@@ -307,9 +308,9 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
   // 3. pixel-perfect L-corners
   if (pixelPerfect) {
     old = cur; cur = Int16Array.from(old)
-    const at = (x, y) => (x >= 0 && y >= 0 && x < w && y < h ? old[y * w + x] : -2)
+    const at = (x: number, y: number) => (x >= 0 && y >= 0 && x < w && y < h ? old[y * w + x] : -2)
     // thin: no 2x2 window containing (x, y) is all one index
-    const thin = (x, y) => {
+    const thin = (x: number, y: number) => {
       const v = at(x, y)
       for (let oy = -1; oy <= 0; oy++) for (let ox = -1; ox <= 0; ox++) {
         if (at(x + ox, y + oy) === v && at(x + ox + 1, y + oy) === v && at(x + ox, y + oy + 1) === v && at(x + ox + 1, y + oy + 1) === v) return false
@@ -333,7 +334,7 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
         if (at(x + 2 * hx, y) === v && at(x, y + 2 * vy) === v) continue // true right angle
         // a jaggy step joins two strokes: an arm that ends at the corner (dead-end stub) makes the
         // corner a stroke end, and removing it would break the stroke
-        const onward = (ax, ay) => NB8.some(([dx, dy]) => {
+        const onward = (ax: number, ay: number) => NB8.some(([dx, dy]) => {
           const qx = ax + dx, qy = ay + dy
           return !(qx === x && qy === y) && !(qx === x + hx && qy === y) && !(qx === x && qy === y + vy) && at(qx, qy) === v
         })
@@ -377,18 +378,18 @@ export function cleanup(indexed, cells, { pixelPerfect = true } = {}) {
  * field (gradient surface, D49): per-cell background colours (n x 3 OKLab: the surface at each cell's source
  * centre) replace the bg colors in every test above; the solid-colour tolerance and gates apply unchanged.
  */
-export function removeBackground(cells, bg, { mode = 'auto', tolerance, connectivity = 4, halo = false, field = null } = {}) {
+export function removeBackground(cells: Cells, bg: Float32Array | null, { mode = 'auto', tolerance, connectivity = 4, halo = false, field = null }: { mode?: string | boolean; tolerance?: number; connectivity?: number; halo?: boolean; field?: Float32Array | null } = {}) {
   const { w, h, lab, alpha, masked } = cells, n = w * h
   const out = { ...cells, lab: Float32Array.from(lab), alpha: Uint8Array.from(alpha), rgb: cells.rgb && Int32Array.from(cells.rgb) }
-  const refuse = (reason) => ({ ...out, background: { applied: false, reason, removed: 0, specks: 0, haloChanged: 0 } })
+  const refuse = (reason: string) => ({ ...out, background: { applied: false, reason, removed: 0, specks: 0, haloChanged: 0 } })
   if (!bg || !bg.length || !mode) return refuse('no background color')
   const key = mode === 'key', nb = field ? 1 : bg.length / 3, T = toe(lab), B = toe(bg), F = field && toe(field)
   // painted checker: neutral grey squares with texture (cells up to ΔE ~0.035 off, which otherwise trip the
   // floating-subject check); chroma x2 keeps tinted pale ink (steel vs the grey square: 0.030 -> 0.051)
   if (nb === 2) for (const A of [T, B]) for (let i = 0; i < A.length; i += 3) { A[i + 1] *= 2; A[i + 2] *= 2 }
   const tol = key ? tolerance ?? 0.03 : nb === 2 ? 0.035 : 0.03, tol2 = tol * tol
-  const bgD2 = F ? (p) => d2(T, p * 3, F, p * 3) : (p) => { let m = Infinity; for (let b = 0; b < nb; b++) m = Math.min(m, d2(T, p * 3, B, b * 3)); return m }
-  const isBg = (p) => (masked && masked[p]) || (alpha[p] && (key ? bgD2(p) <= tol2 : bgD2(p) < tol2))
+  const bgD2 = F ? (p: number) => d2(T, p * 3, F, p * 3) : (p: number) => { let m = Infinity; for (let b = 0; b < nb; b++) m = Math.min(m, d2(T, p * 3, B, b * 3)); return m }
+  const isBg = (p: number) => (masked && masked[p]) || (alpha[p] && (key ? bgD2(p) <= tol2 : bgD2(p) < tol2))
   let border = 0, hit = 0, spread = 0
   for (let p = 0; p < n; p++) {
     const x = p % w, y = (p - x) / w
@@ -399,16 +400,16 @@ export function removeBackground(cells, bg, { mode = 'auto', tolerance, connecti
   const solidAuto = mode === 'auto' && nb === 1
   if (!key && hit < (solidAuto ? 0.9 : 0.6) * border) return refuse(`border coverage ${Math.round((100 * hit) / border)}% < ${solidAuto ? 90 : 60}%`)
   if (solidAuto && spread / hit >= 0.03 * 0.03) return refuse('border color spread too high')
-  const pass0 = (p) => !alpha[p] || isBg(p)
-  const ring4 = (p) => { const x = p % w; return [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w >= n ? -1 : p + w] }
-  const ring = connectivity === 8 ? (p) => {
+  const pass0 = (p: number) => !alpha[p] || isBg(p)
+  const ring4 = (p: number) => { const x = p % w; return [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w >= n ? -1 : p + w] }
+  const ring = connectivity === 8 ? (p: number) => {
     const x = p % w, r = ring4(p)
     if (x > 0) r.push(p - w - 1, p + w - 1 < n ? p + w - 1 : -1)
     if (x < w - 1) r.push(p - w + 1, p + w + 1 < n ? p + w + 1 : -1)
     return r
   } : ring4
   // a cell between the two checker colours with only background around it straddles two squares
-  const pass = (p) => pass0(p) || (nb === 2 && segD2(T, p * 3, B, 0, B, 3) < tol2 && ring4(p).every((q) => q < 0 || pass0(q)))
+  const pass = (p: number) => pass0(p) || (nb === 2 && segD2(T, p * 3, B, 0, B, 3) < tol2 && ring4(p).every((q) => q < 0 || pass0(q)))
   const gone = new Uint8Array(n), queue = new Int32Array(n)
   let qh = 0, qt = 0
   for (let p = 0; p < n; p++) {
@@ -423,7 +424,7 @@ export function removeBackground(cells, bg, { mode = 'auto', tolerance, connecti
     for (let p = 0; p < n; p++) { const x = p % w, y = (p - x) / w; if ((x === 0 || y === 0 || x === w - 1 || y === h - 1) && !gone[p]) kept++ }
     if (kept > 0.02 * border) return refuse('subject touches the border')
   }
-  let left = false
+  let left: number | boolean = false
   for (let p = 0; p < n && !left; p++) left = alpha[p] && !gone[p]
   if (!left) return refuse('no subject')
   // background specks (BG-D): a floating 8-connected opaque component (every outside 8-neighbor
@@ -431,7 +432,7 @@ export function removeBackground(cells, bg, { mode = 'auto', tolerance, connecti
   // SPECK_DE of a background color is background noise the tolerance missed; it goes with the background
   let specks = 0
   {
-    const seen = new Uint8Array(n), comp = []
+    const seen = new Uint8Array(n), comp: number[] = []
     let opaque = 0
     for (let p = 0; p < n; p++) if (alpha[p] && !gone[p]) opaque++
     for (let s0 = 0; s0 < n; s0++) {
@@ -467,7 +468,7 @@ export function removeBackground(cells, bg, { mode = 'auto', tolerance, connecti
     }
     if (best >= 0 && (lab[p * 3] !== lab[best * 3] || lab[p * 3 + 1] !== lab[best * 3 + 1] || lab[p * 3 + 2] !== lab[best * 3 + 2])) {
       for (let a = 0; a < 3; a++) out.lab[p * 3 + a] = lab[best * 3 + a]
-      if (out.rgb) out.rgb[p] = cells.rgb[best]
+      if (out.rgb) out.rgb[p] = cells.rgb![best]
       haloChanged++
     }
   }

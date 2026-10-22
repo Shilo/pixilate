@@ -1,7 +1,7 @@
 // Job control (spec §9) with a stand-in Worker: stale replies are dropped, a busy worker is replaced
 // (re-opened without analysis, then the convert), a failed open is recovered, and a dead worker is reported.
 import { beforeEach, expect, test } from 'vitest'
-import { createClient } from '../src/lib/client.js'
+import { createClient } from '../src/lib/client.ts'
 
 let workers
 class FakeWorker {

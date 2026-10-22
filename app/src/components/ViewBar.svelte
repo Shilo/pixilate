@@ -1,16 +1,17 @@
-<script>
-  // Solid bar under the stage: Before | After, pixel grid, zoom (spec §8.4). The controls appear with the
+<script lang="ts">
+  interface Props { hasResult: boolean; mode: string; onmode: (mode: 'before' | 'after') => void; showGrid: boolean; ongrid: () => void; gridOk: boolean; gridWhy: string; zoomText: string; zoomTitle: string; onzoom: (dir: number) => void; onlevel: () => void; caption: string | null }
+// Solid bar under the stage: Before | After, pixel grid, zoom (spec §8.4). The controls appear with the
   // first result; the bar keeps its height so nothing moves when they do. Progress lives on the stage.
-  import { ICONS } from '../lib/icons.js'
-  import { T } from '../lib/copy.js'
+  import { ICONS } from '../lib/icons.ts'
+  import { T } from '../lib/copy.ts'
 
-  let { hasResult, mode, onmode, showGrid, ongrid, gridOk, gridWhy, zoomText, zoomTitle, onzoom, onlevel, caption } = $props()
+  let { hasResult, mode, onmode, showGrid, ongrid, gridOk, gridWhy, zoomText, zoomTitle, onzoom, onlevel, caption }: Props = $props()
 </script>
 
 <div class="bar">
   {#if hasResult}
     <div class="glass-segmented" role="group" aria-label={T.view}>
-      {#each ['before', 'after'] as m}
+      {#each ['before', 'after'] as const as m}
         <button class="glass-segmented__item" aria-pressed={mode === m} onclick={() => onmode(m)}>{T[m]}</button>
       {/each}
     </div>

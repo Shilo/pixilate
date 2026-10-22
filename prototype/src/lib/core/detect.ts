@@ -1,3 +1,6 @@
+import type { Image } from './types.ts'
+type CborValue = string | number | boolean | null | CborValue[] | { [key: string]: CborValue }
+interface Segment { kind: string; key?: string; data?: Uint8Array; s: string | null }
 // Report-only input provenance signals (docs/research-spikes/algorithms/input-provenance-signals.md).
 // Pure function of the file bytes and decoded pixels; never throws, never required.
 // Signatures are NOT checked: every metadata match is a declaration ("declared (unvalidated)"),
@@ -7,10 +10,10 @@
 
 const latin1 = new TextDecoder('latin1') // 1 char per byte: offsets in strings == byte offsets
 const utf8 = new TextDecoder()
-const u16 = (b, o) => (b[o] << 8) | b[o + 1]
-const u32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0
-const u32le = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0
-const str = (b) => latin1.decode(b)
+const u16 = (b: Uint8Array, o: number) => (b[o] << 8) | b[o + 1]
+const u32 = (b: Uint8Array, o: number) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0
+const u32le = (b: Uint8Array, o: number) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0
+const str = (b: Uint8Array) => latin1.decode(b)
 
 // ---------------------------------------------------------------- container walk
 
@@ -18,9 +21,9 @@ const str = (b) => latin1.decode(b)
  * Collect metadata segments without touching image data. seg = {kind:'c2pa'|'xmp'|'exif'|'text', key?, data?, s}.
  * types: every PNG chunk type / WebP chunk FourCC, plus 'ICC' for a JPEG APP2 ICC profile (decode.js warnings).
  */
-export function walk(b) {
-  const segs = [], types = []
-  const add = (kind, data, key) => segs.push({ kind, key, data, s: data ? str(data) : null })
+export function walk(b: Uint8Array) {
+  const segs: Segment[] = [], types: string[] = []
+  const add = (kind: string, data?: Uint8Array, key?: string) => segs.push({ kind, key, data, s: data ? str(data) : null })
   if (b[0] === 0x89 && str(b.subarray(1, 4)) === 'PNG') {
     for (let p = 8; p + 12 <= b.length;) {
       const len = u32(b, p), type = str(b.subarray(p + 4, p + 8)), d = b.subarray(p + 8, p + 8 + len)
@@ -84,7 +87,7 @@ export function walk(b) {
   return { format: 'other', lossy: false, segs, types }
 }
 
-function concat(parts) {
+function concat(parts: Uint8Array[]) {
   if (parts.length === 1) return parts[0]
   const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
   let at = 0
@@ -95,7 +98,7 @@ function concat(parts) {
 // ---------------------------------------------------------------- minimal CBOR (C2PA assertions)
 
 /** Decode one CBOR item at p. Returns [value, end]. Throws on malformed input. */
-function cbor(b, p, depth = 0) {
+function cbor(b: Uint8Array, p: number, depth = 0): [CborValue, number] {
   if (depth > 32 || p >= b.length) throw new RangeError('CBOR overrun')
   const ib = b[p], mt = ib >> 5, ai = ib & 31
   let q = p + 1, n
@@ -119,19 +122,19 @@ function cbor(b, p, depth = 0) {
     if (q + n > b.length) throw new RangeError('CBOR overrun')
     return [mt === 3 ? utf8.decode(b.subarray(q, q + n)) : null, q + n]
   }
-  const map = mt === 5, out = map ? {} : []
+  const map = mt === 5, out: CborValue[] | Record<string, CborValue> = map ? {} : []
   for (let i = 0; n < 0 ? b[q] !== 0xff : i < n; i++) {
     if (q >= b.length) throw new RangeError('CBOR overrun')
     const [k, e1] = cbor(b, q, depth + 1)
-    if (!map) { out.push(k); q = e1; continue }
-    const [v, e2] = cbor(b, e1, depth + 1)
-    out[String(k)] = v; q = e2
+    if (!map) { (out as CborValue[]).push(k); q = e1; continue }
+    const [v, e2] = cbor(b, e1, depth + 1);
+    (out as Record<string, CborValue>)[String(k)] = v; q = e2
   }
   return [out, n < 0 ? q + 1 : q]
 }
 
 /** Decode the value after every CBOR text key `key` found in the latin1 string s of bytes b. */
-function valuesOf(b, s, key) {
+function valuesOf(b: Uint8Array, s: string, key: string) {
   const needle = String.fromCharCode(0x60 + key.length) + key // keys here are < 24 chars
   const vals = []
   for (let i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + 1)) {
@@ -140,12 +143,12 @@ function valuesOf(b, s, key) {
   return vals
 }
 
-const nameVer = (x) => typeof x === 'string' ? x : x && typeof x === 'object' ? [x.name, x.version].filter((v) => typeof v === 'string').join(' ') : ''
+const nameVer = (x: CborValue) => typeof x === 'string' ? x : x && typeof x === 'object' ? [(x as Record<string, CborValue>).name, (x as Record<string, CborValue>).version].filter((v) => typeof v === 'string').join(' ') : ''
 
 // ---------------------------------------------------------------- vendor markers
 
 // Order = priority when several match (e.g. a Microsoft surface serving an OpenAI model).
-const VENDORS = [
+const VENDORS: [string, RegExp, string?][] = [
   ['openai', /OpenAI|ChatGPT|DALL[-·]E|gpt-image/],
   ['google', /Google (?:C2PA Core Generator Library|Media Processing Services|LLC|Generative AI)|Gemini/],
   ['adobe', /Firefly/],
@@ -159,7 +162,7 @@ const VENDORS = [
   ['stable-diffusion', /Stability AI|Stable Diffusion/],
 ]
 
-function vendorOf(s, where) {
+function vendorOf(s: string, where: string) {
   for (const [family, re, only] of VENDORS) {
     if (only && only !== where) continue
     const m = re.exec(s)
@@ -175,7 +178,7 @@ const AI_SOURCE = /digitalsourcetype\/(trainedAlgorithmicMedia|compositeWithTrai
 // [family, sizes, format?]; every size also matches transposed. Published output sizes as collected from vendor docs and
 // community sources (UNKNOWN freshness). Weak, advisory evidence only (FR-023; input-provenance-signals.md §3).
 const gem3 = [[1024, 1024], [848, 1264], [896, 1200], [928, 1152], [768, 1376], [1584, 672]]
-const DIMS = [
+const DIMS: [string, number[][], string?][] = [
   ['openai', [[1792, 1024], [1536, 1024], [1024, 1024]]],
   ['google', [...gem3, ...gem3.map(([w, h]) => [w * 2, h * 2]), ...gem3.map(([w, h]) => [w * 4, h * 4]),
     [832, 1248], [864, 1184], [896, 1152], [768, 1344], [1536, 672], // Gemini 2.5 Flash
@@ -190,7 +193,7 @@ const DIMS = [
   ['meta', [[1280, 1280]], 'jpeg'],
 ]
 
-function dimCandidates(w, h, format) {
+function dimCandidates(w: number, h: number, format: string) {
   const out = []
   for (const [family, sizes, fmt] of DIMS) {
     if (fmt && fmt !== format) continue
@@ -203,7 +206,7 @@ function dimCandidates(w, h, format) {
 
 // ponytail: generic conservative corner (bottom-right 8% x 8%, INFERRED), no vendor geometry
 // (input-provenance-signals.md §4 rule 3). Used only when the container declares a visible mark.
-function cornerMask(w, h, f = 0.08) {
+function cornerMask(w: number, h: number, f = 0.08) {
   const m = new Uint8Array(w * h), x0 = Math.floor(w * (1 - f)), y0 = Math.floor(h * (1 - f))
   for (let y = y0; y < h; y++) m.fill(1, y * w + x0, (y + 1) * w)
   return m
@@ -218,11 +221,11 @@ function cornerMask(w, h, f = 0.08) {
  *   candidates:string[], evidence:string[], preset:{jpegStrict:boolean},
  *   watermarkMask:Uint8Array|null}}
  */
-export function detectGenerator(bytes, img) {
-  const r = { family: 'unknown', model: null, confidence: 'unknown', candidates: [], evidence: [], watermarkMask: null }
+export function detectGenerator(bytes: Uint8Array | null, img: Image) {
+  const r: { family: string; model: string | null; confidence: string; candidates: string[]; evidence: string[]; watermarkMask: Uint8Array | null } = { family: 'unknown', model: null, confidence: 'unknown', candidates: [], evidence: [], watermarkMask: null }
   let format = 'other', lossy = false, visibleDeclared = false
   const DECLARED = 'declared (unvalidated)' // metadata substring/key match, signature not checked
-  const claim = (family, confidence, line) => {
+  const claim = (family: string, confidence: string, line: string) => {
     r.evidence.push(line)
     if (r.family === 'unknown') { r.family = family; r.confidence = confidence }
   }
@@ -235,19 +238,19 @@ export function detectGenerator(bytes, img) {
 
       // Stage 1: C2PA manifests.
       for (const seg of c.segs.filter((s) => s.kind === 'c2pa')) {
-        const s = seg.s
+        const s = seg.s!
         try {
-          const gens = [...valuesOf(seg.data, s, 'claim_generator_info').flatMap((v) => (Array.isArray(v) ? v : [v]).map(nameVer)),
-            ...valuesOf(seg.data, s, 'claim_generator').filter((v) => typeof v === 'string')].filter(Boolean)
+          const gens = [...valuesOf(seg.data!, s, 'claim_generator_info').flatMap((v) => (Array.isArray(v) ? v : [v]).map(nameVer)),
+            ...valuesOf(seg.data!, s, 'claim_generator').filter((v) => typeof v === 'string')].filter(Boolean)
           for (const g of new Set(gens)) r.evidence.push(`file metadata claims C2PA generator "${g}" (signature not checked)`)
-          const actions = valuesOf(seg.data, s, 'actions').flatMap((v) => (Array.isArray(v) ? v : []))
-          const created = actions.find((a) => a && a.action === 'c2pa.created' && a.softwareAgent)
+          const actions = valuesOf(seg.data!, s, 'actions').flatMap((v) => (Array.isArray(v) ? v : []))
+          const created = (actions as Record<string, CborValue>[]).find((a) => a && a.action === 'c2pa.created' && a.softwareAgent)
           if (created && !r.model) {
             r.model = nameVer(created.softwareAgent) || null
             if (r.model) r.evidence.push(`file metadata claims model "${r.model}" (C2PA c2pa.created softwareAgent)`)
           }
         } catch (e) {
-          r.evidence.push(`C2PA structure not decoded (${e.message}); using string markers only`)
+          r.evidence.push(`C2PA structure not decoded (${(e as Error).message}); using string markers only`)
         }
         const v = vendorOf(s, 'c2pa')
         if (v) claim(v.family, DECLARED, `file metadata claims ${v.family} ("${v.hit}" in C2PA manifest)`)
@@ -265,9 +268,9 @@ export function detectGenerator(bytes, img) {
           claim('stable-diffusion', DECLARED, 'file metadata claims AUTOMATIC1111/Forge/Fooocus (PNG text key "parameters"; content not read)')
         } else if (key === 'prompt' || key === 'workflow') {
           claim('stable-diffusion', DECLARED, `file metadata claims ComfyUI (PNG text key "${key}"; content not read)`)
-        } else if (/^(invokeai_|sd-metadata$|Dream$)/.test(key)) {
+        } else if (/^(invokeai_|sd-metadata$|Dream$)/.test(key!)) {
           claim('stable-diffusion', DECLARED, `file metadata claims InvokeAI (PNG text key "${key}")`)
-        } else if (/^(Software|Source|Title|Comment)$/.test(key) && v.includes('NovelAI')) {
+        } else if (/^(Software|Source|Title|Comment)$/.test(key!) && v.includes('NovelAI')) {
           claim('novelai', DECLARED, `file metadata claims NovelAI (PNG text key "${key}")`)
         } else if (s && key !== 'Comment') {
           const vv = vendorOf(s, 'text')
@@ -275,7 +278,7 @@ export function detectGenerator(bytes, img) {
         }
       }
       for (const seg of c.segs.filter((s) => s.kind === 'exif')) {
-        const s = seg.s.replace(/\0/g, '') // also matches UTF-16 UserComment ("UNICODE\0" prefix)
+        const s = seg.s!.replace(/\0/g, '') // also matches UTF-16 UserComment ("UNICODE\0" prefix)
         if (/Steps: \d+, Sampler: /.test(s)) claim('stable-diffusion', DECLARED, 'file metadata claims AUTOMATIC1111/Forge (EXIF UserComment parameters)')
         if (/(?:prompt|workflow):\{/.test(s)) claim('stable-diffusion', DECLARED, 'file metadata claims ComfyUI (EXIF prompt/workflow)')
         const v = vendorOf(s, 'exif')
@@ -284,11 +287,11 @@ export function detectGenerator(bytes, img) {
 
       // Stage 3: XMP / IPTC.
       for (const seg of c.segs.filter((s) => s.kind === 'xmp' && s.s)) {
-        const v = vendorOf(seg.s, 'xmp')
+        const v = vendorOf(seg.s!, 'xmp')
         if (v) claim(v.family, DECLARED, `file metadata claims ${v.family} ("${v.hit}" in XMP)`)
-        const ai = AI_SOURCE.exec(seg.s)
+        const ai = AI_SOURCE.exec(seg.s!)
         if (ai) r.evidence.push(`file metadata claims AI generation (XMP DigitalSourceType ${ai[1]})`)
-        if (seg.s.includes('tc260.org.cn/ns/AIGC')) r.evidence.push('file metadata carries a China AIGC implicit label (TC260 XMP)')
+        if (seg.s!.includes('tc260.org.cn/ns/AIGC')) r.evidence.push('file metadata carries a China AIGC implicit label (TC260 XMP)')
       }
     }
 
@@ -310,7 +313,7 @@ export function detectGenerator(bytes, img) {
       r.evidence.push('masking bottom-right 8% x 8% corner (visible watermark declared in metadata; generic region, analysis mask only, pixels unchanged)')
     }
   } catch (e) {
-    r.evidence.push(`metadata parse failed: ${e.message}`)
+    r.evidence.push(`metadata parse failed: ${(e as Error).message}`)
   }
 
   // Advisory preset: priors only, never overrides measured grid evidence.

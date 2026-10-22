@@ -1,13 +1,14 @@
+import type { Image, Numbers } from './types.ts'
 // Output-only colour index and Q4 orphan classification (pixel-art-quality-metrics.md), shared by the
 // test metrics (test/metrics.js), the truth-free scorer (scripts/score.mjs) and the recommendation
 // rule (pipeline.js, D55). Pure functions over RGBA Img objects.
-import { srgbToOklab } from './color.js'
+import { srgbToOklab } from './color.ts'
 
 export const TAU_DUP = 0.03
 export const N8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
 
 /** Index map: one index per exact opaque RGB (alpha >= 128), -1 = transparent. */
-export function indexImage(img) {
+export function indexImage(img: Image) {
   const { width: w, height: h, data: d } = img
   const idx = new Int32Array(w * h), map = new Map(), lab = [], rgb = [], count = []
   let opaque = 0, partial = 0
@@ -30,11 +31,11 @@ export function indexImage(img) {
   return { w, h, idx, lab, rgb, count, opaque, partial }
 }
 
-export const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+export const d2 = (a: Numbers, b: Numbers) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 
 /** Connected components over pixels where key(p) is not null; same(p,q) decides joining. */
-export function components(w, h, member, same, conn8 = true) {
-  const lab = new Int32Array(w * h).fill(-1), sizes = [], stack = []
+export function components(w: number, h: number, member: (p: number) => boolean | number, same: (p: number, q: number) => boolean, conn8 = true) {
+  const lab = new Int32Array(w * h).fill(-1), sizes: number[] = [], stack: number[] = []
   const nb = conn8 ? N8 : [[0, -1], [-1, 0], [1, 0], [0, 1]]
   for (let p = 0; p < w * h; p++) {
     if (lab[p] >= 0 || !member(p)) continue
@@ -42,7 +43,7 @@ export function components(w, h, member, same, conn8 = true) {
     let n = 0
     lab[p] = id; stack.push(p)
     while (stack.length) {
-      const q = stack.pop(); n++
+      const q = stack.pop()!; n++
       const x = q % w, y = (q / w) | 0
       for (const [dx, dy] of nb) {
         const nx = x + dx, ny = y + dy
@@ -57,24 +58,24 @@ export function components(w, h, member, same, conn8 = true) {
 }
 
 /** Q12 helper: checker-dither membership (size >= 6 8-connected clusters). */
-export function ditherMask(ix) {
+export function ditherMask(ix: ReturnType<typeof indexImage>) {
   const { w, h, idx } = ix, c = new Uint8Array(w * h)
   for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
     const p = y * w + x, a = idx[p], j = idx[p - 1]
     if (a < 0 || j < 0 || j === a || idx[p + 1] !== j || idx[p - w] !== j || idx[p + w] !== j) continue
     if (idx[p - w - 1] === a && idx[p - w + 1] === a && idx[p + w - 1] === a && idx[p + w + 1] === a) c[p] = 1
   }
-  const cc = components(w, h, (p) => c[p] === 1, () => true)
+  const cc = components(w, h, (p: number) => c[p] === 1, () => true)
   const m = new Uint8Array(w * h)
   for (let p = 0; p < w * h; p++) if (c[p] && cc.sizes[cc.lab[p]] >= 6) m[p] = 1
   return m
 }
 
 /** Q4 orphans, classified (near/DITHER/AA/ACCENT/NOISE). Returns counts plus the orphan mask. */
-export function q4(ix, dither = ditherMask(ix)) {
+export function q4(ix: ReturnType<typeof indexImage>, dither = ditherMask(ix)) {
   const { w, h, idx, lab } = ix, T2 = TAU_DUP * TAU_DUP
-  const comp = components(w, h, (p) => idx[p] >= 0, (p, q) => idx[p] === idx[q])
-  const coherent = (p) => idx[p] >= 0 && comp.sizes[comp.lab[p]] >= 4
+  const comp = components(w, h, (p: number) => idx[p] >= 0, (p: number, q: number) => idx[p] === idx[q])
+  const coherent = (p: number) => idx[p] >= 0 && comp.sizes[comp.lab[p]] >= 4
   const r = { near: 0, dither: 0, aa: 0, accent: 0, noise: 0 }, orphan = new Uint8Array(w * h)
   for (let p = 0; p < w * h; p++) {
     const a = idx[p]

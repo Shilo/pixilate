@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { crc32 } from 'node:zlib'
 import jpeg from 'jpeg-js'
-import { detectGenerator } from '../src/lib/core/detect.js'
-import { decodeImage, encodePng } from '../src/lib/decode.js'
+import { detectGenerator } from '../src/lib/core/detect.ts'
+import { decodeImage, encodePng } from '../src/lib/decode.ts'
 
 const enc = (s) => new TextEncoder().encode(s)
 const cat = (...parts) => {

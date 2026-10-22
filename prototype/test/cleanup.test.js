@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeBackground, cleanup, removeBackground, surfaceAt } from '../src/lib/core/cleanup.js'
+import { analyzeBackground, cleanup, removeBackground, surfaceAt } from '../src/lib/core/cleanup.ts'
 import { existsSync } from 'node:fs'
-import { srgbToOklab } from '../src/lib/core/color.js'
+import { srgbToOklab } from '../src/lib/core/color.ts'
 import { readPng, repoPath } from './fixtures.js'
 
 const lab = (r, g, b) => { const t = new Float64Array(3); srgbToOklab(r, g, b, t, 0); return [...t] }
@@ -290,7 +290,7 @@ describe('real-sample background guards (suggested size, trim + auto background 
   ]
   for (const [id, rel, minFill, minLight] of cases) {
     it.skipIf(!existsSync(repoPath(rel)))(`${id}: subject stays filled (bbox fill ≥ ${minFill}, light share ≥ ${minLight})`, async () => {
-      const { analyze, convert } = await import('../src/lib/core/pipeline.js')
+      const { analyze, convert } = await import('../src/lib/core/pipeline.ts')
       const img = readPng(repoPath(rel)), [targetW, targetH] = analyze(img).suggestedSize
       const { image } = convert(img, { targetW, targetH, trim: true, background: 'auto', halo: true, cleanup: true })
       const { width: w, data: d } = image, t = new Float64Array(3)

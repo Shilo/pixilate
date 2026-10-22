@@ -10,13 +10,9 @@
 // `node scripts/update-baseline.mjs`; a missing baseline fails.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { analyze, convert } from '../src/lib/core/pipeline.ts'
 import { committedCases, showcaseCases, readPng, repoPath, REAL_SAMPLES, TRAPS, BASELINE_PATH, SHOWCASE_BASELINE_PATH, SMOOTH_PRESETS, SMOOTH_FIXTURES } from './fixtures.js'
 import { runCase, runMatrix, summarize, ratchet } from './metrics.js'
-
-const PIPELINE = new URL('../src/lib/core/pipeline.js', import.meta.url)
-const HAS = existsSync(fileURLToPath(PIPELINE))
-if (!HAS) console.warn('[regression] skipped: src/lib/core/pipeline.js does not exist yet')
 
 const table = (cur) => console.table(Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, { n: v.n, emRec: v.emSnapRec, em: v.emSnap, amb: v.ambFrac, emRGB: v.emOpaque, f1: v.f1T1, iou: v.iou, g8: v.g8Recall, dE: v.deMean, scale: v.scaleErr, seam95: v.seamP95, falseGrid: v.falseGrid, T2: v.passT2, T3: v.passT3 }])))
 const checkRatchet = (recs, path) => {
@@ -26,10 +22,9 @@ const checkRatchet = (recs, path) => {
   expect(ratchet(cur, JSON.parse(readFileSync(path, 'utf8')))).toEqual([])
 }
 
-describe.skipIf(!HAS)('committed gates (procedural fixtures)', () => {
+describe('committed gates (procedural fixtures)', () => {
   let recs = []
   beforeAll(async () => {
-    const { convert } = await import(PIPELINE.href)
     recs = runMatrix(convert, committedCases())
   }, 300_000)
 
@@ -59,7 +54,6 @@ describe.skipIf(!HAS)('committed gates (procedural fixtures)', () => {
   // (e.g. proc-1bit nonint-nn classed 'none' -> raster route, a recorded detection limitation) is not
   // charged to cleanup. Clean may not lose G8 recall (tolerance 0.01) or add line breaks.
   it('G-TRAP (Clean profile): no feature loss vs cleanup off', async () => {
-    const { convert } = await import(PIPELINE.href)
     const cases = committedCases().filter((c) => TRAPS.includes(c.spriteId) && ['clean-nn-integer', 'nonint-nn'].some((p) => c.group === `${p}+cleanup`))
     expect(cases.length).toBeGreaterThan(0)
     const bad = cases.flatMap((c) => {
@@ -84,17 +78,15 @@ describe.skipIf(!HAS)('committed gates (procedural fixtures)', () => {
   })
 })
 
-describe.skipIf(!HAS || !showcaseCases().length)('local: showcase ratchet (external, not corpus-admitted)', () => {
+describe.skipIf(!showcaseCases().length)('local: showcase ratchet (external, not corpus-admitted)', () => {
   it('per-group medians do not regress vs .local/baselines/showcase.json', async () => {
-    const { convert } = await import(PIPELINE.href)
     checkRatchet(runMatrix(convert, showcaseCases()), SHOWCASE_BASELINE_PATH)
   }, 300_000)
 })
 
-describe.skipIf(!HAS)('local: real-sample acceptance (private, in-sample)', () => {
+describe('local: real-sample acceptance (private, in-sample)', () => {
   for (const { id, rel, want } of REAL_SAMPLES) {
     it.skipIf(!existsSync(repoPath(rel)))(`${id} ${want ? 'grid/weak with suggested size within 2%' : "classifies 'none'"}`, async () => {
-      const { analyze } = await import(PIPELINE.href) // no target: the size prior must not help detection
       const { grid: g, suggestedSize: n } = analyze(readPng(repoPath(rel)), {}, new Uint8Array(readFileSync(repoPath(rel))))
       if (!want) return expect(g.class).toBe('none')
       expect(['grid', 'weak']).toContain(g.class)

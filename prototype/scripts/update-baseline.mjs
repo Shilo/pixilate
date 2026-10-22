@@ -8,7 +8,7 @@ import { dirname } from 'node:path'
 import { committedCases, showcaseCases, BASELINE_PATH, SHOWCASE_BASELINE_PATH, REPO_ROOT } from '../test/fixtures.js'
 import { runMatrix, summarize } from '../test/metrics.js'
 
-const { convert } = await import('../src/lib/core/pipeline.js')
+const { convert } = await import('../src/lib/core/pipeline.ts')
 const rel = (p) => p.slice(REPO_ROOT.length).replaceAll('\\', '/')
 let failed = false
 for (const [path, cases] of [[BASELINE_PATH, committedCases()], [SHOWCASE_BASELINE_PATH, showcaseCases()]]) {

@@ -1,9 +1,10 @@
+import type { Image, Indexed, Numbers } from './types.ts'
 // Steps 5b and 8: illustration-path resampling and native -> target reduction (contract: algorithm-design.md).
-import { SRGB_TO_LINEAR, linearToOklab, toe } from './color.js'
-import { PixilateError } from './canonical.js'
+import { SRGB_TO_LINEAR, linearToOklab, toe } from './color.ts'
+import { PixilateError } from './canonical.ts'
 
 /** Exact box-filter taps (fractional coverage) mapping length `src` onto `dst` samples. */
-function boxTaps(src, dst) {
+function boxTaps(src: number, dst: number) {
   const start = new Int32Array(dst), len = new Int32Array(dst), wts = []
   for (let X = 0; X < dst; X++) {
     const a = (X * src) / dst, b = ((X + 1) * src) / dst
@@ -17,7 +18,7 @@ function boxTaps(src, dst) {
 }
 
 /** Area resample of a premultiplied linear RGBA source (W x H, 4 floats/px) to sw x sh -> OKLab + coverage. */
-function areaResample(src, W, H, sw, sh) {
+function areaResample(src: Float32Array, W: number, H: number, sw: number, sh: number) {
   const tx = boxTaps(W, sw), ty = boxTaps(H, sh)
   const row = new Float64Array(sw * H * 4)
   for (let y = 0; y < H; y++) {
@@ -48,7 +49,7 @@ function areaResample(src, W, H, sw, sh) {
 }
 
 /** Summed-area Kuwahara (radius r), alpha-weighted; returns new OKLab. */
-function kuwahara(lab, A, w, h, r) {
+function kuwahara(lab: Float64Array, A: Float64Array, w: number, h: number, r: number) {
   const W1 = w + 1, S = [0, 1, 2, 3, 4].map(() => new Float64Array(W1 * (h + 1)))
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -59,7 +60,7 @@ function kuwahara(lab, A, w, h, r) {
       }
     }
   }
-  const box = (k, x0, y0, x1, y1) => S[k][(y1 + 1) * W1 + x1 + 1] - S[k][y0 * W1 + x1 + 1] - S[k][(y1 + 1) * W1 + x0] + S[k][y0 * W1 + x0]
+  const box = (k: number, x0: number, y0: number, x1: number, y1: number) => S[k][(y1 + 1) * W1 + x1 + 1] - S[k][y0 * W1 + x1 + 1] - S[k][(y1 + 1) * W1 + x0] + S[k][y0 * W1 + x0]
   const out = Float64Array.from(lab)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -84,7 +85,7 @@ const CW = [1, 2, 2, 1] // center weights inside a 4x4 block
 const RIDGE_R = 3, RIDGE_T = 0.06 // top-hat radius at S (~0.75 target cell) and per-cell L threshold
 
 /** Separable square min (isMax false) or max filter of radius r, edges clipped. */
-function morph(src, w, h, r, isMax) {
+function morph(src: Float64Array, w: number, h: number, r: number, isMax: boolean) {
   const tmp = new Float64Array(w * h), out = new Float64Array(w * h)
   // direct Math.max / Math.min calls (inlined), not through a function variable: ~3x faster
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -106,7 +107,7 @@ function morph(src, w, h, r, isMax) {
  * exceeds RIDGE_T and it is the strict maximum across the line along x or y (ties to the lower
  * index), so a line straddling two cells claims exactly one of them.
  */
-function ridges(lab, A, targetW, targetH) {
+function ridges(lab: Float64Array, A: Float64Array, targetW: number, targetH: number) {
   const sw = targetW * 4, sh = targetH * 4, ns = sw * sh, Ld = new Float64Array(ns), Lb = new Float64Array(ns)
   for (let q = 0; q < ns; q++) { const op = A[q] >= 0.5; Ld[q] = op ? lab[q * 3] : 1; Lb[q] = op ? lab[q * 3] : 0 }
   const close = morph(morph(Ld, sw, sh, RIDGE_R, true), sw, sh, RIDGE_R, false)
@@ -120,7 +121,7 @@ function ridges(lab, A, targetW, targetH) {
     const x = c % targetW, y = (c - x) / targetW
     let best = RIDGE_T
     for (let s = 0; s < 2; s++) {
-      const v = D[s][c], g = (dx, dy) => (x + dx < 0 || y + dy < 0 || x + dx >= targetW || y + dy >= targetH ? 0 : D[s][c + dy * targetW + dx])
+      const v = D[s][c], g = (dx: number, dy: number) => (x + dx < 0 || y + dy < 0 || x + dx >= targetW || y + dy >= targetH ? 0 : D[s][c + dy * targetW + dx])
       const peak = (v >= g(-1, 0) && v > g(1, 0)) || (v >= g(0, -1) && v > g(0, 1))
       if (v > best && peak) { best = v; out[c] = s ? -1 : 1 }
     }
@@ -134,7 +135,7 @@ function ridges(lab, A, targetW, targetH) {
  * thin-feature ridge cells take their darkest (dark ridge) or brightest (light ridge) pixel. Ridges
  * are found and picked on `raw` (pre-Kuwahara), because Kuwahara erases lines thinner than r + 1.
  */
-function select(flat, A, targetW, targetH, raw) {
+function select(flat: Float64Array, A: Float64Array, targetW: number, targetH: number, raw: Float64Array) {
   const sw = targetW * 4, n = targetW * targetH, ridge = ridges(raw, A, targetW, targetH)
   const out = new Float32Array(n * 3), alpha = new Uint8Array(n), dominance = new Float32Array(n)
   const ids = new Int32Array(16), Ls = new Float64Array(16), sorted = new Float64Array(16)
@@ -185,7 +186,7 @@ function select(flat, A, targetW, targetH, raw) {
 }
 
 /** Premultiplied linear source (4 floats/px). */
-function linearPremul(img) {
+function linearPremul(img: Image) {
   const W = img.width, H = img.height, d = img.data, src = new Float32Array(W * H * 4)
   for (let p = 0; p < W * H; p++) {
     const al = d[p * 4 + 3] / 255
@@ -196,7 +197,7 @@ function linearPremul(img) {
 }
 
 /** areaCells(img, sw, sh) -> Cells: plain linear-light area cells (opaque at coverage >= 0.5), e.g. for a background mask. */
-export function areaCells(img, sw, sh) {
+export function areaCells(img: Image, sw: number, sh: number) {
   const { lab, A } = areaResample(linearPremul(img), img.width, img.height, sw, sh)
   return { w: sw, h: sh, lab: Float32Array.from(lab), alpha: Uint8Array.from(A, (a) => (a >= 0.5 ? 255 : 0)), dominance: new Float32Array(sw * sh).fill(1) }
 }
@@ -205,7 +206,7 @@ export function areaCells(img, sw, sh) {
  * resampleToTarget(img, targetW, targetH) -> Cells: linear-light area downsample to S = 4 x target,
  * SAT Kuwahara (r = 2), then the Step 5b selection (with thin-feature ridges).
  */
-export function resampleToTarget(img, targetW, targetH) {
+export function resampleToTarget(img: Image, targetW: number, targetH: number) {
   const { lab, A } = areaResample(linearPremul(img), img.width, img.height, targetW * 4, targetH * 4)
   return select(kuwahara(lab, A, targetW * 4, targetH * 4, 2), A, targetW, targetH, lab)
 }
@@ -244,7 +245,7 @@ export const COVERAGE_BUDGET = 1 << 25 // max output cells x palette entries per
  * core changes, never `changed`. tw x th x K above COVERAGE_BUDGET throws 'algorithm-budget-exceeded'.
  * dominance (for cleanup) = 1 for feature/accent/outline picks, else the winner's coverage share.
  */
-export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
+export function reduceToTarget(indexed: Indexed, tw: number, th: number, { clean = true } = {}) {
   const { w, h, index, palette } = indexed, K = palette.length / 3, n = tw * th
   if (n * K > COVERAGE_BUDGET) throw new PixilateError('algorithm-budget-exceeded', `coverage table ${tw}x${th} cells x ${K} colors exceeds ${COVERAGE_BUDGET}`)
   const changed = { bridge: 0, orphan: 0, outline: 0 }, steps = { bridge: 0, footprint: 0, gap: 0 }
@@ -300,8 +301,8 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
   // group, or -1 when under half the silhouette is outline (lineless art, opaque scenes)
   const ol = new Uint8Array(w * h), N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]]
   let gOut = -1
-  if (index.some((v) => v < 0)) {
-    const src = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? -1 : index[y * w + x])
+  if (index.some((v: number) => v < 0)) {
+    const src = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? -1 : index[y * w + x])
     const sb = new Uint8Array(w * h), olCount = new Int32Array(K)
     let nb = 0, no = 0
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (src(x, y) >= 0 && N4.some(([dx, dy]) => src(x + dx, y + dy) < 0)) sb[y * w + x] = 1
@@ -320,35 +321,35 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
     if (nb && no * 2 >= nb && olCount[g] * 4 >= nb) gOut = g // one outline group holds a real share of it (not an edge-noise band)
   }
 
-  const at = (arr, k) => (X, Y) => (X < 0 || Y < 0 || X >= tw || Y >= th ? 0 : arr[(Y * tw + X) * K + k])
+  const at = (arr: Float32Array<ArrayBuffer>, k: number) => (X: number, Y: number) => (X < 0 || Y < 0 || X >= tw || Y >= th ? 0 : arr[(Y * tw + X) * K + k])
   // ridge test (ties go to the lower index): v is the across-feature maximum along x or y, and no
   // 4-neighbor holds more (a line's flank is no ridge)
-  const ridge = (f, X, Y) => {
+  const ridge = (f: (x: number, y: number) => number, X: number, Y: number) => {
     const v = f(X, Y), l = f(X - 1, Y), r = f(X + 1, Y), u = f(X, Y - 1), d = f(X, Y + 1)
     return v >= Math.max(l, r, u, d) && ((v >= l && v > r) || (v >= u && v > d))
   }
-  const Af = (X, Y) => (X < 0 || Y < 0 || X >= tw || Y >= th ? 0 : A[Y * tw + X])
+  const Af = (X: number, Y: number) => (X < 0 || Y < 0 || X >= tw || Y >= th ? 0 : A[Y * tw + X])
 
   const out = new Int16Array(n).fill(-1), dominance = new Float32Array(n).fill(1), reg = new Float64Array(K)
   const ctx = new Int16Array(n), feat = new Int16Array(n).fill(-1), picked = new Uint8Array(n)
   const op = new Uint8Array(n)
   for (let Y = 0; Y < th; Y++) for (let X = 0; X < tw; X++) op[Y * tw + X] = A[Y * tw + X] >= 0.5 || (A[Y * tw + X] >= THIN_MIN && ridge(Af, X, Y)) ? 1 : 0
-  const opaqueAt = (x, y) => x >= 0 && y >= 0 && x < tw && y < th && op[y * tw + x]
+  const opaqueAt = (x: number, y: number) => x >= 0 && y >= 0 && x < tw && y < th && op[y * tw + x]
   // extreme ratios (16 px from 100+): interior cells read as flat masses, as a pixel artist draws
   // them. The outline group cannot win them by plain coverage (a big footprint sums every line into
   // a dark mass; the outline stays on the silhouette), and only features covering ≥ EXTREME_FEAT of
   // the cell (eyes, not hair strands) override the vote.
   const extreme = cellArea >= EXTREME
-  const inner = (X, Y) => opaqueAt(X - 1, Y) && opaqueAt(X + 1, Y) && opaqueAt(X, Y - 1) && opaqueAt(X, Y + 1)
+  const inner = (X: number, Y: number) => opaqueAt(X - 1, Y) && opaqueAt(X + 1, Y) && opaqueAt(X, Y - 1) && opaqueAt(X, Y + 1)
   // best salient feature at c whose boosted coverage beats the rest of the cell; with `claim` (pass
   // 2), neighbors won by a different feature do not count against the ridge (an iris under a lash)
-  const feature = (X, Y, claim) => {
+  const feature = (X: number, Y: number, claim: Int16Array<ArrayBuffer>|null) => {
     const c = Y * tw + X, a = A[c]
     let f = -1, fm = 0
     for (let k = 0; k < K; k++) {
       const g = cov[c * K + k], gb = covB[c * K + k], d = D[k * K + ctx[c]]
       if (!gb || d <= TAU_HI || (extreme && gb < EXTREME_FEAT && inner(X, Y))) continue
-      const fk = claim ? (x, y) => (x < 0 || y < 0 || x >= tw || y >= th || (claim[y * tw + x] >= 0 && claim[y * tw + x] !== k) ? 0 : covB[(y * tw + x) * K + k]) : at(covB, k)
+      const fk = claim ? (x: number, y: number) => (x < 0 || y < 0 || x >= tw || y >= th || (claim[y * tw + x] >= 0 && claim[y * tw + x] !== k) ? 0 : covB[(y * tw + x) * K + k]) : at(covB, k)
       if (!ridge(fk, X, Y)) continue
       const m = gb * (1 + BETA * (d - TAU_HI)) - (a - g)
       if (m > fm) { fm = m; f = k }
@@ -395,18 +396,18 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
       for (let x = 0; x < w; x++) for (let y = 0, s0 = 0; y <= h; y++) if (y === h || (y > s0 && G[y * w + x] !== G[s0 * w + x])) { for (let i = s0; i < y; i++) vr[i * w + x] = y - s0; s0 = y }
       for (let p = 0; p < w * h; p++) run[p] = Math.min(hr[p], vr[p])
     }
-    const rootsIn = (X, Y, k, into, thin) => { // feature component roots of group k in the cell footprint
+    const rootsIn = (X: number, Y: number, k: number, into: Set<number>, thin?: boolean) => { // feature component roots of group k in the cell footprint
       for (let y = ty.start[Y]; y < ty.start[Y] + ty.len[Y]; y++) for (let x = tx.start[X]; x < tx.start[X] + tx.len[X]; x++) {
         const p = y * w + x
         if (G[p] === k && size[p] >= FEAT * cellArea && (!thin || run[p] < side)) into.add(root[p])
       }
       return into
     }
-    const sameLine = (X, Y, k, pieces) => {
+    const sameLine = (X: number, Y: number, k: number, pieces: number) => {
       const R = rootsIn(X, Y, k, new Set(), true)
       let hits = 0
       for (let piece = 0; piece < pieces; piece++) {
-        const S = new Set()
+        const S = new Set<number>()
         for (let j = 0; j < 8; j++) if (cc[j] === piece && nv[j] === k) rootsIn(X + NB[j][0], Y + NB[j][1], k, S)
         for (const r of S) if (R.has(r)) { hits++; break }
       }
@@ -425,9 +426,9 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
         let pieces = 0
         for (let j = 0; j < 8; j++) {
           if (nv[j] !== k || cc[j] >= 0) continue
-          const stack = [j]; cc[j] = pieces
+          const stack: number[] = [j]; cc[j] = pieces
           while (stack.length) {
-            const q = stack.pop()
+            const q = stack.pop()!
             for (let t = 0; t < 8; t++) if (nv[t] === k && cc[t] < 0 && Math.abs(NB[t][0] - NB[q][0]) <= 1 && Math.abs(NB[t][1] - NB[q][1]) <= 1) { cc[t] = pieces; stack.push(t) }
           }
           pieces++
@@ -445,9 +446,9 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
   // footprint grown by one cell holds such a pixel. A salient pick of another colour (a light staff,
   // an eye on the edge) keeps its colour. Each step decides all cells first, then applies.
   if (large && gOut >= 0) {
-    const oat = (X, Y) => (X < 0 || Y < 0 || X >= tw || Y >= th ? -1 : out[Y * tw + X])
-    const sil = (X, Y) => oat(X, Y) >= 0 && N4.some(([dx, dy]) => oat(X + dx, Y + dy) < 0)
-    const keep = (c) => out[c] < 0 || out[c] === gOut || (picked[c] && D[out[c] * K + gOut] > TAU_HI)
+    const oat = (X: number, Y: number) => (X < 0 || Y < 0 || X >= tw || Y >= th ? -1 : out[Y * tw + X])
+    const sil = (X: number, Y: number) => oat(X, Y) >= 0 && N4.some(([dx, dy]) => oat(X + dx, Y + dy) < 0)
+    const keep = (c: number) => out[c] < 0 || out[c] === gOut || (picked[c] && D[out[c] * K + gOut] > TAU_HI)
     let res = Int16Array.from(out)
     for (let Y = 0; Y < th; Y++) for (let X = 0; X < tw; X++) {
       const c = Y * tw + X
@@ -473,7 +474,7 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
         if (!ring[i] || lab[i] >= 0) continue
         const stack = [i]; lab[i] = pieces
         while (stack.length) {
-          const q = stack.pop()
+          const q = stack.pop()!
           for (let t = 0; t < 8; t++) if (ring[t] && lab[t] < 0 && Math.abs(NB[t][0] - NB[q][0]) <= 1 && Math.abs(NB[t][1] - NB[q][1]) <= 1) { lab[t] = pieces; stack.push(t) }
         }
         pieces++
@@ -533,14 +534,14 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
 
   // outline rebuild: each output silhouette cell takes the outline group found near its footprint
   if (clean && gOut >= 0) {
-    const cnt = new Int32Array(K), oat = (X, Y) => (X < 0 || Y < 0 || X >= tw || Y >= th ? -1 : out[Y * tw + X])
+    const cnt = new Int32Array(K), oat = (X: number, Y: number) => (X < 0 || Y < 0 || X >= tw || Y >= th ? -1 : out[Y * tw + X])
     const res = Int16Array.from(out)
     for (let Y = 0; Y < th; Y++) for (let X = 0; X < tw; X++) {
       const c = Y * tw + X
       if (out[c] < 0 || !N4.some(([dx, dy]) => oat(X + dx, Y + dy) < 0)) continue
       // a salient feature's ridge on a thin protrusion (transparency within 2 cells on both opposite
       // sides: a staff, an antenna) keeps its colour; only the true outer boundary takes the outline
-      const gap = (dx, dy) => oat(X + dx, Y + dy) < 0 || oat(X + 2 * dx, Y + 2 * dy) < 0
+      const gap = (dx: number, dy: number) => oat(X + dx, Y + dy) < 0 || oat(X + 2 * dx, Y + 2 * dy) < 0
       if (picked[c] && out[c] !== gOut && ((gap(-1, 0) && gap(1, 0)) || (gap(0, -1) && gap(0, 1)))) continue
       cnt.fill(0)
       // footprint grown by one output cell: neighboring outline cells agree on the color
@@ -571,7 +572,7 @@ export function reduceToTarget(indexed, tw, th, { clean = true } = {}) {
 }
 
 /** Nearest-neighbor integer upscale. */
-export function upscaleInteger(indexed, kx, ky) {
+export function upscaleInteger(indexed: Indexed, kx: number, ky: number) {
   const { w, h, index, palette } = indexed, ow = w * kx, out = new Int16Array(ow * h * ky)
   for (let y = 0; y < h * ky; y++) for (let x = 0; x < ow; x++) out[y * ow + x] = index[((y / ky) | 0) * w + ((x / kx) | 0)]
   return { w: ow, h: h * ky, index: out, palette, rgb: indexed.rgb }

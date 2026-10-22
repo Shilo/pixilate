@@ -1,15 +1,17 @@
-<script>
-  // Output size (spec §8.1): chips apply at once; typed values commit on Enter, blur, or 400 ms after the
+<script lang="ts">
+  import type { Size, Info } from '../lib/types.ts'
+  interface Props { size: Size; W: number; H: number; info: Info; prefilled: Size | null; heading?: string | null; derivation: string; fitShown?: boolean; match?: number[] | null; onchange: (size: Size, fromChip?: boolean) => void }
+// Output size (spec §8.1): chips apply at once; typed values commit on Enter, blur, or 400 ms after the
   // last valid keystroke. With Keep shape on, the other side is derived (half-even) and shown before any job.
-  import { ICONS } from '../lib/icons.js'
-  import { T, dims } from '../lib/copy.js'
-  import { PRESETS, applyPreset, chips, typed, validate } from '../lib/opts.js'
+  import { ICONS } from '../lib/icons.ts'
+  import { T, dims } from '../lib/copy.ts'
+  import { PRESETS, applyPreset, chips, typed, validate } from '../lib/opts.ts'
 
   // onchange(size, fromChip): chips and presets pass true so Stack can close the section after a tap
-  let { size, W, H, info, prefilled, heading = null, derivation, fitShown = false, match = null, onchange } = $props()
+  let { size, W, H, info, prefilled, heading = null, derivation, fitShown = false, match = null, onchange }: Props = $props()
 
-  let dw = $state(''), dh = $state(''), errors = $state({}), derivedBad = $state(null)
-  let pending = null, timer = 0
+  let dw = $state(''), dh = $state(''), errors = $state<Partial<Record<"w" | "h", string>>>({}), derivedBad = $state<"w" | "h" | null>(null)
+  let pending: Size | null = null, timer: ReturnType<typeof setTimeout> | number = 0
 
   $effect(() => {
     dw = size.w == null ? '' : String(size.w)
@@ -22,12 +24,12 @@
   const note = $derived(size.note ?? (size.source && size.source !== 'detected' ? `${T.yourSize}.` : null))
   const squareN = $derived(Math.max(size.w ?? 0, size.h ?? 0) || 64)
 
-  function input(field, raw) {
+  function input(field: "w" | "h", raw: string) {
     const v = raw.trim() === '' ? NaN : Number(raw)
     const s = typed(size, field, v, W, H)
     if (field === 'w') { dw = raw; if (s.derived) dh = String(s.h) } else { dh = raw; if (s.derived) dw = String(s.w) }
     errors = validate(s)
-    derivedBad = s.derived && s[s.derived] > 1024 ? s.derived : null // the derived field is invalid too
+    derivedBad = s.derived && s[s.derived]! > 1024 ? s.derived : null // the derived field is invalid too
     pending = s
     clearTimeout(timer)
     if (!Object.keys(errors).length) timer = setTimeout(commit, 400)
@@ -37,14 +39,14 @@
     if (pending && !Object.keys(validate(pending)).length) onchange(pending)
     pending = null
   }
-  const pick = (c) => onchange({ ...size, w: c.w, h: c.h, source: c.source, chip: c.key, note: null, derived: null }, true)
+  const pick = (c: { key: string; w: number | null; h: number | null; source: string }) => onchange({ ...size, w: c.w, h: c.h, source: c.source, chip: c.key, note: null, derived: null }, true)
   const square = () => onchange({ ...size, lock: false, w: squareN, h: squareN, source: 'typed', chip: 'square', note: null, derived: null }, true)
   function lockToggle() {
     const s = { ...size, lock: !size.lock }
-    if (s.lock && Number.isInteger(size.w)) onchange(typed(s, 'w', size.w, W, H))
+    if (s.lock && Number.isInteger(size.w)) onchange(typed(s, 'w', size.w!, W, H))
     else onchange(s)
   }
-  const focusIn = (e) => e.currentTarget.scrollIntoView({ block: 'nearest' })
+  const focusIn = (e: FocusEvent & { currentTarget: HTMLInputElement }) => e.currentTarget.scrollIntoView({ block: 'nearest' })
 </script>
 
 <div class="size">
@@ -72,7 +74,7 @@
   </div>
 
   <div class="fields">
-    {#each [['w', T.width, dw], ['h', T.height, dh]] as [f, lab, val]}
+    {#each [['w', T.width, dw], ['h', T.height, dh]] as const as [f, lab, val]}
       <div class="glass-input-group field">
         <label class="glass-label" for="size-{f}">{lab}</label>
         <div class="glass-input-wrap glass-input-wrap--suffix suffix-22">
@@ -96,7 +98,7 @@
 
   {#if fitShown}
     <div class="glass-segmented glass-segmented--full" role="group" aria-label={T.fitMode}>
-      {#each ['contain', 'cover', 'stretch'] as m}
+      {#each ['contain', 'cover', 'stretch'] as const as m}
         <button class="glass-segmented__item" aria-pressed={size.fit === m} onclick={() => onchange({ ...size, fit: m })}>{T.fit[m]}</button>
       {/each}
     </div>

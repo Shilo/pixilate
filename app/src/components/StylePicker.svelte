@@ -1,18 +1,20 @@
-<script>
-  // Native radio group (arrow keys for free): a segmented row in Stack, cards with thumbnails in Side (§8.2).
+<script lang="ts">
+  import type { Candidate, ResultReply } from '../lib/types.ts'
+  interface Props { result: ResultReply; shown: string | null; onchoose: (id: string) => void; variant?: string }
+// Native radio group (arrow keys for free): a segmented row in Stack, cards with thumbnails in Side (§8.2).
   // Selection is an iOS-style filled segment; the ring is for keyboard focus only.
-  import { T, STYLE_ORDER, styleLabel, styleDesc, styleName } from '../lib/copy.js'
-  import { styleIdOf } from '../lib/opts.js'
+  import { T, STYLE_ORDER, styleLabel, styleDesc, styleName } from '../lib/copy.ts'
+  import { styleIdOf } from '../lib/opts.ts'
 
-  let { result, shown, onchoose, variant = 'segmented' } = $props()
-  const list = $derived(STYLE_ORDER.map((id) => result.candidates.find((c) => c.id === id)).filter(Boolean))
+  let { result, shown, onchoose, variant = 'segmented' }: Props = $props()
+  const list = $derived(STYLE_ORDER.map((id) => result.candidates.find((c) => c.id === id)).filter((c): c is Candidate => !!c))
 
   // Thumbnails show the centre half of the art, so the styles' differences are visible at 40-56 px.
-  function thumb(node, c) {
-    const draw = (c) => {
+  function thumb(node: HTMLCanvasElement, c: Candidate) {
+    const draw = (c: Candidate) => {
       const cw = Math.max(1, c.width >> 1), ch = Math.max(1, c.height >> 1), x0 = (c.width - cw) >> 1, y0 = (c.height - ch) >> 1
       node.width = cw; node.height = ch
-      node.getContext('2d').putImageData(new ImageData(c.rgba, c.width, c.height), -x0, -y0, x0, y0, cw, ch)
+      node.getContext('2d')!.putImageData(new ImageData(c.rgba as Uint8ClampedArray<ArrayBuffer>, c.width, c.height), -x0, -y0, x0, y0, cw, ch)
     }
     draw(c)
     return { update: draw }

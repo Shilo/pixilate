@@ -1,5 +1,6 @@
-<script>
-  // App shell and state machine (spec §5): EMPTY → ANALYSING → NEEDS_SIZE | CONVERTING → RESULT | FAILED.
+<script lang="ts">
+  import type { Info, Result, ResultReply, Reply, ErrorReply, Size, GridOverride as GridSettings, Settings, OpenFile, Previous, Status, Tools as ToolsState } from './lib/types.ts'
+// App shell and state machine (spec §5): EMPTY → ANALYSING → NEEDS_SIZE | CONVERTING → RESULT | FAILED.
   // The worker does all decoding and conversion; this thread only draws, so the output is the engine's bytes.
   import { tick } from 'svelte'
   import Stage from './components/Stage.svelte'
@@ -10,55 +11,55 @@
   import Export from './components/Export.svelte'
   import Details from './components/Details.svelte'
   import GridOverride from './components/GridOverride.svelte'
-  import { createClient } from './lib/client.js'
-  import { ICONS } from './lib/icons.js'
+  import { createClient } from './lib/client.ts'
+  import { ICONS } from './lib/icons.ts'
   import {
     T, dims, reason, styleLabel, styleDesc, cleanLine, warningLine, errorCopy, fileError, derivation, needsHeading,
     readyStatus, subjectNote, moreLabel, bgLine, trimCaption, savedToast, copiedToast, toolsButton, sizeName, zoomTip, artLabel, topDims, STYLE_ORDER,
-  } from './lib/copy.js'
+  } from './lib/copy.ts'
   import {
     DEFAULT_TOOLS, chips, prefill, needsCase, isValid, showsFit, toEngineOpts, baseName, fileName, recipe, deriveH, deriveW,
     clampScale, recoverJob, styleIdOf, detectedGrid, manualPeriodOf, sizeForGrid, sizeAfterReset,
-  } from './lib/opts.js'
-  import { countColours } from './lib/geometry.js'
+  } from './lib/opts.ts'
+  import { countColours } from './lib/geometry.ts'
 
   const SIDE_Q = '(min-width: 1024px) and (min-height: 560px), (min-width: 480px) and (max-height: 559px) and (min-aspect-ratio: 3/2)'
   const COARSE_Q = '(pointer: coarse)'
   const canCopy = typeof ClipboardItem !== 'undefined' && !!navigator.clipboard?.write
   const shareFiles = !!navigator.canShare?.({ files: [new File([new Uint8Array(1)], 'x.png', { type: 'image/png' })] })
-  const blankSize = (lock = true) => ({ w: null, h: null, lock, fit: 'contain', source: null, chip: null, note: null, derived: null })
+  const blankSize = (lock = true): Size => ({ w: null, h: null, lock, fit: 'contain', source: null, chip: null, note: null, derived: null })
 
   let side = $state(matchMedia(SIDE_Q).matches)
   let coarse = $state(matchMedia(COARSE_Q).matches) // follows a mouse/touch switch (convertibles, docked tablets)
   const canShare = $derived(coarse && shareFiles)
-  let status = $state('empty') // empty | analysing | needs | converting | result | failed
-  let file = $state.raw(null) // { name, base, bytes, mime, url }
-  let info = $state.raw(null) // analysis reply
+  let status = $state<Status>('empty') // empty | analysing | needs | converting | result | failed
+  let file = $state.raw<OpenFile | null>(null) // { name, base, bytes, mime, url }
+  let info = $state.raw<Info | null>(null) // analysis reply
   let derivationText = $state('')
-  let prefilled = $state.raw(null)
-  let grid = $state.raw(null) // pixel grid override { cols, rows } (AUTO-008), null = detected
+  let prefilled = $state.raw<Size | null>(null)
+  let grid = $state.raw<GridSettings | null>(null) // pixel grid override { cols, rows } (AUTO-008), null = detected
   let gridOpen = $state(false)
-  let needs = $state(null)
+  let needs = $state<string | null>(null)
   let size = $state.raw(blankSize())
   let tools = $state.raw({ ...DEFAULT_TOOLS })
-  let result = $state.raw(null) // result reply + settings { size, tools, key }
-  let chosen = $state(null) // sticky style override (spec id)
-  let error = $state.raw(null) // engine error { code, message }
-  let fileErr = $state.raw(null) // a file that couldn't be opened { code, name }
+  let result = $state.raw<Result | null>(null) // result reply + settings { size, tools, key }
+  let chosen = $state<string | null>(null) // sticky style override (spec id)
+  let error = $state.raw<{ code: string | null; message: string } | null>(null) // engine error { code, message }
+  let fileErr = $state.raw<{ code: string; name: string | null } | null>(null) // a file that couldn't be opened { code, name }
   let bgKept = $state(false) // Remove background was refused and switched back off
   let busy = $state({ pill: false, stop: false, slow: false })
   let looking = $state(false)
   let stoppedFlash = $state(false)
-  let mode = $state('after'), peek = $state(false), showGrid = $state(false)
-  let zoom = $state(null), fitz = $state(1), dpr = $state(1)
+  let mode = $state<'before' | 'after'>('after'), peek = $state(false), showGrid = $state(false)
+  let zoom = $state<number | null>(null), fitz = $state(1), dpr = $state(1)
   let exportScale = $state(1)
-  let openSection = $state(null)
+  let openSection = $state<string | null>(null)
   let detailsOpen = $state(false)
   let dragging = $state(false)
   let toast = $state(''), live = $state('')
-  let picker, dockEl = $state()
-  const btns = {}, heads = {}
-  let pending = null, lastKey = null, prev = null, timers = [], toastTimer = 0, shareReady = null
+  let picker: HTMLInputElement, dockEl = $state<HTMLElement>()
+  const btns: Record<string, HTMLButtonElement | undefined> = {}, heads: Record<string, HTMLElement | undefined> = {}
+  let pending: Settings | null = null, lastKey: string | null = null, prev: Previous | null = null, timers: ReturnType<typeof setTimeout>[] = [], toastTimer: ReturnType<typeof setTimeout> | number = 0, shareReady: { key: string; file: File } | null = null
 
   const client = createClient({ onReply, onFail })
 
@@ -71,7 +72,7 @@
   const cand = $derived(result?.candidates.find((c) => c.id === shown) ?? null)
   const shownStyle = $derived(styleIdOf(cand, result)) // the label the user sees (Clean that changed nothing is Smooth)
   const report = $derived(cand?.report ?? null)
-  const gridReport = $derived(report?.route === 'grid' ? report : result?.candidates.find((c) => c.id === result.alias.grid)?.report ?? null)
+  const gridReport = $derived(report?.route === 'grid' ? report : result?.candidates.find((c) => c.id === result!.alias.grid)?.report ?? null)
   const overridden = $derived(!!result && shown !== result.recommended)
   const viewMode = $derived(peek && cand ? 'before' : mode)
   const z = $derived(zoom ?? fitz)
@@ -84,7 +85,7 @@
   // What the size is fitted to: the lattice in cells (or the sprite's cells with Fit to sprite) when a grid is
   // used, else pixels. Fit/Fill/Stretch appear only when the size's shape differs from it.
   const basis = $derived((gridReport ?? report)?.fit?.basis ?? (prefilled ? [prefilled.w, prefilled.h] : info ? [info.width, info.height] : [1, 1]))
-  const fitShown = $derived(isValid(size) && showsFit(size, basis[0], basis[1]))
+  const fitShown = $derived(isValid(size) && showsFit(size, basis[0]!, basis[1]!))
   const match = $derived.by(() => {
     if (!trimBox || !report || !isValid(size)) return null
     const L = Math.max(size.w, size.h), bw = trimBox[2] - trimBox[0], bh = trimBox[3] - trimBox[1]
@@ -97,13 +98,13 @@
   // panel warning line: the "Also fits" hint only when such a chip exists; the colour-metadata note lives in Details
   const warnLine = $derived(report ? warningLine(report.warnings.filter((w) => !w.startsWith('colour metadata') &&
     (!w.startsWith('ambiguous') || chips(info, prefilled).some((c) => c.key.startsWith('also-'))))) : null)
-  const colours = $derived(report ? report.output.colors ?? countColours(cand.rgba) : null) // Original: counted here
+  const colours = $derived(report ? report.output.colors ?? countColours(cand!.rgba) : null) // Original: counted here
   const zoomText = $derived(zoom == null && fitz < 1 ? T.fitShrunk : `${Math.round(z)}×`)
   const sizeCaption = $derived(size.source === 'detected' ? T.detected : size.source === 'sprite' ? T.subject : isValid(size) ? T.yourSize : T.chooseSize)
 
   // ---- layout and viewport ----
   $effect(() => {
-    const qs = [[matchMedia(SIDE_Q), (v) => (side = v)], [matchMedia(COARSE_Q), (v) => (coarse = v)]]
+    const qs: [MediaQueryList, (value: boolean) => void][] = [[matchMedia(SIDE_Q), (v) => (side = v)], [matchMedia(COARSE_Q), (v) => (coarse = v)]]
     const ons = qs.map(([q, set]) => { const on = () => set(q.matches); q.addEventListener('change', on); return on })
     return () => qs.forEach(([q], i) => q.removeEventListener('change', ons[i]))
   })
@@ -117,14 +118,14 @@
   })
 
   /** Status region: cleared first, so the same message twice is announced twice. */
-  function announce(text) {
+  function announce(text: string) {
     live = ''
     setTimeout(() => (live = text), 50)
   }
-  const focusStage = () => tick().then(() => document.querySelector('.stage')?.focus({ preventScroll: true }))
+  const focusStage = () => tick().then(() => document.querySelector<HTMLElement>('.stage')?.focus({ preventScroll: true }))
 
   // ---- worker replies ----
-  function onReply(m) {
+  function onReply(m: Reply) {
     if (m.type === 'analysis') return onAnalysis(m)
     if (m.type === 'result') return onResult(m)
     if (m.type === 'error') {
@@ -143,7 +144,7 @@
     announce(errorCopy('worker').message)
   }
 
-  function onAnalysis(m) {
+  function onAnalysis(m: Info) {
     if (prev) { URL.revokeObjectURL(prev.file.url); prev = null }
     looking = false
     info = m
@@ -152,37 +153,37 @@
     needs = needsCase(m)
     size = prefilled ?? blankSize()
     grid = null
-    gridOpen = ['weak', 'none', 'ambiguous'].includes(needs) // shown up front only when detection is unsure
+    gridOpen = ['weak', 'none', 'ambiguous'].includes(needs!) // shown up front only when detection is unsure
     if (prefilled) { announce(derivationText); return run() }
     status = 'needs'
     announce(needsHeading(needs, m))
     if (!side) openSection = 'size'
   }
 
-  function onResult(m) {
+  function onResult(m: ResultReply) {
     stopBusy()
     const first = m.candidates[0], dimsChanged = !cand || first.width !== cand.width || first.height !== cand.height
-    result = { ...m, settings: pending }
+    result = { ...m, settings: pending! }
     error = null
     status = 'result'
     mode = 'after'
     if (dimsChanged) zoom = null
     // A refused Remove background switches itself back off (the result would be the same) and says so.
-    if (pending.tools.background && !report.background.applied) {
+    if (pending!.tools.background && !report!.background.applied) {
       bgKept = true
-      tools = { ...tools, background: false, trim: info.hasAlpha ? tools.trim : false }
+      tools = { ...tools, background: false, trim: info!.hasAlpha ? tools.trim : false }
       return run() // announced with the next result
     }
     // Crop to subject on a detected size: switch to the subject's own detected size (a size the user picked stays)
-    if (pending.tools.trim && size.source === 'detected' && match && report.route === 'grid') {
+    if (pending!.tools.trim && size.source === 'detected' && match && report!.route === 'grid') {
       size = { ...size, w: match[0], h: match[1], source: 'sprite', chip: 'sprite', auto: true, note: subjectNote(match[0], match[1]), derived: null }
       return run() // announced with the next result
     }
-    const extra = [bgKept && T.bgKept, tools.background && bgLine(report.background), tools.trim && trimCaption(report)].filter(Boolean).join(' ')
-    announce(`${readyStatus(cand.width, cand.height, shownStyle, shown === result.recommended)}${extra ? ' ' + extra : ''}`)
+    const extra = [bgKept && T.bgKept, tools.background && bgLine(report!.background), tools.trim && trimCaption(report)].filter(Boolean).join(' ')
+    announce(`${readyStatus(cand!.width, cand!.height, shownStyle, shown === result!.recommended)}${extra ? ' ' + extra : ''}`)
   }
 
-  function decodeFailed(m) {
+  function decodeFailed(m: ErrorReply) {
     looking = false
     stopBusy()
     fileErr = { code: m.code ?? 'decode-unsupported', name: file?.name ?? null }
@@ -220,7 +221,7 @@
   }
   function startBusy() {
     stopBusy()
-    const big = info.width * info.height > 8e6
+    const big = info!.width * info!.height > 8e6
     busy = { pill: big, stop: big, slow: false }
     timers = [setTimeout(() => (busy.pill = true), 300), setTimeout(() => (busy.stop = true), 1500), setTimeout(() => (busy.slow = true), 6000)]
   }
@@ -250,21 +251,21 @@
     focusStage()
   }
   // a user change dismisses an engine error only through its replacement job; a refusal note clears at once
-  function setSize(s, fromChip) {
+  function setSize(s: Size, fromChip?: boolean) {
     size = { ...s, auto: false } // any size the user sets stays put
     run()
     if (fromChip && !side && openSection === 'size') toggleSection('size')
   }
   // Grid override: a detected output size follows the grid counts; Reset to detected undoes both.
-  function setGrid(g) {
+  function setGrid(g: GridSettings | null) {
     grid = g
     size = g ? sizeForGrid(size, g) : sizeAfterReset(size, prefilled)
     if (isValid(size)) return run()
     lastKey = null
-    needs = needsCase(info)
+    needs = needsCase(info!)
     status = 'needs'
   }
-  function setTools(t) {
+  function setTools(t: ToolsState) {
     bgKept = false
     // the automatic subject size goes back to the detected size when Crop to subject is turned off
     if (!t.trim && size.auto && prefilled) size = prefilled
@@ -273,7 +274,7 @@
   }
 
   // ---- open ----
-  async function openFile(f, name = f?.name ?? null) {
+  async function openFile(f: (Blob & { name?: string }) | null | undefined, name: string | null = f?.name ?? null) {
     if (!f) return
     let bytes
     try { bytes = await f.arrayBuffer() } catch { fileErr = { code: 'decode-damaged', name }; return }
@@ -291,7 +292,7 @@
     client.open(bytes, file.mime)
     focusStage()
   }
-  function onPick(e) {
+  function onPick(e: Event & { currentTarget: HTMLInputElement }) {
     openFile(e.currentTarget.files?.[0])
     e.currentTarget.value = ''
   }
@@ -301,15 +302,15 @@
   }
 
   // ---- export (Save and Share give the exact engine PNG; Copy goes through the clipboard) ----
-  const pngFor = (s) => (s === 1 ? Promise.resolve(cand.png) : client.exportPng(cand.rgba, cand.width, cand.height, s))
-  const outName = (s) => fileName(file.base, styleLabel(shownStyle).toLowerCase(), cand.width, cand.height, s)
-  function say(text) {
+  const pngFor = (s: number) => (s === 1 ? Promise.resolve(cand!.png) : client.exportPng(cand!.rgba, cand!.width, cand!.height, s))
+  const outName = (s: number) => fileName(file!.base, styleLabel(shownStyle)!.toLowerCase(), cand!.width, cand!.height, s)
+  function say(text: string) {
     toast = text
     announce(text)
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => (toast = ''), 2500)
   }
-  function download(blob, name) {
+  function download(blob: Blob, name: string) {
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name })
     document.body.append(a); a.click(); a.remove()
     setTimeout(() => URL.revokeObjectURL(a.href), 1000)
@@ -322,15 +323,15 @@
   }
   function copyPng() {
     if (!ready || !canCopy) return
-    const s = scale, w = cand.width * s, h = cand.height * s
+    const s = scale, w = cand!.width * s, h = cand!.height * s
     const blob = pngFor(s).then((b) => new Blob([b], { type: 'image/png' }))
     navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => say(copiedToast(w, h)), () => say(T.copyFailed))
   }
   async function share() {
     if (!ready) return
-    const s = scale, key = `${cand.hash ?? shown}@${s}`
+    const s = scale, key = `${cand!.hash ?? shown}@${s}`
     let f = shareReady?.key === key ? shareReady.file : null
-    if (!f && s === 1) f = new File([cand.png], outName(1), { type: 'image/png' }) // no await: keeps the tap's activation
+    if (!f && s === 1) f = new File([cand!.png], outName(1), { type: 'image/png' }) // no await: keeps the tap's activation
     if (!f) {
       try { f = new File([await pngFor(s)], outName(s), { type: 'image/png' }) } catch { return say(T.saveFailed) }
       shareReady = { key, file: f }
@@ -340,14 +341,14 @@
     }) // cancelling is silent
   }
   function saveRecipe() {
-    const j = recipe({ result, shown, size: result.settings.size, derivation: derivationText, info, grid: result.settings.grid })
-    download(new Blob([JSON.stringify(j, null, 2)], { type: 'application/json' }), `${file.base}-recipe.json`)
-    say(savedToast(`${file.base}-recipe.json`))
+    const j = recipe({ result: result!, shown: shown!, size: result!.settings.size, derivation: derivationText, info: info!, grid: result!.settings.grid })
+    download(new Blob([JSON.stringify(j, null, 2)], { type: 'application/json' }), `${file!.base}-recipe.json`)
+    say(savedToast(`${file!.base}-recipe.json`))
   }
-  const copyText = (t) => navigator.clipboard?.writeText(t).then(() => say(T.copy + ' ✓'), () => say(T.copyFailed))
+  const copyText = (t: string) => navigator.clipboard?.writeText(t).then(() => say(T.copy + ' ✓'), () => say(T.copyFailed))
 
   // ---- errors: one-tap fixes ----
-  function fix(kind) {
+  function fix(kind: string) {
     if (kind === 'choose') picker.click()
     else if (kind === 'trim-off') setTools({ ...tools, trim: false })
     else if (kind === 'colours-16') setTools({ ...tools, colors: 16 })
@@ -355,56 +356,56 @@
       lastKey = null
       size = prefilled ?? blankSize()
       if (prefilled) run()
-      else { needs = needsCase(info); status = 'needs'; error = null }
+      else { needs = needsCase(info!); status = 'needs'; error = null }
     } else if (kind === 'retry') { lastKey = null; run() }
     else if (kind === 'reload') location.reload()
   }
 
   // ---- styles, zoom, sections ----
-  function choose(id) { chosen = id === result.recommended ? null : id }
+  function choose(id: string) { chosen = id === result!.recommended ? null : id }
   function useBest() { chosen = null; focusStage() }
-  function styleN(n) {
+  function styleN(n: number) {
     const ids = STYLE_ORDER.filter((id) => result?.candidates.some((c) => c.id === id))
     if (ids[n]) choose(ids[n])
   }
-  function zoomBy(dir, value) {
+  function zoomBy(dir: number, value?: number | null) {
     if (value !== undefined) { zoom = value; return }
     const cur = zoom ?? fitz
     if (dir > 0) zoom = cur < 1 ? 1 : Math.min(64, Math.max(Math.floor(cur) + 1, Math.ceil(cur * 1.25)))
     else zoom = cur <= 1 ? (fitz < 1 ? null : 1) : Math.max(1, Math.min(Math.ceil(cur) - 1, Math.floor(cur / 1.25)))
   }
   const level = () => (zoom = zoom == null ? Math.min(64, Math.max(1, Math.floor(fitz)) * 2) : null)
-  async function toggleSection(name) {
+  async function toggleSection(name: string) {
     const was = openSection
     openSection = was === name ? null : name
     await tick()
     if (openSection) {
       heads[openSection]?.focus({ preventScroll: true })
       heads[openSection]?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
-    } else btns[was]?.focus()
+    } else btns[was!]?.focus()
   }
 
   // ---- global input ----
-  function onKey(e) {
+  function onKey(e: KeyboardEvent) {
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase()
     if (mod && !e.shiftKey && k === 'o') { e.preventDefault(); picker.click() }
     else if (mod && !e.shiftKey && k === 's' && ready) { e.preventDefault(); save() }
     else if (mod && e.shiftKey && k === 'c' && ready) { e.preventDefault(); copyPng() }
-    else if (e.key === 'Escape' && openSection && !detailsOpen && !side) toggleSection(openSection)
+    else if (e.key === 'Escape' && openSection && !detailsOpen && !side) toggleSection(openSection!)
   }
-  function onPaste(e) {
-    if (e.target?.closest?.('input, textarea, [contenteditable]')) return
+  function onPaste(e: ClipboardEvent) {
+    if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) return
     const f = [...(e.clipboardData?.files ?? [])].find((x) => x.type.startsWith('image/'))
     if (f) { e.preventDefault(); openFile(f, null) }
   }
-  const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files')
-  function onDragOver(e) { if (hasFiles(e) && !detailsOpen) { e.preventDefault(); dragging = true } }
-  function onDragLeave(e) { if (!e.relatedTarget) dragging = false }
-  function onDrop(e) {
+  const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes('Files')
+  function onDragOver(e: DragEvent) { if (hasFiles(e) && !detailsOpen) { e.preventDefault(); dragging = true } }
+  function onDragLeave(e: DragEvent) { if (!e.relatedTarget) dragging = false }
+  function onDrop(e: DragEvent) {
     if (!hasFiles(e)) return
     e.preventDefault()
     dragging = false
-    openFile(e.dataTransfer.files[0])
+    openFile(e.dataTransfer!.files[0])
   }
 </script>
 
@@ -468,10 +469,10 @@
   {/if}
   {#if error && status === 'failed'}
     <div class="file-banner" role="alert">
-      <p>⚠ {errInfo.message}</p>
+      <p>⚠ {errInfo!.message}</p>
       <div class="row">
-        <button class="glass-btn glass-btn--secondary glass-btn--sm glass-btn--auto" onclick={() => fix(errInfo.fix)}>{errInfo.label}</button>
-        {#if errInfo.fix === 'retry'}<button class="linkish" onclick={() => copyText(`${error.code}: ${error.message}`)}>{T.copyDetails}</button>{/if}
+        <button class="glass-btn glass-btn--secondary glass-btn--sm glass-btn--auto" onclick={() => fix(errInfo!.fix)}>{errInfo!.label}</button>
+        {#if errInfo!.fix === 'retry'}<button class="linkish" onclick={() => copyText(`${error!.code}: ${error!.message}`)}>{T.copyDetails}</button>{/if}
       </div>
     </div>
   {:else if fileErr}
@@ -500,9 +501,9 @@
       {#if stoppedFlash}<p class="muted">{T.stopped}</p>{/if}
       {#if result && status !== 'failed'}
         {#if overridden}
-          <p>{styleDesc(shownStyle, report.route)} <button class="linkish" onclick={useBest}>{T.useBest}</button></p>
+          <p>{styleDesc(shownStyle, report!.route)} <button class="linkish" onclick={useBest}>{T.useBest}</button></p>
         {:else}
-          <button class="reason" onclick={() => (detailsOpen = true)}><b>{T.best}:</b> {reason(result.recommendation, info.grid.class)}</button>
+          <button class="reason" onclick={() => (detailsOpen = true)}><b>{T.best}:</b> {reason(result.recommendation, info!.grid.class)}</button>
         {/if}
         {#if shownStyle === 'clean'}<p class="small">{cleanLine(report)}</p>{/if}
         {#if warnLine}<p class="small muted">{warnLine}</p>{/if}
@@ -530,10 +531,10 @@
   {/snippet}
 
   {#snippet tools_()}
-    <Tools {tools} hasAlpha={info?.hasAlpha} report={result && status !== 'failed' ? report : null} {bgKept} onchange={setTools} />
+    <Tools {tools} hasAlpha={info?.hasAlpha!} report={result && status !== 'failed' ? report : null} {bgKept} onchange={setTools} />
   {/snippet}
 
-  {#snippet styles(variant)}
+  {#snippet styles(variant: string)}
     {#if result && (variant === 'cards' || result.candidates.length > 1)}
       <section aria-labelledby="h-style-{variant}">
         <h2 class="sr-only" id="h-style-{variant}">{T.style}</h2>
@@ -577,7 +578,7 @@
           <section class="section" aria-labelledby="sec-head">
             <div class="section-head">
               <h2 id="sec-head" tabindex="-1" bind:this={heads[openSection]}>{openSection === 'size' ? T.size : openSection === 'tools' ? T.tools : T.saveOptions}</h2>
-              <button class="pill-btn" onclick={() => toggleSection(openSection)}>{T.done}</button>
+              <button class="pill-btn" onclick={() => toggleSection(openSection!)}>{T.done}</button>
             </div>
             {#if openSection === 'size'}{@render sizePicker()}
             {:else if openSection === 'tools'}{@render tools_()}

@@ -2,11 +2,11 @@
 // plain copy, and no UI string uses the engine's jargon.
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import * as C from '../src/lib/copy.js'
+import * as C from '../src/lib/copy.ts'
 
 const src = (rel) => readFileSync(new URL(`../../prototype/src/lib/${rel}`, import.meta.url), 'utf8')
 const literals = (text, re) => [...text.matchAll(re)].map((m) => m[1].split('${')[0])
-const pipeline = src('core/pipeline.js'), cleanup = src('core/cleanup.js'), palette = src('core/palette.js'), decode = src('decode.js')
+const pipeline = src('core/pipeline.ts'), cleanup = src('core/cleanup.ts'), palette = src('core/palette.ts'), decode = src('decode.ts')
 
 const RULES = [...new Set(literals(pipeline, /rule: '([^']+)'/g))]
 const REFUSALS = [...new Set([...literals(cleanup, /refuse\(['`]([^'`]+)['`]\)/g), ...literals(cleanup, /reason: '([^']+)'/g), ...literals(pipeline, /\?\? '(no background[^']*)'/g)])]

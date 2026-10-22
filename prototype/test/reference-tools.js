@@ -16,7 +16,7 @@
 // | pixelOE         | KohakuBlueleaf/PixelOE `7ce444b3`, Apache-2.0 (contrast downscale only)             | landscape addendum; planning/prototype-algorithm-design.md "Raster route" |
 // | area, nearest   | Pixilate-owned baselines (same maths as scripts/bench.mjs, which runs on import)   | —                                                                        |
 import { mulberry32 } from './synth.js'
-import { SRGB_TO_LINEAR, cosDet, sinDet, srgbToOklab, linearToOklab, oklabToSrgb } from '../src/lib/core/color.js'
+import { SRGB_TO_LINEAR, cosDet, sinDet, srgbToOklab, linearToOklab, oklabToSrgb } from '../src/lib/core/color.ts'
 
 const blank = (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) })
 const luma = (d, o) => 0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2] // Rec.601 (Snapper luma weights INFERRED)

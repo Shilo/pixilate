@@ -1,9 +1,11 @@
+import type { Image } from './types.ts'
 // Canonical RGBA contract helpers (docs/research-spikes/algorithms/canonical-rgba-geometry-spike.md):
 // typed errors, alpha-0 canonicalization, the `pixilate/canonical-rgba/v1` hash, half-even rounding.
 
 /** Typed engine error; `code` is one of the canonical spike's stable codes. */
 export class PixilateError extends Error {
-  constructor(code, message) {
+  declare code: string
+  constructor(code: string, message: string) {
     super(`${code}: ${message}`)
     this.name = 'PixilateError'
     this.code = code
@@ -11,7 +13,7 @@ export class PixilateError extends Error {
 }
 
 /** RGB under alpha 0 -> (0,0,0,0). Returns `img` itself when it is already canonical. */
-export function canonicalize(img) {
+export function canonicalize(img: Image) {
   const d = img.data
   let dirty = false
   for (let p = 3; p < d.length && !dirty; p += 4) dirty = d[p] === 0 && (d[p - 3] | d[p - 2] | d[p - 1]) !== 0
@@ -27,7 +29,7 @@ const TAG = 'pixilate/canonical-rgba/v1'
  * SHA-256 hex over ASCII(TAG) 0x00 u32le(W) u32le(H) row-major RGBA8, alpha-0 RGB canonicalized
  * (Web Crypto: browsers and Node >= 19).
  */
-export async function canonicalHash(img) {
+export async function canonicalHash(img: Image) {
   const { width: W, height: H } = img, head = TAG.length + 9, bytes = new Uint8Array(head + W * H * 4)
   for (let i = 0; i < TAG.length; i++) bytes[i] = TAG.charCodeAt(i)
   const dv = new DataView(bytes.buffer)
@@ -39,7 +41,7 @@ export async function canonicalHash(img) {
 }
 
 /** round(num / den) with ties to even, for nonnegative integers (den > 0). */
-export function roundHalfEven(num, den) {
+export function roundHalfEven(num: number, den: number) {
   const q = Math.floor(num / den), r = num - q * den
   return 2 * r > den || (2 * r === den && q % 2 === 1) ? q + 1 : q
 }

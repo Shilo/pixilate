@@ -1,12 +1,14 @@
-<script>
-  // Explicit, composable stages, all off by default (spec §8.3): background, trim (basis 'cells'), colours.
+<script lang="ts">
+  import type { Tools as ToolSettings, Report } from '../lib/types.ts'
+  interface Props { tools: ToolSettings; hasAlpha: boolean; report?: Report | null; bgKept?: boolean; onchange: (tools: ToolSettings) => void }
+// Explicit, composable stages, all off by default (spec §8.3): background, trim (basis 'cells'), colours.
   // iOS layout: label and help on the left, the switch on the right.
-  import { T, bgLine, trimCaption, coloursUsed } from '../lib/copy.js'
-  import { COLOURS, DEFAULT_TOOLS } from '../lib/opts.js'
+  import { T, bgLine, trimCaption, coloursUsed } from '../lib/copy.ts'
+  import { COLOURS, DEFAULT_TOOLS } from '../lib/opts.ts'
 
-  let { tools, hasAlpha, report = null, bgKept = false, onchange } = $props()
+  let { tools, hasAlpha, report = null, bgKept = false, onchange }: Props = $props()
   const canTrim = $derived(hasAlpha || tools.background)
-  const set = (k, v) => {
+  const set = (k: keyof ToolSettings, v: ToolSettings[keyof ToolSettings]) => {
     const t = { ...tools, [k]: v }
     if (k === 'background' && !v && !hasAlpha) t.trim = false // Fit to sprite needs see-through edges
     onchange(t)
@@ -16,7 +18,7 @@
   const cap = $derived(tools.trim && report ? trimCaption(report) : null)
 </script>
 
-{#snippet toggle(key, label, help, disabled)}
+{#snippet toggle(key: "background" | "trim", label: string, help: string, disabled: boolean)}
   <label class="glass-toggle row-toggle" class:off={disabled}>
     <span class="txt">
       <span class="glass-toggle__label">{label}</span>
@@ -31,7 +33,7 @@
 <div class="tools">
   <div class="item">
     {@render toggle('background', T.bgLabel, T.bgHelp, false)}
-    {#if bgKept}<p class="small warn">{T.bgKept}</p>{:else if removed != null}<p class="small">{bgLine(report.background)}</p>{/if}
+    {#if bgKept}<p class="small warn">{T.bgKept}</p>{:else if removed != null}<p class="small">{bgLine(report!.background)}</p>{/if}
   </div>
 
   <div class="item">

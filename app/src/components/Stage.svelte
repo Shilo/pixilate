@@ -1,19 +1,22 @@
-<script>
-  // The solid preview (spec §8.4, §8.5): integer device-pixel zoom, own pan and pinch (touch-action: none),
+<script lang="ts">
+  import type { Candidate, Report, Zoom } from '../lib/types.ts'
+  interface Point { x: number; y: number }
+  interface Props { candidate?: Candidate | null; source: { url: string; width: number; height: number }; report?: Report | null; gridReport?: Report | null; mode?: string; showGrid?: boolean; zoom?: number | null; fitz?: number; dpr?: number; dim?: boolean; faded?: boolean; label?: string; onpeek: (peek: boolean) => void; onzoom: Zoom; onfit: () => void; onstyle: (index: number) => void; ontoggle: () => void; ongrid: () => void }
+// The solid preview (spec §8.4, §8.5): integer device-pixel zoom, own pan and pinch (touch-action: none),
   // Before drawn under the result with beforeRect(), pixel grid, trim/crop outline. No gesture changes a setting.
   import { tick } from 'svelte'
-  import { beforeRect, fitZoom } from '../lib/geometry.js'
-  import { T, sourceAlt } from '../lib/copy.js'
+  import { beforeRect, fitZoom } from '../lib/geometry.ts'
+  import { T, sourceAlt } from '../lib/copy.ts'
 
   let {
     candidate = null, source, report = null, gridReport = null, mode = 'after', showGrid = false,
     zoom = null, fitz = $bindable(1), dpr = $bindable(1), dim = false, faded = false, label = '',
     onpeek, onzoom, onfit, onstyle, ontoggle, ongrid,
-  } = $props()
+  }: Props = $props()
 
-  let el = $state()
-  let canvas = $state()
-  let art = $state()
+  let el = $state<HTMLDivElement>(undefined!)
+  let canvas = $state<HTMLCanvasElement>(undefined!)
+  let art = $state<HTMLDivElement>(undefined!)
   let stage = $state({ width: 0, height: 0 })
 
   const w = $derived(candidate?.width ?? 0)
@@ -60,7 +63,7 @@
     if (!canvas || !candidate) return
     canvas.width = candidate.width
     canvas.height = candidate.height
-    canvas.getContext('2d').putImageData(new ImageData(candidate.rgba, candidate.width, candidate.height), 0, 0)
+    canvas.getContext('2d')!.putImageData(new ImageData(candidate.rgba as Uint8ClampedArray<ArrayBuffer>, candidate.width, candidate.height), 0, 0)
   })
 
   // Centre the art on a new result, a view change, or a return to Fit; any other zoom keeps the point under
@@ -75,7 +78,7 @@
       el.scrollTop += a.top + a.height / 2 - (s.top + el.clientHeight / 2)
     })
   })
-  let anchor = null, keep = null
+  let anchor: Point | null = null, keep: { fx: number; fy: number; ax: number; ay: number } | null = null
   $effect.pre(() => {
     void z
     if (!el) return
@@ -91,7 +94,7 @@
     el.scrollTop = k.fy * el.scrollHeight - k.ay
   })
 
-  function zoomAt(dir, cx, cy, value) {
+  function zoomAt(dir: number, cx: number, cy: number, value?: number | null) {
     const r = el.getBoundingClientRect()
     anchor = { x: cx - r.left, y: cy - r.top }
     onzoom(dir, value)
@@ -99,7 +102,7 @@
 
   // Ctrl/⌘ + wheel zooms at the pointer (non-passive, stage only); a plain wheel scrolls.
   $effect(() => {
-    const onWheel = (e) => {
+    const onWheel = (e: WheelEvent) => {
       if (!(e.ctrlKey || e.metaKey) || !candidate) return
       e.preventDefault()
       zoomAt(e.deltaY < 0 ? 1 : -1, e.clientX, e.clientY)
@@ -109,10 +112,10 @@
   })
 
   // Pointer gestures: one-pointer pan, two-pointer pinch, double tap = Fit, press and hold = peek.
-  const pts = new Map()
-  let hold = 0, peeking = false, pinch = null, lastTap = 0, start = null
+  const pts = new Map<number, Point>()
+  let hold: ReturnType<typeof setTimeout> | number = 0, peeking = false, pinch: { d: number; z: number } | null = null, lastTap = 0, start: Point | null = null
   const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y) }
-  function down(e) {
+  function down(e: PointerEvent) {
     if (!candidate) return
     try { el.setPointerCapture(e.pointerId) } catch {} // synthetic or already-released pointers
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -124,7 +127,7 @@
       pinch = { d: dist(), z }
     }
   }
-  function move(e) {
+  function move(e: PointerEvent) {
     const q = pts.get(e.pointerId)
     if (!q) return
     const dx = e.clientX - q.x, dy = e.clientY - q.y
@@ -139,7 +142,7 @@
     if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) clearTimeout(hold)
     el.scrollBy(-dx, -dy)
   }
-  function up(e) {
+  function up(e: PointerEvent) {
     if (!pts.has(e.pointerId)) return
     pts.delete(e.pointerId)
     clearTimeout(hold)
@@ -152,7 +155,7 @@
     if (pts.size === 0) start = null
   }
 
-  function key(e) {
+  function key(e: KeyboardEvent) {
     if (e.ctrlKey || e.metaKey || e.altKey || !candidate) return
     const k = e.key
     if (k >= '1' && k <= '4') onstyle(+k - 1)
@@ -168,10 +171,10 @@
       el.scrollBy(ARROWS[k][0] * s, ARROWS[k][1] * s)
     }
   }
-  const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
-  function keyup(e) { if (e.key === ' ') onpeek(false) }
+  const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+  function keyup(e: KeyboardEvent) { if (e.key === ' ') onpeek(false) }
 
-  const px = (v) => `${v * p}px`
+  const px = (v: number) => `${v * p}px`
 </script>
 
 <!-- The preview is a focusable scroll region with its own gestures and keys (spec §8.4, §11). -->

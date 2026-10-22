@@ -1,34 +1,36 @@
-<script>
-  // Plain report of the shown result (spec §8.7). Raw engine text appears only in the one Technical
+<script lang="ts">
+  import type { Info, Result } from '../lib/types.ts'
+  interface Props { open: boolean; onclose: () => void; variant: string; info: Info | null; result: Result | null; shown: string | null; onrecipe: () => void; oncopyhash: (hash: string) => void }
+// Plain report of the shown result (spec §8.7). Raw engine text appears only in the one Technical
   // disclosure at the end.
   import Dialog from './Dialog.svelte'
-  import { ICONS } from '../lib/icons.js'
-  import { T, dims, styleLabel, styleDesc, reason, warningSentences, bgLine, trimCaption, failedStyle, metaClaim, cleanLine, bestIs } from '../lib/copy.js'
-  import { styleIdOf } from '../lib/opts.js'
-  import { countColours } from '../lib/geometry.js'
+  import { ICONS } from '../lib/icons.ts'
+  import { T, dims, styleLabel, styleDesc, reason, warningSentences, bgLine, trimCaption, failedStyle, metaClaim, cleanLine, bestIs } from '../lib/copy.ts'
+  import { styleIdOf } from '../lib/opts.ts'
+  import { countColours } from '../lib/geometry.ts'
 
-  let { open, onclose, variant, info, result, shown, onrecipe, oncopyhash } = $props()
+  let { open, onclose, variant, info, result, shown, onrecipe, oncopyhash }: Props = $props()
 
   const c = $derived(result?.candidates.find((x) => x.id === shown) ?? null)
   const r = $derived(c?.report ?? null)
   const g0 = $derived(info?.grid ?? null)
   const label = $derived(c ? styleLabel(styleIdOf(c, result)) : '')
-  const best = $derived(!!c && c.id === result.recommended)
+  const best = $derived(!!c && c.id === result!.recommended)
   const bestCand = $derived(result?.candidates.find((x) => x.id === result.recommended) ?? null)
   const swatches = $derived.by(() => {
     if (!c || r?.output?.colors == null) return []
-    const seen = new Set(), d = c.rgba
+    const seen = new Set<number>(), d = c.rgba
     for (let p = 0; p < d.length && seen.size <= 64; p += 4) if (d[p + 3]) seen.add(((d[p] << 16) | (d[p + 1] << 8) | d[p + 2]) >>> 0)
     return [...seen].slice(0, 64).map((v) => '#' + v.toString(16).padStart(6, '0'))
   })
-  const per = (p) => (p[0] === p[1] ? `${p[0]} px` : `${p[0]} × ${p[1]} px`)
+  const per = (p: number[]) => (p[0] === p[1] ? `${p[0]} px` : `${p[0]} × ${p[1]} px`)
   const convGridDiffers = $derived(!!(r?.grid && g0 && (r.grid.native[0] !== g0.native[0] || r.grid.native[1] !== g0.native[1])))
   // decode warnings are listed once, under Image
   const notes = $derived(r ? warningSentences(r.warnings.filter((w) => !(info?.warnings ?? []).includes(w))) : [])
   const technical = $derived.by(() => {
     const out = []
     if (result) out.push(`Recommendation: ${result.recommendation.rule}: ${result.recommendation.evidence}`)
-    if (r || g0) out.push('Grid evidence:', ...(r?.grid?.evidence ?? g0.evidence))
+    if (r || g0) out.push('Grid evidence:', ...(r?.grid?.evidence ?? g0!.evidence))
     if (r?.warnings.length) out.push('Warnings:', ...r.warnings)
     if (r) out.push('Stages: ' + JSON.stringify({ background: r.background, trim: r.trim, cleanup: r.cleanup }))
     for (const f of result?.failed ?? []) out.push(`Failed ${f.id}: ${f.message}`)
@@ -62,10 +64,10 @@
       <section>
         <h3>{T.dWhy}</h3>
         {#if best}
-          <p>{reason(result.recommendation, g0?.class)}</p>
+          <p>{reason(result!.recommendation, g0?.class)}</p>
         {:else}
           <p>{label}: {styleDesc(styleIdOf(c, result), r.route)}</p>
-          {#if bestCand}<p class="muted">{bestIs(styleLabel(styleIdOf(bestCand, result)), reason(result.recommendation, g0?.class))}</p>{/if}
+          {#if bestCand}<p class="muted">{bestIs(styleLabel(styleIdOf(bestCand, result)), reason(result!.recommendation, g0?.class))}</p>{/if}
         {/if}
       </section>
     {/if}
@@ -80,10 +82,10 @@
             <dt>{T.blockSize}</dt><dd class="num">{per(g0.period)}</dd>
             <dt>{T.nativeSize}</dt><dd class="num">{dims(g0.native[0], g0.native[1])}</dd>
           {/if}
-          {#if g0.candidates?.filter((k) => k.sx > 1 && k.sx === k.sy).length > 1}
-            <dt>{T.alternatives}</dt><dd class="num">{g0.candidates.filter((k) => k.sx > 1 && k.sx === k.sy).slice(1, 5).map((k) => dims(k.countX, k.countY)).join(', ')}</dd>
+          {#if g0.candidates?.filter((k) => k.sx > 1 && k.sx === k.sy).length! > 1}
+            <dt>{T.alternatives}</dt><dd class="num">{g0.candidates!.filter((k) => k.sx > 1 && k.sx === k.sy).slice(1, 5).map((k) => dims(k.countX, k.countY)).join(', ')}</dd>
           {/if}
-          {#if convGridDiffers}<dt>{T.usedGrid}</dt><dd class="num">{dims(r.grid.native[0], r.grid.native[1])}</dd>{/if}
+          {#if convGridDiffers}<dt>{T.usedGrid}</dt><dd class="num">{dims(r!.grid!.native[0], r!.grid!.native[1])}</dd>{/if}
         </dl>
       </section>
     {/if}
@@ -94,12 +96,12 @@
         {#each notes as s}<p>{s}</p>{:else}<p class="muted">{T.noNotes}</p>{/each}
       </section>
 
-      {#if r.background?.mode || r.trim?.enabled || c.id === 'clean'}
+      {#if r.background?.mode || r.trim?.enabled || c!.id === 'clean'}
         <section>
           <h3>{T.dTools}</h3>
           {#if r.background?.mode}<p>{bgLine(r.background)}</p>{/if}
           {#if r.trim?.enabled}<p class="num">{trimCaption(r)}</p>{/if}
-          {#if c.id === 'clean'}<p>{cleanLine(r)}</p>{/if}
+          {#if c!.id === 'clean'}<p>{cleanLine(r)}</p>{/if}
         </section>
       {/if}
     {/if}
@@ -133,7 +135,7 @@
           <dt>{T.engine}</dt><dd class="num">{r.recipe.engine.id} {r.recipe.engine.version}</dd>
           <dt>{T.hash}</dt>
           <dd class="hash">
-            {#if c.hash}<code>{c.hash}</code> <button class="glass-badge glass-badge--interactive tap" onclick={() => oncopyhash(c.hash)}>{T.copyHash}</button>
+            {#if c.hash}<code>{c.hash}</code> <button class="glass-badge glass-badge--interactive tap" onclick={() => oncopyhash(c.hash!)}>{T.copyHash}</button>
             {:else}<span class="muted">{T.unavailable}</span>{/if}
           </dd>
         </dl>

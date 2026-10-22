@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { crc32 } from 'node:zlib'
 import { encode as fastPngEncode } from 'fast-png'
 import jpeg from 'jpeg-js'
-import { decodeImage, encodePng, orient, sniffFormat } from '../src/lib/decode.js'
+import { decodeImage, encodePng, orient, sniffFormat } from '../src/lib/decode.ts'
 
 /** Insert a raw chunk directly after IHDR (byte 33). */
 function withChunk(png, type, data) {

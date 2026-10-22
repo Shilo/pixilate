@@ -35,20 +35,20 @@
 // --engine pins "ours" to a copy of an engine tree (e.g. .local/r3/E/head-src from `git archive HEAD`).
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { degrade, noGrid, resample, SYNTH_VERSION } from '../test/synth.js'
 import { proceduralSprites, showcaseSprites, localSprites, matrixCases, noGridCases, readPng, writePng, repoPath, REPO_ROOT, REAL_SAMPLES, CANVAS_OPTS } from '../test/fixtures.js'
 import { scoreCase, median } from '../test/metrics.js'
 import * as R from '../test/reference-tools.js'
 import { scoreImage } from './score.mjs'
+import { engineEntry } from './engine-entry.mjs'
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt }
 const flag = (name) => process.argv.includes(`--${name}`)
 const SEEDS = Number(arg('seeds', 1)), FILTER = arg('filter', ''), ROWS = Number(arg('rows', 10)), REAL = !flag('no-real')
 const ENGINE = arg('engine', null), [SK, SN] = arg('shard', '0/1').split('/').map(Number), BUDGET = Number(arg('budget', Infinity)) * 1000
 const MODE = flag('merge') ? 'merge' : flag('real-only') ? 'real' : 'cases'
-const { analyze, convert, convertCandidates } = await import(ENGINE ? pathToFileURL(resolve(ENGINE) + '/lib/core/pipeline.js').href : '../src/lib/core/pipeline.js')
+const { analyze, convert, convertCandidates } = await import(engineEntry(ENGINE))
 const OUT = REPO_ROOT + '.local/compare/'
 if (flag('clean')) rmSync(OUT, { recursive: true, force: true })
 for (const d of ['sheets', 'real', 'cases', 'strips']) mkdirSync(OUT + d, { recursive: true })

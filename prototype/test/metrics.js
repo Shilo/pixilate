@@ -2,8 +2,8 @@
 // output image, G1-G3, G5, G7-G9 against ground truth, and scoreCase() which flattens
 // everything into one record per case. Pure functions over RGBA Img objects.
 // An empty or inapplicable metric is null, never 0 or 1 (methodology §10); summaries skip nulls.
-import { srgbToOklab, toeL } from '../src/lib/core/color.js'
-import { TAU_DUP, N8, d2, indexImage, components, ditherMask, q4 } from '../src/lib/core/orphans.js'
+import { srgbToOklab, toeL } from '../src/lib/core/color.ts'
+import { TAU_DUP, N8, d2, indexImage, components, ditherMask, q4 } from '../src/lib/core/orphans.ts'
 import { degrade, noGrid } from './synth.js'
 import { bboxCrop } from './fixtures.js'
 

@@ -1,3 +1,4 @@
+import type { Numbers } from './types.ts'
 // Shared, deterministic color math. Only + - * / and table lookups on decision
 // paths: Math.cbrt/Math.pow are implementation-approximated in JS, so the cube
 // root is a fixed Newton iteration and sRGB<->linear uses a precomputed table.
@@ -74,7 +75,7 @@ export const SRGB_TO_LINEAR = new Float64Array([
 const TWO_PI = 6.283185307179586, HALF_PI = 1.5707963267948966, PI = 3.141592653589793
 
 /** Deterministic sine: arithmetic-only range reduction + degree-17 Taylor on [-pi/2, pi/2] (err < 1e-13). */
-export function sinDet(x) {
+export function sinDet(x: number) {
   x -= TWO_PI * Math.round(x / TWO_PI) // [-pi, pi]
   if (x > HALF_PI) x = PI - x
   else if (x < -HALF_PI) x = -PI - x
@@ -88,12 +89,12 @@ export function sinDet(x) {
 }
 
 /** Deterministic cosine via sinDet. */
-export function cosDet(x) {
+export function cosDet(x: number) {
   return sinDet(x + HALF_PI)
 }
 
 /** Deterministic cube root (x >= 0 or < 0) via Newton iterations from a fixed seed. */
-function cbrt(x) {
+function cbrt(x: number) {
   if (x === 0) return 0
   const neg = x < 0
   if (neg) x = -x
@@ -107,7 +108,7 @@ function cbrt(x) {
 }
 
 /** Linear [0,1] -> sRGB byte, by binary search on the table (exact inverse, no pow). */
-function linearToSrgbByte(v) {
+function linearToSrgbByte(v: number) {
   if (v <= 0) return 0
   if (v >= 1) return 255
   let lo = 0, hi = 255
@@ -120,7 +121,7 @@ function linearToSrgbByte(v) {
 }
 
 /** Linear RGB -> OKLab, written into out[o..o+2]. */
-export function linearToOklab(r, g, b, out, o = 0) {
+export function linearToOklab(r: number, g: number, b: number, out: Numbers, o = 0) {
   const l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
   const m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
   const s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
@@ -130,7 +131,7 @@ export function linearToOklab(r, g, b, out, o = 0) {
 }
 
 /** OKLab -> linear RGB (unclamped), written into out[o..o+2]. */
-function oklabToLinear(L, a, b, out, o = 0) {
+function oklabToLinear(L: number, a: number, b: number, out: Numbers, o = 0) {
   const l = L + 0.3963377774 * a + 0.2158037573 * b
   const m = L - 0.1055613458 * a - 0.0638541728 * b
   const s = L - 0.0894841775 * a - 1.291485548 * b
@@ -141,13 +142,13 @@ function oklabToLinear(L, a, b, out, o = 0) {
 }
 
 /** sRGB bytes -> OKLab into out[o..o+2]. */
-export function srgbToOklab(r, g, b, out, o = 0) {
+export function srgbToOklab(r: number, g: number, b: number, out: Numbers, o = 0) {
   linearToOklab(SRGB_TO_LINEAR[r], SRGB_TO_LINEAR[g], SRGB_TO_LINEAR[b], out, o)
 }
 
 /** OKLab -> sRGB bytes into out[o..o+2] (clamped to gamut per channel). */
 const tmp = new Float64Array(3)
-export function oklabToSrgb(L, a, b, out, o = 0) {
+export function oklabToSrgb(L: number, a: number, b: number, out: Numbers, o = 0) {
   oklabToLinear(L, a, b, tmp, 0)
   out[o] = linearToSrgbByte(tmp[0])
   out[o + 1] = linearToSrgbByte(tmp[1])
@@ -155,22 +156,22 @@ export function oklabToSrgb(L, a, b, out, o = 0) {
 }
 
 /** Squared Euclidean OKLab distance between two triplets stored in flat arrays. */
-export function dist2(A, i, B, j) {
+export function dist2(A: Numbers, i: number, B: Numbers, j: number) {
   const dL = A[i] - B[j], da = A[i + 1] - B[j + 1], db = A[i + 2] - B[j + 2]
   return dL * dL + da * da + db * db
 }
 
 /** Create an RGBA image object. */
-export function createImage(width, height) {
+export function createImage(width: number, height: number) {
   return { width, height, data: new Uint8ClampedArray(width * height * 4) }
 }
 
 /** Ottosson's toe-corrected lightness L_r (Okhsl post): compresses OKLab's steep dark end so
  * near-black noise clusters tightly. Use for distances only; stored colors keep true L. */
-export function toeL(L) {
+export function toeL(L: number) {
   const k1 = 0.206, k2 = 0.03, k3 = (1 + k1) / (1 + k2), t = k3 * L - k1
   return (t + Math.sqrt(t * t + 4 * k2 * k3 * L)) / 2
 }
 
 /** Float64 copy of flat OKLab triplets with L replaced by toeL (distance working copy). */
-export const toe = (A) => Float64Array.from(A, (v, i) => (i % 3 ? v : toeL(v)))
+export const toe = (A: Numbers) => Float64Array.from(A, (v, i) => (i % 3 ? v : toeL(v)))

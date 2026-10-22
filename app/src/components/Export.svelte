@@ -1,15 +1,16 @@
-<script>
-  // Save PNG at 1x..16x (each side <= 4096), Copy, Share (spec §8.6). `scale` arrives already clamped by App,
+<script lang="ts">
+  interface Props { part: string; w?: number; h?: number; scale?: number; onscale?: (scale: number) => void; disabled?: string | null; onsave?: () => void; oncopy?: () => void; onshare?: () => void; canCopy?: boolean; canShare?: boolean; labels?: boolean }
+// Save PNG at 1x..16x (each side <= 4096), Copy, Share (spec §8.6). `scale` arrives already clamped by App,
   // so the label, Save, Copy and Share always agree. Disabled states keep their label so nothing jumps.
   //   part 'scale': the File size control and the final size line (hidden until a result exists)
   //   part 'save': the primary button      part 'actions': Copy / Share icon buttons
-  import { ICONS } from '../lib/icons.js'
-  import { T, saveLabel, scaleLine } from '../lib/copy.js'
-  import { exportScales } from '../lib/geometry.js'
+  import { ICONS } from '../lib/icons.ts'
+  import { T, saveLabel, scaleLine } from '../lib/copy.ts'
+  import { exportScales } from '../lib/geometry.ts'
 
-  let { part, w = 0, h = 0, scale = 1, onscale, disabled = null, onsave, oncopy, onshare, canCopy, canShare, labels = false } = $props()
+  let { part, w = 0, h = 0, scale = 1, onscale, disabled = null, onsave, oncopy, onshare, canCopy, canShare, labels = false }: Props = $props()
   const off = $derived(!!disabled || !w)
-  const guard = (f) => () => { if (!off) f() }
+  const guard = (f: (() => void) | undefined) => () => { if (!off) f!() }
 </script>
 
 {#if part === 'scale' && w}
@@ -17,7 +18,7 @@
     <span class="lab" id="scale-label">{T.enlarge}</span>
     <div class="glass-segmented glass-segmented--full" role="group" aria-labelledby="scale-label">
       {#each exportScales(w, h) as k}
-        <button class="glass-segmented__item num" aria-pressed={scale === k} onclick={() => onscale(k)}>{k}×</button>
+        <button class="glass-segmented__item num" aria-pressed={scale === k} onclick={() => onscale!(k)}>{k}×</button>
       {/each}
     </div>
     <span class="small muted num">{scaleLine(w * scale, h * scale)}</span>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { buildPalette } from '../src/lib/core/palette.js'
-import { oklabToSrgb, srgbToOklab } from '../src/lib/core/color.js'
-import { sampleCells } from '../src/lib/core/sample.js'
+import { buildPalette } from '../src/lib/core/palette.ts'
+import { oklabToSrgb, srgbToOklab } from '../src/lib/core/color.ts'
+import { sampleCells } from '../src/lib/core/sample.ts'
 
 const rng = (s) => () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296)
 const PAL = [[24, 20, 37], [29, 43, 83], [126, 37, 83], [0, 135, 81], [171, 82, 54], [95, 87, 79], [194, 195, 199], [255, 241, 232], [255, 0, 77], [255, 163, 0], [41, 173, 255], [255, 119, 168]]

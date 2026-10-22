@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import jpeg from 'jpeg-js'
-import { detectGrid, lockGrid } from '../src/lib/core/grid.js'
-import { analyzeBackground } from '../src/lib/core/cleanup.js'
+import { detectGrid, lockGrid } from '../src/lib/core/grid.ts'
+import { analyzeBackground } from '../src/lib/core/cleanup.ts'
 import { PRESETS, degrade, noGrid } from './synth.js'
 import { proceduralSprites, readPng, repoPath } from './fixtures.js'
 

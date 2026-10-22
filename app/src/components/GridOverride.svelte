@@ -1,14 +1,16 @@
-<script>
-  // Pixel grid override (PRD AUTO-008): progressive disclosure inside Size. Columns x rows of the source's
+<script lang="ts">
+  import type { GridOverride } from '../lib/types.ts'
+  interface Props { grid?: GridOverride | null; detected?: GridOverride | null; W: number; H: number; open?: boolean; ontoggle: () => void; onchange: (grid: GridOverride | null) => void }
+// Pixel grid override (PRD AUTO-008): progressive disclosure inside Size. Columns x rows of the source's
   // pixel blocks; "Reset to detected" drops the override. Values commit on Enter, blur, or 400 ms after a
   // valid keystroke, like the size fields.
-  import { T } from '../lib/copy.js'
-  import { validateGrid } from '../lib/opts.js'
+  import { T } from '../lib/copy.ts'
+  import { validateGrid } from '../lib/opts.ts'
 
-  let { grid = null, detected = null, W, H, open = false, ontoggle, onchange } = $props()
+  let { grid = null, detected = null, W, H, open = false, ontoggle, onchange }: Props = $props()
 
-  let dc = $state(''), dr = $state(''), errors = $state({})
-  let timer = 0
+  let dc = $state(''), dr = $state(''), errors = $state<Partial<Record<string, string>>>({})
+  let timer: ReturnType<typeof setTimeout> | number = 0
   $effect(() => {
     const g = grid ?? detected
     dc = g ? String(g.cols) : ''
@@ -17,7 +19,7 @@
   })
 
   const draft = () => ({ cols: dc.trim() === '' ? NaN : Number(dc), rows: dr.trim() === '' ? NaN : Number(dr) })
-  function input(k, raw) {
+  function input(k: string, raw: string) {
     if (k === 'cols') dc = raw; else dr = raw
     errors = validateGrid(draft(), W, H)
     clearTimeout(timer)

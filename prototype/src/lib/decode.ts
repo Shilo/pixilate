@@ -1,15 +1,16 @@
+import type { Image } from './core/types.ts'
 /// Strict decoding: PNG via fast-png and JPEG via jpeg-js (pure JS, identical in every engine),
 // then EXIF orientation applied as a pixel transform (FMT-002). Other formats fall back to the
 // browser decoder, marked strict: false with a warning (never silent). Ignored colour metadata and
 // first-frame-only animation are warnings. No DOM access at import time (Web Worker and Node).
-import { decode as pngDecode, encode as pngEncode } from 'fast-png'
+import { decode as pngDecode, encode as pngEncode, type DecodedPng } from 'fast-png'
 import jpeg from 'jpeg-js'
-import { walk } from './core/detect.js'
-import { PixilateError } from './core/canonical.js'
+import { walk } from './core/detect.ts'
+import { PixilateError } from './core/canonical.ts'
 
 /** Sniff the container by magic bytes only (FMT-001: never the MIME hint or extension); 'other' when none matches. */
-export function sniffFormat(b) {
-  const at = (o, s) => b.length >= o + s.length && [...s].every((c, i) => b[o + i] === c.charCodeAt(0))
+export function sniffFormat(b: Uint8Array) {
+  const at = (o: number, s: string) => b.length >= o + s.length && [...s].every((c, i) => b[o + i] === c.charCodeAt(0))
   if (b[0] === 0x89 && at(1, 'PNG')) return 'png'
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpeg'
   if (at(0, 'RIFF') && at(8, 'WEBP')) return 'webp'
@@ -20,14 +21,14 @@ export function sniffFormat(b) {
 }
 
 export const MAX_PIXELS = 4096 * 4096 // ~16.7 MP input/output cap
-const tooBig = (what) => new Error(`Image too large: ${what} exceeds 16.7 MP (4096x4096 pixels)`)
+const tooBig = (what: string) => new Error(`Image too large: ${what} exceeds 16.7 MP (4096x4096 pixels)`)
 
 /** EXIF orientation (IFD0 tag 0x0112) of a TIFF block, or 0 when absent. */
-function exifOrientation(t) {
+function exifOrientation(t?: Uint8Array) {
   if (!t || t.length < 8) return 0
   const le = t[0] === 0x49 && t[1] === 0x49
   if (!le && !(t[0] === 0x4d && t[1] === 0x4d)) return 0
-  const r16 = (o) => (le ? t[o] | (t[o + 1] << 8) : (t[o] << 8) | t[o + 1])
+  const r16 = (o: number) => (le ? t[o] | (t[o + 1] << 8) : (t[o] << 8) | t[o + 1])
   const ifd = le ? (t[4] | (t[5] << 8) | (t[6] << 16) | (t[7] << 24)) >>> 0 : ((t[4] << 24) | (t[5] << 16) | (t[6] << 8) | t[7]) >>> 0
   if (ifd + 2 > t.length) return 0
   for (let i = 0, n = r16(ifd); i < n && ifd + 14 + i * 12 <= t.length; i++) if (r16(ifd + 2 + i * 12) === 0x0112) return r16(ifd + 10 + i * 12)
@@ -35,18 +36,18 @@ function exifOrientation(t) {
 }
 
 // Orientation -> source of display pixel (x, y): sx = a x + b y + c, sy = d x + e y + f (W x H = stored size).
-const ORIENT = {
-  2: (W) => [-1, 0, W - 1, 0, 1, 0],
-  3: (W, H) => [-1, 0, W - 1, 0, -1, H - 1],
+const ORIENT: Record<number, (W: number, H: number) => number[]> = {
+  2: (W: number) => [-1, 0, W - 1, 0, 1, 0],
+  3: (W: number, H: number) => [-1, 0, W - 1, 0, -1, H - 1],
   4: (W, H) => [1, 0, 0, 0, -1, H - 1],
   5: () => [0, 1, 0, 1, 0, 0],
   6: (W, H) => [0, 1, 0, -1, 0, H - 1],
-  7: (W, H) => [0, -1, W - 1, -1, 0, H - 1],
-  8: (W) => [0, -1, W - 1, 1, 0, 0],
+  7: (W: number, H: number) => [0, -1, W - 1, -1, 0, H - 1],
+  8: (W: number) => [0, -1, W - 1, 1, 0, 0],
 }
 
 /** Apply EXIF orientation 2..8 as an exact pixel permutation (5..8 swap width and height); 1 = unchanged. */
-export function orient(img, o) {
+export function orient(img: Image, o: number) {
   if (!ORIENT[o]) return img
   const { width: W, height: H, data: s } = img, [a, b, c, d, e, f] = ORIENT[o](W, H), w = o >= 5 ? H : W, h = o >= 5 ? W : H
   const out = new Uint8ClampedArray(W * H * 4)
@@ -60,7 +61,7 @@ export function orient(img, o) {
 }
 
 /** Image descriptors in a GIF (block walk; stops at the trailer or on malformed data). */
-function gifFrames(b) {
+function gifFrames(b: Uint8Array) {
   let p = 13 + (b[10] & 0x80 ? 3 << ((b[10] & 7) + 1) : 0), n = 0
   while (p < b.length && b[p] !== 0x3b) {
     if (b[p] === 0x2c) { n++; const f = b[p + 9]; p += 11 + (f & 0x80 ? 3 << ((f & 7) + 1) : 0) } // descriptor, local table, LZW size
@@ -79,7 +80,9 @@ const COLOR_META = ['iCCP', 'gAMA', 'cHRM', 'sRGB', 'cICP', 'ICC', 'ICCP'] // PN
  *   decode:'js'|'canvas', strict:boolean, orientation:number, warnings:string[]}>}
  * orientation: the EXIF value applied on the strict path (1 = none; the canvas path lets the browser apply it).
  */
-export async function decodeImage(bytes) {
+export interface DecodedImage { img: Image; format: string; decode: 'js' | 'canvas'; strict: boolean; orientation: number; warnings: string[] }
+export function decodeImage(bytes: Uint8Array | ArrayBuffer, mime?: string): Promise<DecodedImage>
+export async function decodeImage(bytes: Uint8Array | ArrayBuffer): Promise<DecodedImage> {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const format = sniffFormat(b)
   // D56: no known signature is unsupported, whatever the MIME hint claims (a text file named .png is not a PNG)
@@ -91,7 +94,7 @@ export async function decodeImage(bytes) {
   if ((format === 'gif' && gifFrames(b) > 1) || (format === 'webp' && c.types.includes('ANIM'))) warnings.push(`animated ${format}: first frame only`)
   let img = null
   if (format === 'png') {
-    const u32 = (o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0
+    const u32 = (o: number) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0
     if (b.length >= 24 && u32(16) * u32(20) > MAX_PIXELS) throw tooBig(`${u32(16)}x${u32(20)}`) // IHDR, before inflating
     img = pngToRgba(pngDecode(b), b[25] === 3) // IHDR colour type 3 = indexed
   } else if (format === 'jpeg') {
@@ -100,7 +103,7 @@ export async function decodeImage(bytes) {
     try {
       j = jpeg.decode(b, { useTArray: true, formatAsRGBA: true, maxMemoryUsageInMB: 2048, maxResolutionInMP: MAX_PIXELS / 1e6 })
     } catch (e) {
-      throw /maxResolutionInMP/.test(e.message) ? tooBig('JPEG') : e
+      throw /maxResolutionInMP/.test((e as Error).message) ? tooBig('JPEG') : e
     }
     img = { width: j.width, height: j.height, data: new Uint8ClampedArray(j.data.buffer, j.data.byteOffset, j.data.length) }
   }
@@ -113,10 +116,10 @@ export async function decodeImage(bytes) {
     throw new Error(`Cannot decode ${format}: only PNG and JPEG decode without a browser (createImageBitmap/OffscreenCanvas unavailable)`)
   }
   const type = `image/${format}`
-  const bmp = await createImageBitmap(new Blob([b], { type }), { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'from-image' })
+  const bmp = await createImageBitmap(new Blob([b as Uint8Array<ArrayBuffer>], { type }), { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'from-image' })
   if (bmp.width * bmp.height > MAX_PIXELS) { bmp.close?.(); throw tooBig(`${bmp.width}x${bmp.height}`) }
   const cv = new OffscreenCanvas(bmp.width, bmp.height)
-  const ctx = cv.getContext('2d', { willReadFrequently: true })
+  const ctx = cv.getContext('2d', { willReadFrequently: true })!
   ctx.drawImage(bmp, 0, 0)
   bmp.close?.()
   const { data } = ctx.getImageData(0, 0, cv.width, cv.height)
@@ -125,7 +128,7 @@ export async function decodeImage(bytes) {
 }
 
 /** Normalize any fast-png result (1/2/4/8/16-bit, gray/GA/RGB/RGBA/palette, tRNS) to RGBA8. */
-function pngToRgba(p, indexed) {
+function pngToRgba(p: ReturnType<typeof pngDecode>, indexed: boolean) {
   const { width: w, height: h, depth, channels: ch, data, palette, transparency: trns } = p
   if (depth === 8 && ch === 4) return { width: w, height: h, data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.length) }
   const n = w * h
@@ -134,13 +137,13 @@ function pngToRgba(p, indexed) {
   const rowBytes = Math.ceil((depth * ch * w) / 8) // packed rows for depth < 8
   // Raw sample value of pixel i, channel c, at the file's bit depth.
   const sample = depth >= 8
-    ? (i, c) => data[i * ch + c]
-    : (i, c) => {
+    ? (i: number, c: number) => data[i * ch + c]
+    : (i: number, c: number) => {
         const x = i % w, bit = (x * ch + c) * depth
         const byte = data[((i - x) / w) * rowBytes + (bit >> 3)]
         return (byte >> (8 - depth - (bit & 7))) & max
       }
-  const to8 = depth === 8 ? (v) => v : depth === 16 ? (v) => ((v * 255 + 32767) / 65535) | 0 : (v) => (v * 255) / max
+  const to8 = depth === 8 ? (v: number) => v : depth === 16 ? (v: number) => ((v * 255 + 32767) / 65535) | 0 : (v: number) => (v * 255) / max
   const pal = indexed ? palette : null // RGB(A) files may carry a suggested PLTE; only indexed images use it
   const key = trns && trns.length && !pal ? trns : null // gray (1 value) or RGB (3 values) color key
   for (let i = 0, o = 0; i < n; i++, o += 4) {
@@ -163,6 +166,6 @@ function pngToRgba(p, indexed) {
 }
 
 /** RGBA8 image -> PNG bytes. */
-export function encodePng(img) {
+export function encodePng(img: Image) {
   return pngEncode({ width: img.width, height: img.height, data: img.data, channels: 4, depth: 8 })
 }

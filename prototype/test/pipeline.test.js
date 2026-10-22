@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare, rampShareNoisy } from '../src/lib/core/pipeline.js'
+import { analyze, canonicalHash, convert, convertCandidates, indexedToImage, PixilateError, CLEAN_PROFILE, rampShare, rampShareNoisy } from '../src/lib/core/pipeline.ts'
 import { degrade, PRESETS, noGrid } from './synth.js'
 import { CANVAS_OPTS, proceduralSprites, readPng, repoPath } from './fixtures.js'
 import { indexImage, q4, scoreCase } from './metrics.js'
-import { srgbToOklab } from '../src/lib/core/color.js'
+import { srgbToOklab } from '../src/lib/core/color.ts'
 
 /** Integer NN upscale of an RGBA image. */
 function nn(img, k) {

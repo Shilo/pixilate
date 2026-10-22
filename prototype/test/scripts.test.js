@@ -1,12 +1,28 @@
 // Live-testing tools: score.mjs hard checks and a live-batch.mjs smoke run on a procedural sprite.
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { scoreImage } from '../scripts/score.mjs'
 import { proceduralSprites, writePng } from './fixtures.js'
+import { engineEntry } from '../scripts/engine-entry.mjs'
+
+describe('comparison engine archives', () => {
+  it.each(['js', 'ts'])('loads a %s engine archive from a path containing spaces', (extension) => {
+    const dir = mkdtempSync(join(tmpdir(), 'pixilate engine-'))
+    try {
+      mkdirSync(join(dir, 'lib', 'core'), { recursive: true })
+      writeFileSync(join(dir, 'package.json'), '{"type":"module"}')
+      const declaration = extension === 'ts' ? 'marker: string' : 'marker'
+      writeFileSync(join(dir, 'lib', 'core', `pipeline.${extension}`), `export const ${declaration} = '${extension}'`)
+      const code = `console.log((await import(${JSON.stringify(engineEntry(dir))})).marker)`
+      const loaded = execFileSync(process.execPath, ['--input-type=module', '--eval', code], { encoding: 'utf8' })
+      expect(loaded.trim()).toBe(extension)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
 
 const sprite = proceduralSprites(1)[0].img
 const nnUp = (im, k) => {

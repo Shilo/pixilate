@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { COVERAGE_BUDGET, reduceToTarget, resampleToTarget, upscaleInteger } from '../src/lib/core/resample.js'
-import { srgbToOklab } from '../src/lib/core/color.js'
-import { cleanup } from '../src/lib/core/cleanup.js'
+import { COVERAGE_BUDGET, reduceToTarget, resampleToTarget, upscaleInteger } from '../src/lib/core/resample.ts'
+import { srgbToOklab } from '../src/lib/core/color.ts'
+import { cleanup } from '../src/lib/core/cleanup.ts'
 
 const rng = (s) => () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296)
 const lab = (r, g, b) => { const t = new Float64Array(3); srgbToOklab(r, g, b, t, 0); return [...t] }

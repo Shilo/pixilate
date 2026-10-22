@@ -1,10 +1,11 @@
+import type { Image, Grid, Axis } from './types.ts'
 // Step 5a: sample one color per grid cell from its inset interior (contract: algorithm-design.md).
-import { srgbToOklab, toeL } from './color.js'
+import { srgbToOklab, toeL } from './color.ts'
 
 const TAU2 = 0.04 * 0.04 // leader-clustering radius, squared ΔEOK (L toe-corrected)
 
 /** Pixel range [lo, hi) per cell whose pixel centres fall inside the inset interior. */
-function insetRanges(axis, len) {
+function insetRanges(axis: Axis, len: number) {
   const n = axis.count, cuts = axis.cuts
   const lo = new Int32Array(n), hi = new Int32Array(n)
   for (let i = 0; i < n; i++) {
@@ -18,9 +19,9 @@ function insetRanges(axis, len) {
 }
 
 /** Visit order for a cw x ch interior: by squared distance to its centre, raster order on ties. */
-function centreOut(cw, ch) {
+function centreOut(cw: number, ch: number) {
   const ids = Array.from({ length: cw * ch }, (_, i) => i)
-  const d = (i) => { const x = 2 * (i % cw) + 1 - cw, y = 2 * Math.floor(i / cw) + 1 - ch; return x * x + y * y }
+  const d = (i: number) => { const x = 2 * (i % cw) + 1 - cw, y = 2 * Math.floor(i / cw) + 1 - ch; return x * x + y * y }
   return Int32Array.from(ids.sort((i, j) => d(i) - d(j) || i - j))
 }
 
@@ -34,7 +35,7 @@ function centreOut(cw, ch) {
  * lowest) -> heaviest cluster -> mean after dropping its top/bottom 20% by L (D18: averages
  * texture/noise out of the cell colour; the leader radius already excludes neighbour colours).
  */
-export function sampleCells(img, grid, { mask = null } = {}) {
+export function sampleCells(img: Image, grid: Grid, { mask = null }: { mask?: Uint8Array | null } = {}) {
   const W = img.width, d = img.data
   const X = insetRanges(grid.x, W), Y = insetRanges(grid.y, img.height)
   const w = grid.x.count, h = grid.y.count, n = w * h

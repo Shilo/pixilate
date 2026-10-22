@@ -8,8 +8,8 @@ import { execSync } from 'node:child_process'
 import { resample, SYNTH_VERSION } from '../test/synth.js'
 import { proceduralSprites, showcaseSprites, localSprites, matrixCases, noGridCases, readPng, writePng, repoPath, REPO_ROOT, REAL_SAMPLES, CANVAS_OPTS } from '../test/fixtures.js'
 import { runCase, runScene, scoreCase, intrinsic, median, pct, g1, g2, g3, g5, g7, indexImage } from '../test/metrics.js'
-import { analyze, convert, convertCandidates } from '../src/lib/core/pipeline.js'
-import { canonicalHash } from '../src/lib/core/canonical.js'
+import { analyze, convert, convertCandidates } from '../src/lib/core/pipeline.ts'
+import { canonicalHash } from '../src/lib/core/canonical.ts'
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt }
 const SEEDS = Number(arg('seeds', 3)), FILTER = arg('filter', '')
