@@ -395,3 +395,8 @@ The prototype also runs the procedural sprites through synthetic degradation pre
 `OD-003`, `OD-004`, `OD-005`, `OD-006`, `OD-007`, `OD-009`, and `OD-010` received early exploratory evidence. **None is closed**, and no `EX-*` protocol experiment has run. For `OD-004`, the prototype's exact fast path took the coarsest uniform-block factor, which conflicts with the factorization-set semantics above; the prototype now enumerates every valid factorization with an ambiguity flag (design D26) but still computes on the coarsest when none is instructed, which `OD-004` leaves open (2026-10-19). `OD-001` is closed by owner decision only.
 
 The product and landscape spikes carry dated 2026-10-19 addenda, and Retro Diffusion Pixel Art Fixer now has [its own spike](products/retro-diffusion-pixel-art-fixer.md). Where an addendum changes a fact in the competitor comparison above, the addendum governs.
+
+**2026-10-21 addendum (Retro Diffusion).** The [spike's 2026-10-21 refresh](products/retro-diffusion-pixel-art-fixer.md#2026-10-21-refresh) found no new release; the facts in the matrix row stand, with two qualifications.
+
+- **Palette.** "Auto/explicit/custom palette and ordered dither" is the 2026-07-31 web UI. The MIT engine has no output palette stage: its writeup leaves one "as future work" (VERIFIED).
+- **Comparison numbers.** Re-reading the writeup showed that Pixilate's clean-room reference omits most of the vendor's Stage-2 arbitration and differs in several Stage-1 rules. Comparison numbers labelled "Retro Diffusion ref" therefore understate the documented detector (INFERRED); they are not evidence about the tool.

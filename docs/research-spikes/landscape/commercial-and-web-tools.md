@@ -432,3 +432,12 @@ All links were checked or discovered during the 2026-07-31 research pass.
 | [SpriteCook Pixel Grid Detector](https://www.spritecook.ai/pixel-grid-detector) | Detects "true resolution" and offers a colour cap. Method, processing location and licence are not stated. | VERIFIED vendor page | Inventory |
 
 No new release of Retro Diffusion's fixer, Pixel Snapper or PixelLab's Unzoom was found (see the [open-source refresh](open-source-ecosystem.md#2026-10-20-refresh) for the repository checks). Aseprite 1.3.17–1.3.18 and the Pixelorama 1.2 betas add no pixel-art downscale or grid-recovery feature (VERIFIED from release-note summaries, not re-read in full).
+
+## 2026-10-21 addendum: Retro Diffusion
+
+**Snapshot:** 2026-10-21. Details are in the [Retro Diffusion spike's 2026-10-21 refresh](../products/retro-diffusion-pixel-art-fixer.md#2026-10-21-refresh).
+
+- There is still no new fixer release; HEAD remains `ef376e57` (VERIFIED, GitHub API).
+- Newly inventoried surface: the hosted [retro-diffusion-mcp](https://github.com/Retro-Diffusion/retro-diffusion-mcp) server (MIT docs at `12e66b87`). It documents a free `fix_pixel_art` tool with a standard or neural engine; width and height apply to the neural engine only, and input is limited to 4 MP. The fixer API does not spend account balance (VERIFIED vendor-reported).
+- The open engine's writeup leaves an output palette clamp "as future work". The palette and dither controls in the [competitor matrix](../SYNTHESIS.md) therefore describe the 2026-07-31 web UI, not the MIT repository (VERIFIED writeup; current web UI UNKNOWN).
+- [Pixel Rehab](https://arcade.pirillo.com/pixel-rehab.html) now lists manual columns and rows with "Reset to detected", a confidence readout, a low-confidence flag when the detectors disagree, palette reduction and ordered dither (VERIFIED vendor page; dates UNKNOWN).
